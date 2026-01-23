@@ -1,161 +1,210 @@
-import React, { useState } from 'react';
-import { Truck, Monitor, Map, Users, FileText, Bell, Maximize, AlertTriangle, X, Car } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Truck, Monitor, Map as MapIcon, Users, FileText, Bell, Maximize, AlertTriangle, X, Car, Play, CheckSquare, Clock, Zap, Calendar, Edit, Save, History, Eye } from 'lucide-react';
 
-// === IMPORTAMOS TODAS LAS PÁGINAS ===
+// Importamos componentes
 import Historial from './Historial';
 import Planificacion from './Planificacion';
 import Conductores from './Conductores';
-import Login from './Login'; // <--- Importamos el Login nuevo
-import Mapa from './Mapa'; // <--- AGREGA ESTO
+import Login from './Login';
+import Mapa from './Mapa'; 
 
 function App() {
-  // ESTADO DE SESIÓN (Falso = No ha entrado)
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-
-  // Estado para controlar qué pestaña está activa
   const [activeTab, setActiveTab] = useState('monitoreo');
+  
+  // === ESTADO PARA EL MONITOR ===
+  const [liveRoutes, setLiveRoutes] = useState([]);
+  const [editingRoute, setEditingRoute] = useState(null); 
+  const [viewHistory, setViewHistory] = useState(false);
 
-  // SI NO ESTÁ AUTENTICADO, MOSTRAMOS SOLO EL LOGIN
-  if (!isAuthenticated) {
-    return <Login onLogin={() => setIsAuthenticated(true)} />;
-  }
+  useEffect(() => {
+    const cargarRutas = () => {
+        const saved = localStorage.getItem('mis_rutas');
+        if (saved) setLiveRoutes(JSON.parse(saved));
+    };
+    cargarRutas();
+    const interval = setInterval(cargarRutas, 2000); 
+    return () => clearInterval(interval);
+  }, [activeTab]);
 
-  // SI YA ENTRÓ, MOSTRAMOS TODO EL SISTEMA:
+  const updateLocalStorage = (newRoutes) => {
+      setLiveRoutes(newRoutes);
+      localStorage.setItem('mis_rutas', JSON.stringify(newRoutes));
+  };
+
+  const handleStartTrip = (id) => {
+      const now = new Date();
+      const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const updated = liveRoutes.map(r => r.id === id ? { ...r, status: 'En Curso', startTime: timeString } : r);
+      updateLocalStorage(updated);
+  };
+
+  const handleEndTrip = (id) => {
+      const now = new Date();
+      const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const updated = liveRoutes.map(r => r.id === id ? { ...r, status: 'Completado', endTime: timeString } : r);
+      updateLocalStorage(updated);
+  };
+
+  const saveTimeEdit = () => {
+      if (!editingRoute) return;
+      const updated = liveRoutes.map(r => {
+          if (r.id === editingRoute.id) {
+              return { 
+                  ...r, 
+                  startTime: editingRoute.startTime, 
+                  endTime: editingRoute.endTime,
+                  status: editingRoute.endTime ? 'Completado' : (editingRoute.startTime ? 'En Curso' : r.status)
+              };
+          }
+          return r;
+      });
+      updateLocalStorage(updated);
+      setEditingRoute(null);
+  };
+
+  // === LÓGICA DE FILTRADO Y ORDENAMIENTO ===
+  const getFilteredAndSortedRoutes = () => {
+      const today = new Date().toISOString().split('T')[0];
+
+      const filtered = liveRoutes.filter(ruta => {
+          if (viewHistory) {
+              return ruta.status === 'Completado' || ruta.status === 'Cancelado';
+          } else {
+              return ruta.status !== 'Completado' && ruta.status !== 'Cancelado';
+          }
+      });
+
+      return filtered.sort((a, b) => {
+          const dateA = a.finalDate || '9999-99-99';
+          const dateB = b.finalDate || '9999-99-99';
+
+          if (dateA === dateB) {
+              // Prioritarios siempre arriba si es el mismo día
+              if (a.serviceType === 'Prioritario' && b.serviceType !== 'Prioritario') return -1;
+              if (b.serviceType === 'Prioritario' && a.serviceType !== 'Prioritario') return 1;
+              return 0;
+          }
+
+          if (dateA === today && dateB !== today) return -1;
+          if (dateB === today && dateA !== today) return 1;
+
+          return dateA.localeCompare(dateB);
+      });
+  };
+
+  const rutasVisibles = getFilteredAndSortedRoutes();
+
+  if (!isAuthenticated) return <Login onLogin={() => setIsAuthenticated(true)} />;
+
   return (
     <div className="flex h-screen bg-gray-100 font-sans overflow-hidden">
       
-      {/* === SIDEBAR IZQUIERDO === */}
+      {/* SIDEBAR */}
       <aside className="w-64 bg-slate-800 text-gray-300 flex flex-col shrink-0 transition-all duration-300">
         <div className="h-16 flex items-center px-6 border-b border-slate-700">
-          <div className="flex items-center gap-2 text-white font-bold text-lg">
-            <Truck className="text-blue-500 w-6 h-6" />
-            <span>Despacho</span>
-          </div>
+          <div className="flex items-center gap-2 text-white font-bold text-lg"><Truck className="text-blue-500 w-6 h-6" /><span>Despacho</span></div>
         </div>
-
         <nav className="flex-1 p-4 space-y-2">
-          {/* Botón 1: Monitor */}
-          <button 
-            onClick={() => setActiveTab('monitoreo')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'monitoreo' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'hover:bg-slate-700 hover:text-white'}`}
-          >
-            <Monitor className="w-5 h-5" />
-            <span className="font-medium">Monitor en Vivo</span>
-          </button>
-
-          {/* Botón 2: Planificación */}
-          <button 
-            onClick={() => setActiveTab('planificacion')}
-            className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'planificacion' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'hover:bg-slate-700 hover:text-white'}`}
-          >
-            <Map className="w-5 h-5" />
-            <span>Planificación</span>
-          </button>
-
-          {/* Botón 3: Conductores */}
-          <button 
-             onClick={() => setActiveTab('conductores')}
-             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'conductores' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'hover:bg-slate-700 hover:text-white'}`}
-          >
-            <Users className="w-5 h-5" />
-            <span>Conductores</span>
-          </button>
-
-          {/* Botón 4: Reportes */}
-          <button 
-             onClick={() => setActiveTab('reportes')}
-             className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'reportes' ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40' : 'hover:bg-slate-700 hover:text-white'}`}
-          >
-            <FileText className="w-5 h-5" />
-            <span>Reportes</span>
-          </button>
+          <button onClick={() => setActiveTab('monitoreo')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'monitoreo' ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-slate-700 hover:text-white'}`}><Monitor className="w-5 h-5" /><span className="font-medium">Monitor en Vivo</span></button>
+          <button onClick={() => setActiveTab('planificacion')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'planificacion' ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-slate-700 hover:text-white'}`}><MapIcon className="w-5 h-5" /><span>Planificación</span></button>
+          <button onClick={() => setActiveTab('conductores')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'conductores' ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-slate-700 hover:text-white'}`}><Users className="w-5 h-5" /><span>Conductores</span></button>
+          <button onClick={() => setActiveTab('reportes')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${activeTab === 'reportes' ? 'bg-blue-600 text-white shadow-lg' : 'hover:bg-slate-700 hover:text-white'}`}><FileText className="w-5 h-5" /><span>Reportes</span></button>
         </nav>
-
-        {/* Botón Salir */}
-        <div className="p-4 border-t border-slate-700">
-          <button 
-            onClick={() => setIsAuthenticated(false)}
-            className="w-full flex items-center justify-center gap-2 text-sm text-slate-400 hover:text-white transition py-2 hover:bg-slate-700 rounded"
-          >
-             Cerrar Sesión
-          </button>
-          <p className="text-xs text-slate-600 text-center mt-2">v2.1 • React System</p>
-        </div>
+        <div className="p-4 border-t border-slate-700"><button onClick={() => setIsAuthenticated(false)} className="w-full flex items-center justify-center gap-2 text-sm text-slate-400 hover:text-white transition py-2 hover:bg-slate-700 rounded">Cerrar Sesión</button></div>
       </aside>
 
-      {/* === CONTENIDO PRINCIPAL === */}
       <main className="flex-1 flex flex-col min-w-0">
-        
-        {/* HEADER */}
         <header className="h-16 bg-white border-b flex items-center justify-between px-8 shadow-sm z-10 shrink-0">
-          <h1 className="text-xl font-bold text-slate-800">
-            {activeTab === 'monitoreo' && 'Torre de Control'}
-            {activeTab === 'planificacion' && 'Planificación de Rutas'}
-            {activeTab === 'conductores' && 'Directorio de Conductores'}
-            {activeTab === 'reportes' && 'Historial y Reportes'}
-          </h1>
-          
-          <div className="flex items-center gap-6">
-            <div className="relative cursor-pointer">
-              <Bell className="text-slate-500 hover:text-slate-700 w-6 h-6 transition" />
-              <span className="absolute -top-1 -right-1 h-4 w-4 bg-red-500 text-white text-[10px] font-bold flex items-center justify-center rounded-full border-2 border-white">1</span>
-            </div>
-            <div className="flex items-center gap-3 cursor-pointer hover:bg-slate-50 p-1 rounded-lg transition">
-              <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-xs border border-blue-200">AD</div>
-              <div className="leading-tight">
-                 <p className="text-slate-700 font-bold text-sm">Administrador</p>
-                 <p className="text-[10px] text-green-600 font-bold">● En Línea</p>
-              </div>
-            </div>
-          </div>
+          <h1 className="text-xl font-bold text-slate-800">{activeTab === 'monitoreo' && 'Torre de Control'}{activeTab === 'planificacion' && 'Planificación de Rutas'}{activeTab === 'conductores' && 'Directorio de Conductores'}{activeTab === 'reportes' && 'Historial y Reportes'}</h1>
+          <div className="flex items-center gap-6"><div className="relative cursor-pointer"><Bell className="text-slate-500 hover:text-slate-700 w-6 h-6 transition" /><span className="absolute -top-1 -right-1 h-4 w-4 bg-red-500 text-white text-[10px] font-bold flex items-center justify-center rounded-full border-2 border-white">3</span></div><div className="flex items-center gap-3 cursor-pointer hover:bg-slate-50 p-1 rounded-lg transition"><div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-xs border border-blue-200">AD</div><div className="leading-tight"><p className="text-slate-700 font-bold text-sm">Administrador</p><p className="text-[10px] text-green-600 font-bold">● En Línea</p></div></div></div>
         </header>
 
-        {/* === ÁREA CAMBIANTE (RUTEO DE PÁGINAS) === */}
-        
-        {/* 1. MONITOR EN VIVO */}
         {activeTab === 'monitoreo' && (
             <div className="flex-1 flex overflow-hidden p-6 gap-6 animate-[fadeIn_0.3s_ease-out]">
-                
-                {/* MAPA INTERACTIVO REAL */}
-                <div className="flex-1 relative bg-slate-200 rounded-xl shadow-inner overflow-hidden">
-                <Mapa />
-                </div>
+                <div className="flex-1 relative bg-slate-200 rounded-xl shadow-inner overflow-hidden border border-slate-300"><Mapa /></div>
 
-                {/* PANEL DERECHO */}
-                <div className="w-80 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
-                    <div className="p-4 border-b border-gray-100 bg-gray-50">
-                        <h2 className="font-semibold text-gray-800">Estado de la Flota</h2>
+                <div className="w-96 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
+                    <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center shrink-0">
+                        <h2 className="font-bold text-gray-800 flex items-center gap-2"><Clock className="w-4 h-4 text-blue-600"/> {viewHistory ? 'Historial de Viajes' : 'Viajes Activos'}</h2>
+                        <button onClick={() => setViewHistory(!viewHistory)} className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition ${viewHistory ? 'bg-slate-800 text-white' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-100'}`}>
+                            {viewHistory ? <><Eye className="w-3 h-3"/> Ver Activos</> : <><History className="w-3 h-3"/> Ver Pasados</>}
+                        </button>
                     </div>
+                    
                     <div className="flex-1 overflow-y-auto p-4 space-y-4">
-                        <div className="border-l-4 border-green-500 pl-4 py-2 shadow-sm rounded-r bg-white hover:bg-slate-50 transition cursor-pointer">
-                            <div className="flex items-center gap-2 mb-1">
-                                <span className="font-bold text-gray-800">Ruta 101</span>
-                                <span className="text-[10px] text-green-700 bg-green-100 px-2 py-0.5 rounded-full">En Curso</span>
+                        {rutasVisibles.length === 0 && <div className="text-center py-10 text-slate-400"><p>{viewHistory ? 'No hay historial reciente.' : 'No hay rutas pendientes hoy.'}</p></div>}
+
+                        {rutasVisibles.map((ruta) => (
+                            <div key={ruta.id} className={`border rounded-lg p-3 transition shadow-sm hover:shadow-md ${ruta.status === 'Completado' ? 'bg-slate-50 border-slate-200 opacity-70' : 'bg-white border-slate-200'}`}>
+                                <div className="flex justify-between items-start mb-2">
+                                    <div>
+                                        {ruta.serviceType === 'Prioritario' ? (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 mb-1 border border-orange-200">
+                                                <Zap className="w-3 h-3 fill-orange-500 text-orange-600" /> SOLICITADO: {ruta.createdDate || 'Hoy'}
+                                            </span>
+                                        ) : (
+                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 mb-1 border border-blue-100">
+                                                <Calendar className="w-3 h-3" /> PROGRAMADO: {ruta.scheduledDate}
+                                            </span>
+                                        )}
+                                        <h4 className="font-bold text-slate-800 text-sm">{ruta.client}</h4>
+                                    </div>
+                                    <button onClick={() => setEditingRoute(ruta)} className="text-slate-300 hover:text-blue-500 transition"><Edit className="w-4 h-4" /></button>
+                                </div>
+                                <p className="text-xs text-slate-500 mb-3 flex items-center gap-1"><Users className="w-3 h-3"/> {ruta.driver || 'Sin Asignar'}</p>
+                                
+                                {/* AQUI ESTÁ EL CAMBIO CLAVE: VISUALIZACIÓN DE TIEMPOS */}
+                                <div className="bg-slate-50 rounded border border-slate-100 p-2 mb-3">
+                                    <div className="flex justify-between text-xs mb-1">
+                                        <span className="text-slate-500">Inicio:</span>
+                                        <span className="font-mono font-bold text-slate-700">
+                                            {/* Si ya inició, muestra hora real. Si no, y es programado, muestra la programada */}
+                                            {ruta.startTime ? ruta.startTime : (ruta.serviceType === 'Programado' ? ruta.scheduledTime : '--:--')}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between text-xs">
+                                        <span className="text-slate-500">Fin:</span>
+                                        <span className="font-mono font-bold text-slate-700">{ruta.endTime || '--:--'}</span>
+                                    </div>
+                                </div>
+
+                                <div className="flex gap-2">
+                                    {ruta.status !== 'En Curso' && ruta.status !== 'Completado' && (
+                                        <button onClick={() => handleStartTrip(ruta.id)} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1 transition shadow-sm"><Play className="w-3 h-3 fill-current" /> INICIAR</button>
+                                    )}
+                                    {ruta.status === 'En Curso' && (
+                                        <button onClick={() => handleEndTrip(ruta.id)} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1 transition shadow-sm animate-pulse"><CheckSquare className="w-3 h-3" /> FINALIZAR</button>
+                                    )}
+                                    {ruta.status === 'Completado' && <div className="w-full text-center text-xs font-bold text-green-600 py-1.5 bg-green-50 rounded border border-green-100">✅ FINALIZADO</div>}
+                                </div>
                             </div>
-                            <p className="text-sm text-gray-600">Cond. Ana G. - 4/4</p>
-                        </div>
-                        <div className="border-l-4 border-red-500 pl-4 py-2 bg-red-50 rounded-r shadow-sm hover:bg-red-100 transition cursor-pointer">
-                            <div className="flex items-center gap-2 mb-1">
-                                <span className="font-bold text-gray-800">Ruta 102</span>
-                                <span className="text-[10px] text-red-700 bg-red-100 px-2 py-0.5 rounded-full font-bold">RETRASADO</span>
-                            </div>
-                            <p className="text-sm text-gray-600">Cond. Pedro L. - 3/4</p>
-                        </div>
+                        ))}
                     </div>
                 </div>
             </div>
         )}
-
-        {/* 2. PLANIFICACIÓN */}
         {activeTab === 'planificacion' && <Planificacion />}
-
-        {/* 3. CONDUCTORES */}
         {activeTab === 'conductores' && <Conductores />}
-
-        {/* 4. REPORTES */}
         {activeTab === 'reportes' && <Historial />}
-
       </main>
+
+      {editingRoute && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+              <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm animate-[fadeIn_0.2s_ease-out]">
+                  <h3 className="font-bold text-slate-800 text-lg mb-1">Ajuste Manual de Tiempos</h3>
+                  <p className="text-xs text-slate-500 mb-4">Ruta: {editingRoute.client}</p>
+                  <div className="space-y-4">
+                      <div><label className="block text-xs font-bold text-slate-500 mb-1">Hora de Inicio</label><input type="time" className="w-full border border-slate-300 rounded p-2 text-sm" value={editingRoute.startTime || (editingRoute.serviceType === 'Programado' ? editingRoute.scheduledTime : '')} onChange={(e) => setEditingRoute({...editingRoute, startTime: e.target.value})} /></div>
+                      <div><label className="block text-xs font-bold text-slate-500 mb-1">Hora de Finalización</label><input type="time" className="w-full border border-slate-300 rounded p-2 text-sm" value={editingRoute.endTime || ''} onChange={(e) => setEditingRoute({...editingRoute, endTime: e.target.value})} /></div>
+                  </div>
+                  <div className="flex gap-3 mt-6">
+                      <button onClick={() => setEditingRoute(null)} className="flex-1 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded">Cancelar</button>
+                      <button onClick={saveTimeEdit} className="flex-1 py-2 bg-blue-600 text-white rounded text-sm font-bold hover:bg-blue-700 flex items-center justify-center gap-2"><Save className="w-4 h-4" /> Guardar</button>
+                  </div>
+              </div>
+          </div>
+      )}
     </div>
   );
 }

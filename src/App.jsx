@@ -6,6 +6,7 @@ import Historial from './Historial';
 import Planificacion from './Planificacion';
 import Conductores from './Conductores';
 import Login from './Login'; // <--- Importamos el Login nuevo
+import Mapa from './Mapa'; // <--- AGREGA ESTO
 
 function App() {
   // ESTADO DE SESIÓN (Falso = No ha entrado)
@@ -115,39 +116,9 @@ function App() {
         {activeTab === 'monitoreo' && (
             <div className="flex-1 flex overflow-hidden p-6 gap-6 animate-[fadeIn_0.3s_ease-out]">
                 
-                {/* MAPA SIMULADO */}
-                <div className="flex-1 relative bg-slate-200 rounded-xl border border-gray-300 shadow-inner overflow-hidden group">
-                    <div className="absolute inset-0 opacity-20" style={{ 
-                        backgroundImage: 'radial-gradient(#475569 1px, transparent 1px)', 
-                        backgroundSize: '20px 20px' 
-                    }}></div>
-
-                    <button className="absolute top-4 right-4 bg-white p-2 rounded shadow text-gray-600 hover:text-gray-800 z-20 hover:scale-110 transition">
-                        <Maximize className="w-5 h-5" />
-                    </button>
-
-                    {/* Auto 1 */}
-                    <div className="absolute top-1/3 left-1/2 transform -translate-x-1/2 cursor-pointer transition-all duration-1000 hover:translate-x-10">
-                    <div className="relative">
-                        <Car className="text-green-600 w-8 h-8 rotate-45 drop-shadow-lg" />
-                        <div className="absolute -top-8 -left-4 bg-white px-2 py-0.5 rounded text-xs font-bold shadow whitespace-nowrap opacity-100">
-                            Ruta 101
-                        </div>
-                    </div>
-                    </div>
-
-                    {/* Auto 2 + Alerta */}
-                    <div className="absolute bottom-1/3 left-1/4 cursor-pointer">
-                    <div className="relative">
-                        <Car className="text-red-500 w-8 h-8 -rotate-12 drop-shadow-lg animate-pulse" />
-                    </div>
-                    </div>
-
-                    <div className="absolute top-1/4 left-1/4 bg-white px-4 py-2 rounded-lg shadow-lg border-l-4 border-red-500 flex items-center gap-3 z-30 animate-bounce">
-                        <AlertTriangle className="text-red-500 w-5 h-5" />
-                        <span className="font-bold text-red-700 text-sm">ALERTA: Desvío</span>
-                        <X className="text-gray-400 w-4 h-4 cursor-pointer" />
-                    </div>
+                {/* MAPA INTERACTIVO REAL */}
+                <div className="flex-1 relative bg-slate-200 rounded-xl shadow-inner overflow-hidden">
+                <Mapa />
                 </div>
 
                 {/* PANEL DERECHO */}

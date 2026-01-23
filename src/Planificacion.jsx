@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Map, Plus, MoreVertical, ArrowRight, Clock, MapPin, X, Trash2, User, Search } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Map, Plus, MoreVertical, ArrowRight, Clock, MapPin, X, Trash2, User, Search, Package, Loader2 } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline } from 'react-leaflet';
 import L from 'leaflet';
 
@@ -14,190 +14,290 @@ let DefaultIcon = L.icon({
 });
 L.Marker.prototype.options.icon = DefaultIcon;
 
+// === COMPONENTE SIMPLE (VERSIÓN ORIGINAL) ===
+// Solo agregué el prop "zIndex" para arreglar lo visual
+const AddressAutocomplete = ({ label, value, onChange, placeholder, iconColor = "text-slate-400", zIndex = 50 }) => {
+    const [suggestions, setSuggestions] = useState([]);
+    const [isLoading, setIsLoading] = useState(false);
+    const [showSuggestions, setShowSuggestions] = useState(false);
+
+    // Búsqueda directa (Como estaba al principio)
+    const handleSearch = async (query) => {
+        onChange(query); // Actualizamos el texto inmediatamente
+        
+        if (query.length < 3) {
+            setSuggestions([]);
+            return;
+        }
+
+        setIsLoading(true);
+        try {
+            // URL Original simple
+            const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${query}&countrycodes=mx&limit=5`);
+            const data = await response.json();
+            setSuggestions(data);
+            setShowSuggestions(true);
+        } catch (error) {
+            console.error("Error buscando dirección", error);
+        } finally {
+            setIsLoading(false);
+        }
+    };
+
+    const handleSelect = (address) => {
+        onChange(address);
+        setShowSuggestions(false);
+        setSuggestions([]);
+    };
+
+    return (
+        // APLICAMOS Z-INDEX PARA QUE NO SE OCULTE
+        <div className="relative" style={{ zIndex: zIndex }}> 
+            <div className="flex items-center gap-3">
+                <div className={`w-10 h-10 rounded-full ${iconColor === 'green' ? 'bg-green-100 border-green-200' : iconColor === 'red' ? 'bg-red-100 border-red-200' : 'bg-blue-50 border-blue-200'} border flex items-center justify-center shrink-0`}>
+                    <MapPin className={`w-4 h-4 ${iconColor === 'green' ? 'text-green-700' : iconColor === 'red' ? 'text-red-600' : 'text-blue-600'}`} />
+                </div>
+                <div className="flex-1 relative">
+                    <input 
+                        type="text" 
+                        placeholder={placeholder}
+                        className="w-full bg-slate-50 border border-slate-300 text-sm rounded-lg p-2.5 outline-none focus:border-blue-500"
+                        value={value}
+                        onChange={(e) => handleSearch(e.target.value)}
+                        onBlur={() => setTimeout(() => setShowSuggestions(false), 200)}
+                    />
+                    {isLoading && <Loader2 className="absolute right-3 top-2.5 w-4 h-4 animate-spin text-slate-400" />}
+                </div>
+            </div>
+
+            {/* Lista simple original */}
+            {showSuggestions && suggestions.length > 0 && (
+                <ul className="absolute left-14 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-xl max-h-48 overflow-y-auto">
+                    {suggestions.map((item, index) => (
+                        <li 
+                            key={index} 
+                            onClick={() => handleSelect(item.display_name)}
+                            className="px-3 py-2 text-xs text-slate-600 hover:bg-blue-50 cursor-pointer border-b border-slate-50 last:border-0"
+                        >
+                            {item.display_name}
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+};
+
 export default function Planificacion() {
   const [showModal, setShowModal] = useState(false);
+  const [availableDrivers, setAvailableDrivers] = useState([]);
+
+  const [newRoute, setNewRoute] = useState({
+    client: '',
+    start: 'Centro de Distribución',
+    end: '',
+    driver: '',
+    date: new Date().toISOString().split('T')[0],
+    status: 'Pendiente'
+  });
+
   const [waypoints, setWaypoints] = useState([]);
 
-  // Coordenadas simuladas
-  const startPoint = [19.4326, -99.1332]; 
-  const endPoint = [19.4000, -99.1800];   
-  const routeLine = [
-    [19.4326, -99.1332],
-    [19.4200, -99.1500], 
-    [19.4000, -99.1800]
-  ];
+  useEffect(() => {
+    const conductoresGuardados = localStorage.getItem('mis_conductores_v2');
+    if (conductoresGuardados) {
+        setAvailableDrivers(JSON.parse(conductoresGuardados));
+    }
+  }, [showModal]);
 
-  const addWaypoint = () => {
-    setWaypoints([...waypoints, '']);
+  const [routesList, setRoutesList] = useState(() => {
+    const saved = localStorage.getItem('mis_rutas');
+    return saved ? JSON.parse(saved) : [];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('mis_rutas', JSON.stringify(routesList));
+  }, [routesList]);
+
+  const addWaypoint = () => setWaypoints([...waypoints, '']);
+  const removeWaypoint = (index) => setWaypoints(waypoints.filter((_, i) => i !== index));
+  
+  const updateWaypoint = (index, val) => {
+      const newWp = [...waypoints];
+      newWp[index] = val;
+      setWaypoints(newWp);
   };
 
-  const removeWaypoint = (index) => {
-    const newWaypoints = waypoints.filter((_, i) => i !== index);
-    setWaypoints(newWaypoints);
+  const handleSaveRoute = () => {
+      if(!newRoute.client || !newRoute.end || !newRoute.driver) {
+          return alert("Por favor completa Cliente, Destino y Conductor.");
+      }
+      const nuevaRutaGuardada = {
+          id: `RT-${Math.floor(Math.random() * 9000) + 1000}`,
+          client: newRoute.client,
+          start: newRoute.start,
+          end: newRoute.end,
+          driver: newRoute.driver,
+          waypoints: waypoints.filter(w => w !== ''),
+          status: 'Asignado',
+          time: 'Por definir'
+      };
+      setRoutesList([nuevaRutaGuardada, ...routesList]);
+      setShowModal(false);
+      setNewRoute({ client: '', start: 'Centro de Distribución', end: '', driver: '', date: '', status: 'Pendiente' });
+      setWaypoints([]);
+  };
+
+  const handleDeleteRoute = (id, e) => {
+      e.stopPropagation();
+      if(confirm("¿Eliminar esta ruta?")) setRoutesList(routesList.filter(r => r.id !== id));
   };
 
   return (
     <div className="flex-1 p-6 bg-slate-50 h-full flex flex-col overflow-hidden relative">
-      
-      {/* HEADER */}
       <div className="flex justify-between items-center mb-6 shrink-0">
           <div>
             <h2 className="text-2xl font-bold text-slate-800">Planificador de Rutas</h2>
-            <p className="text-slate-500 text-sm">Asignación de pedidos para mañana, 24 Ene</p>
+            <p className="text-slate-500 text-sm">Gestionando {routesList.length} entregas activas</p>
           </div>
-          <button 
-            onClick={() => setShowModal(true)}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg shadow-blue-900/20 transition hover:scale-105"
-          >
+          <button onClick={() => setShowModal(true)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg transition hover:scale-105">
               <Plus className="w-4 h-4" /> Nueva Ruta
           </button>
       </div>
 
-      {/* CONTENIDO PRINCIPAL */}
       <div className="flex-1 flex gap-6 overflow-hidden">
-          {/* LISTA DE PEDIDOS */}
-          <div className="w-1/3 flex flex-col gap-4 overflow-y-auto pr-2">
-              <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition cursor-pointer group">
-                  <div className="flex justify-between items-start mb-2">
-                      <span className="bg-orange-100 text-orange-700 text-xs font-bold px-2 py-1 rounded">Pendiente</span>
-                      <MoreVertical className="w-4 h-4 text-slate-400" />
-                  </div>
-                  <h4 className="font-bold text-slate-800">Entrega: Supermercados del Norte</h4>
-                  <div className="flex items-center gap-2 text-slate-600 text-sm bg-slate-50 p-2 rounded border border-slate-100 mt-2">
-                      <MapPin className="w-4 h-4 text-slate-400" /> Av. Reforma #123
-                  </div>
-              </div>
-              
-              <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition cursor-pointer group">
-                  <div className="flex justify-between items-start mb-2">
-                      <span className="bg-orange-100 text-orange-700 text-xs font-bold px-2 py-1 rounded">Pendiente</span>
-                      <MoreVertical className="w-4 h-4 text-slate-400" />
-                  </div>
-                  <h4 className="font-bold text-slate-800">Recolección: Fábrica Textil</h4>
-                  <div className="flex items-center gap-2 text-slate-600 text-sm bg-slate-50 p-2 rounded border border-slate-100 mt-2">
-                      <MapPin className="w-4 h-4 text-slate-400" /> Parque Industrial Norte
-                  </div>
-              </div>
+          <div className="w-1/3 flex flex-col gap-4 overflow-y-auto pr-2 pb-4">
+              {routesList.length === 0 && <div className="text-center p-8 text-slate-400 border-2 border-dashed border-slate-200 rounded-xl">No hay rutas planeadas hoy.</div>}
+              {routesList.map((ruta) => (
+                <div key={ruta.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 hover:shadow-md transition cursor-pointer group relative">
+                    <div className="flex justify-between items-start mb-2">
+                        <span className={`text-xs font-bold px-2 py-1 rounded ${ruta.status === 'Pendiente' ? 'bg-orange-100 text-orange-700' : 'bg-blue-100 text-blue-700'}`}>{ruta.status}</span>
+                        <button onClick={(e) => handleDeleteRoute(ruta.id, e)} className="text-slate-300 hover:text-red-500 transition"><Trash2 className="w-4 h-4" /></button>
+                    </div>
+                    <h4 className="font-bold text-slate-800 text-sm mb-1">{ruta.client}</h4>
+                    <p className="text-xs text-slate-500 mb-3 font-mono">{ruta.id}</p>
+                    <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-slate-600 text-xs bg-slate-50 p-2 rounded border border-slate-100"><MapPin className="w-3 h-3 text-green-600" /> <span className="truncate">De: {ruta.start}</span></div>
+                        <div className="flex items-center gap-2 text-slate-600 text-xs bg-slate-50 p-2 rounded border border-slate-100"><MapPin className="w-3 h-3 text-red-600" /> <span className="truncate">A: {ruta.end}</span></div>
+                        {ruta.driver && <div className="flex items-center gap-2 text-blue-600 text-xs font-bold mt-1 px-1"><User className="w-3 h-3" /> {ruta.driver}</div>}
+                    </div>
+                </div>
+              ))}
           </div>
 
-          {/* MAPA GENERAL DE FONDO */}
           <div className="flex-1 bg-slate-200 rounded-xl border border-slate-300 relative overflow-hidden flex items-center justify-center">
-             <MapContainer center={[19.4326, -99.1332]} zoom={12} zoomControl={false} dragging={false} scrollWheelZoom={false} style={{height: "100%", width: "100%", opacity: 0.6}}>
+             <MapContainer center={[19.4326, -99.1332]} zoom={12} zoomControl={false} dragging={true} style={{height: "100%", width: "100%"}}>
                  <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
              </MapContainer>
-             
-             {/* CORRECCIÓN AQUÍ: Cambiamos z-[400] por z-10 para que se quede atrás */}
-             <div className="absolute inset-0 flex items-center justify-center bg-white/30 backdrop-blur-sm z-10">
-                <div className="text-center opacity-80">
-                    <Map className="w-16 h-16 text-slate-700 mx-auto mb-2" />
-                    <p className="text-slate-800 font-bold">Selecciona "+ Nueva Ruta" para comenzar</p>
-                </div>
+             <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-4 py-2 rounded-lg shadow-md z-[500] border border-slate-200 max-w-xs">
+                <h5 className="font-bold text-slate-800 text-sm">Mapa General</h5>
+                <p className="text-xs text-slate-500">Vista de tráfico en tiempo real</p>
              </div>
           </div>
       </div>
 
-      {/* ================= MODAL DE NUEVA RUTA ================= */}
       {showModal && (
-        // CORRECCIÓN AQUÍ: Agregamos z-[9999] para que esté SUPER ARRIBA de todo
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
             <div className="bg-white w-full max-w-5xl h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
-                
-                {/* Header Modal */}
                 <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
-                    <div>
-                        <h3 className="text-lg font-bold text-slate-800">Crear Ruta Optimizada</h3>
-                        <p className="text-xs text-slate-500">El sistema calculará la ruta más eficiente automáticamente.</p>
-                    </div>
-                    <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-red-500 transition p-2 hover:bg-red-50 rounded-full">
-                        <X className="w-6 h-6" />
-                    </button>
+                    <div><h3 className="text-lg font-bold text-slate-800">Planificar Nueva Ruta</h3><p className="text-xs text-slate-500">Complete los datos de origen, destino y asignación.</p></div>
+                    <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-red-500 transition"><X className="w-6 h-6" /></button>
                 </div>
 
-                {/* Body Modal */}
                 <div className="flex-1 flex overflow-hidden">
-                    
-                    {/* COLUMNA IZQUIERDA */}
                     <div className="w-1/3 p-6 overflow-y-auto border-r border-slate-100 bg-white z-10 shadow-lg">
-                        <div className="space-y-6">
+                        <div className="space-y-5">
                             <div>
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Puntos de Ruta</label>
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-1">Cliente / Pedido</label>
+                                <div className="flex items-center gap-2 bg-slate-50 border border-slate-300 rounded-lg p-2">
+                                    <Package className="w-4 h-4 text-slate-400"/><input type="text" placeholder="Ej. Entrega Walmart..." className="bg-transparent outline-none text-sm w-full" value={newRoute.client} onChange={(e) => setNewRoute({...newRoute, client: e.target.value})} />
+                                </div>
+                            </div>
+
+                            <div className="relative">
+                                <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Itinerario</label>
                                 <div className="space-y-3 relative">
                                     <div className="absolute left-[19px] top-8 bottom-8 w-0.5 bg-slate-200 -z-10"></div>
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-green-100 border border-green-200 flex items-center justify-center shrink-0 z-10">
-                                            <span className="text-green-700 font-bold text-xs">A</span>
-                                        </div>
-                                        <input type="text" placeholder="Punto de Inicio..." className="flex-1 bg-slate-50 border border-slate-300 text-sm rounded-lg p-2.5 outline-none focus:border-blue-500" defaultValue="Centro de Distribución" />
-                                    </div>
-                                    {waypoints.map((_, index) => (
-                                        <div key={index} className="flex items-center gap-3 animate-[fadeIn_0.3s_ease-out]">
-                                            <div className="w-10 h-10 rounded-full bg-blue-50 border border-blue-200 flex items-center justify-center shrink-0 z-10">
-                                                <span className="text-blue-600 font-bold text-xs">{index + 1}</span>
+                                    
+                                    {/* INPUT: INICIO (Con zIndex alto) */}
+                                    <AddressAutocomplete 
+                                        placeholder="Punto de Inicio..." 
+                                        value={newRoute.start} 
+                                        onChange={(val) => setNewRoute({...newRoute, start: val})}
+                                        iconColor="green"
+                                        zIndex={50} 
+                                    />
+
+                                    {/* INPUTS: WAYPOINTS (zIndex decreciente) */}
+                                    {waypoints.map((wp, index) => (
+                                        <div key={index} className="flex gap-2 relative" style={{ zIndex: 40 - index }}>
+                                            <div className="flex-1">
+                                                <AddressAutocomplete 
+                                                    placeholder="Parada intermedia..." 
+                                                    value={wp} 
+                                                    onChange={(val) => updateWaypoint(index, val)}
+                                                    iconColor="blue"
+                                                    zIndex={40 - index}
+                                                />
                                             </div>
-                                            <input type="text" placeholder="Parada intermedia..." className="flex-1 bg-slate-50 border border-slate-300 text-sm rounded-lg p-2.5 outline-none focus:border-blue-500" />
-                                            <button onClick={() => removeWaypoint(index)} className="text-slate-400 hover:text-red-500 transition">
-                                                <Trash2 className="w-4 h-4" />
-                                            </button>
+                                            <button onClick={() => removeWaypoint(index)} className="mt-2 text-slate-400 hover:text-red-500"><Trash2 className="w-4 h-4" /></button>
                                         </div>
                                     ))}
+
                                     <div className="pl-[52px]">
-                                        <button onClick={addWaypoint} className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 py-1 px-2 rounded hover:bg-blue-50 transition border border-dashed border-blue-200 bg-white w-full justify-center">
-                                            <Plus className="w-3 h-3" /> Agregar Parada
-                                        </button>
+                                        <button onClick={addWaypoint} className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 py-1 px-2 rounded hover:bg-blue-50 transition border border-dashed border-blue-200 bg-white w-full justify-center"><Plus className="w-3 h-3" /> Agregar Parada</button>
                                     </div>
-                                    <div className="flex items-center gap-3">
-                                        <div className="w-10 h-10 rounded-full bg-red-100 border border-red-200 flex items-center justify-center shrink-0 z-10">
-                                            <MapPin className="w-4 h-4 text-red-600" />
-                                        </div>
-                                        <input type="text" placeholder="Punto Final..." className="flex-1 bg-slate-50 border border-slate-300 text-sm rounded-lg p-2.5 outline-none focus:border-blue-500" defaultValue="Cliente Zona Sur" />
-                                    </div>
+
+                                    {/* INPUT: FIN (Con zIndex bajo) */}
+                                    <AddressAutocomplete 
+                                        placeholder="Destino final..." 
+                                        value={newRoute.end} 
+                                        onChange={(val) => setNewRoute({...newRoute, end: val})}
+                                        iconColor="red"
+                                        zIndex={10}
+                                    />
                                 </div>
                             </div>
                             <hr className="border-slate-100" />
-                            <div>
+                            
+                            <div className="relative z-0">
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Asignar Conductor</label>
-                                <select className="bg-slate-50 border border-slate-300 text-slate-700 text-sm rounded-lg block w-full p-2.5">
-                                    <option>Seleccionar Conductor...</option>
-                                    <option>Juan Pérez (Hino 300)</option>
-                                    <option>Carlos Ruiz (Nissan NV)</option>
+                                <select 
+                                    className="bg-slate-50 border border-slate-300 text-slate-700 text-sm rounded-lg block w-full p-2.5 outline-none focus:border-blue-500"
+                                    value={newRoute.driver}
+                                    onChange={(e) => setNewRoute({...newRoute, driver: e.target.value})}
+                                >
+                                    <option value="">Seleccionar Conductor...</option>
+                                    {availableDrivers.length > 0 ? (
+                                        availableDrivers.map((driver) => (
+                                            <option key={driver.id} value={driver.name}>
+                                                {driver.name} - {driver.vehicle}
+                                            </option>
+                                        ))
+                                    ) : (
+                                        <option disabled>No hay conductores registrados</option>
+                                    )}
                                 </select>
                             </div>
                         </div>
                     </div>
 
-                    {/* COLUMNA DERECHA */}
                     <div className="flex-1 bg-slate-100 relative">
                         <MapContainer center={[19.4200, -99.1500]} zoom={13} style={{ height: "100%", width: "100%" }}>
                             <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                            <Marker position={startPoint}><Popup>Inicio: CEDIS</Popup></Marker>
-                            <Marker position={endPoint}><Popup>Fin: Cliente Sur</Popup></Marker>
-                            <Polyline positions={routeLine} color="#3b82f6" weight={5} opacity={0.7} dashArray="10, 10" />
+                            <Marker position={[19.4326, -99.1332]}><Popup>Inicio: CDMX</Popup></Marker>
                         </MapContainer>
-                        
-                        <div className="absolute bottom-4 right-4 bg-white p-4 rounded-xl shadow-xl border border-slate-200 max-w-xs z-[1000] animate-[slideUp_0.3s_ease-out]">
-                            <h5 className="font-bold text-slate-800 text-sm mb-1">Ruta Calculada</h5>
-                            <p className="text-xs text-slate-500 mb-2">Distancia: 12.5 km • Tiempo: 45 min</p>
-                            <div className="w-full bg-slate-100 rounded-full h-1.5">
-                                <div className="bg-green-500 h-1.5 rounded-full" style={{width: '100%'}}></div>
-                            </div>
-                            <div className="flex justify-between text-[10px] text-slate-400 mt-1">
-                                <span>Tráfico: Fluido</span>
-                                <span className="text-green-600 font-bold">Óptimo</span>
-                            </div>
+                        <div className="absolute bottom-4 right-4 bg-white p-4 rounded-xl shadow-xl border border-slate-200 max-w-xs z-[1000]">
+                            <h5 className="font-bold text-slate-800 text-sm mb-1">Nota:</h5>
+                            <p className="text-xs text-slate-500">El autocompletado busca direcciones reales en México.</p>
                         </div>
                     </div>
                 </div>
 
-                {/* Footer Modal */}
                 <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 shrink-0">
-                    <button onClick={() => setShowModal(false)} className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition">
-                        Cancelar
-                    </button>
-                    <button onClick={() => setShowModal(false)} className="px-5 py-2.5 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-lg shadow-blue-500/30 flex items-center gap-2 transition">
-                        <Map className="w-4 h-4" /> Confirmar y Asignar
-                    </button>
+                    <button onClick={() => setShowModal(false)} className="px-5 py-2.5 text-sm font-medium text-slate-600 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition">Cancelar</button>
+                    <button onClick={handleSaveRoute} className="px-5 py-2.5 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-lg flex items-center gap-2 transition"><Map className="w-4 h-4" /> Confirmar y Guardar</button>
                 </div>
-
             </div>
         </div>
       )}

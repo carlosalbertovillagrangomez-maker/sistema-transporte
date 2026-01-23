@@ -5,10 +5,21 @@ import { Truck, Monitor, Map, Users, FileText, Bell, Maximize, AlertTriangle, X,
 import Historial from './Historial';
 import Planificacion from './Planificacion';
 import Conductores from './Conductores';
+import Login from './Login'; // <--- Importamos el Login nuevo
 
 function App() {
+  // ESTADO DE SESIÓN (Falso = No ha entrado)
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+
+  // Estado para controlar qué pestaña está activa
   const [activeTab, setActiveTab] = useState('monitoreo');
 
+  // SI NO ESTÁ AUTENTICADO, MOSTRAMOS SOLO EL LOGIN
+  if (!isAuthenticated) {
+    return <Login onLogin={() => setIsAuthenticated(true)} />;
+  }
+
+  // SI YA ENTRÓ, MOSTRAMOS TODO EL SISTEMA:
   return (
     <div className="flex h-screen bg-gray-100 font-sans overflow-hidden">
       
@@ -59,8 +70,15 @@ function App() {
           </button>
         </nav>
 
+        {/* Botón Salir */}
         <div className="p-4 border-t border-slate-700">
-          <p className="text-xs text-slate-500 text-center">v1.0 • React System</p>
+          <button 
+            onClick={() => setIsAuthenticated(false)}
+            className="w-full flex items-center justify-center gap-2 text-sm text-slate-400 hover:text-white transition py-2 hover:bg-slate-700 rounded"
+          >
+             Cerrar Sesión
+          </button>
+          <p className="text-xs text-slate-600 text-center mt-2">v2.1 • React System</p>
         </div>
       </aside>
 
@@ -81,9 +99,12 @@ function App() {
               <Bell className="text-slate-500 hover:text-slate-700 w-6 h-6 transition" />
               <span className="absolute -top-1 -right-1 h-4 w-4 bg-red-500 text-white text-[10px] font-bold flex items-center justify-center rounded-full border-2 border-white">1</span>
             </div>
-            <div className="flex items-center gap-3 cursor-pointer">
+            <div className="flex items-center gap-3 cursor-pointer hover:bg-slate-50 p-1 rounded-lg transition">
               <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-700 font-bold text-xs border border-blue-200">AD</div>
-              <span className="text-slate-700 font-medium text-sm">Admin</span>
+              <div className="leading-tight">
+                 <p className="text-slate-700 font-bold text-sm">Administrador</p>
+                 <p className="text-[10px] text-green-600 font-bold">● En Línea</p>
+              </div>
             </div>
           </div>
         </header>

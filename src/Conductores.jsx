@@ -5,32 +5,30 @@ export default function Conductores() {
   const [showNewDriverModal, setShowNewDriverModal] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState(null);
 
-  // === ESTADO PARA EL FORMULARIO COMPLETO ===
+  // === ESTADO MAESTRO: TODOS LOS CAMPOS ===
   const [newDriver, setNewDriver] = useState({
+    // 1. Personales
     name: '', rfc: '', phone: '', email: '', address: '',
+    // 2. Licencia y Salud
     licenseNumber: '', licenseType: 'Federal Tipo B', licenseExp: '', bloodType: 'O+',
-    emergencyContact: '', emergencyPhone: '', vehicle: ''
+    // 3. Emergencia
+    emergencyContact: '',
+    // 4. Vehículo (LO NUEVO)
+    vehicleModel: '', vehiclePlate: '', vehicleType: 'Caja Seca'
   });
 
-  // === BASE DE DATOS INICIAL (Datos de prueba completos) ===
+  // Datos de ejemplo
   const defaultDrivers = [
       { 
           id: 'DRV-001', name: 'Juan Pérez', rfc: 'PEPJ850101Hom', initials: 'JP', email: 'juan.perez@logistica.com',
-          status: 'En Ruta', statusColor: 'green', vehicle: 'Hino 300 (Refrigerado)', 
+          status: 'En Ruta', statusColor: 'green', vehicle: 'Hino 300 (A-556-CD)', 
           phone: '+52 55 1234 5678', rating: 4.9, trips: 150, licenseNumber: 'A-12345678', licenseType: 'Federal Tipo B', licenseExp: '2026-12-01',
           bloodType: 'O+', emergencyContact: 'María Pérez (Esposa)', address: 'Av. Central 45, Col. Industrial', joined: 'Marzo 2021'
-      },
-      { 
-          id: 'DRV-002', name: 'Carlos Ruiz', rfc: 'RUIC900505H2A', initials: 'CR', email: 'carlos.ruiz@logistica.com',
-          status: 'En Ruta', statusColor: 'green', vehicle: 'Nissan NV (Express)', 
-          phone: '+52 55 9876 5432', rating: 4.7, trips: 98, licenseNumber: 'B-98765432', licenseType: 'Estatal Tipo A', licenseExp: '2025-05-15',
-          bloodType: 'A-', emergencyContact: 'Pedro Ruiz (Hermano)', address: 'Calle 10 #20, Centro Histórico', joined: 'Enero 2023'
       }
   ];
 
-  // === CARGAR Y GUARDAR EN LOCALSTORAGE ===
   const [driversList, setDriversList] = useState(() => {
-    const saved = localStorage.getItem('mis_conductores_v2'); // Usamos v2 para no mezclar con la prueba anterior
+    const saved = localStorage.getItem('mis_conductores_v2');
     return saved ? JSON.parse(saved) : defaultDrivers;
   });
 
@@ -38,9 +36,14 @@ export default function Conductores() {
     localStorage.setItem('mis_conductores_v2', JSON.stringify(driversList));
   }, [driversList]);
 
-  // === FUNCIÓN PARA GUARDAR (PROCESA TODOS LOS CAMPOS) ===
+  // === FUNCIÓN GUARDAR ===
   const handleSaveDriver = () => {
     if (!newDriver.name || !newDriver.phone || !newDriver.licenseNumber) return alert("Faltan datos obligatorios (Nombre, Teléfono o Licencia)");
+
+    // Construir string del vehículo
+    const vehiculoFinal = (newDriver.vehicleModel && newDriver.vehiclePlate) 
+        ? `${newDriver.vehicleModel} (${newDriver.vehiclePlate})` 
+        : 'Sin Asignar';
 
     const nuevo = {
         id: `DRV-${Math.floor(Math.random() * 9000) + 1000}`,
@@ -50,7 +53,7 @@ export default function Conductores() {
         email: newDriver.email || 'sin@correo.com',
         status: 'Disponible', 
         statusColor: 'gray',
-        vehicle: newDriver.vehicle || 'Sin Asignar',
+        vehicle: vehiculoFinal, // Guardamos el vehículo combinado
         phone: newDriver.phone,
         address: newDriver.address || 'Sin Domicilio',
         licenseNumber: newDriver.licenseNumber,
@@ -65,11 +68,13 @@ export default function Conductores() {
 
     setDriversList([...driversList, nuevo]);
     setShowNewDriverModal(false);
-    // Limpiamos el formulario
+    
+    // Limpiar formulario completo
     setNewDriver({
         name: '', rfc: '', phone: '', email: '', address: '',
         licenseNumber: '', licenseType: 'Federal Tipo B', licenseExp: '', bloodType: 'O+',
-        emergencyContact: '', emergencyPhone: '', vehicle: ''
+        emergencyContact: '',
+        vehicleModel: '', vehiclePlate: '', vehicleType: 'Caja Seca'
     });
   };
 
@@ -120,7 +125,7 @@ export default function Conductores() {
                     <div className="space-y-2 text-sm text-slate-600 mb-6">
                         <div className="flex items-center gap-2">
                             <Truck className="w-4 h-4 text-slate-400" />
-                            <span className="truncate">{driver.vehicle}</span>
+                            <span className="truncate font-medium">{driver.vehicle}</span>
                         </div>
                         <div className="flex items-center gap-2">
                             <Phone className="w-4 h-4 text-slate-400" />
@@ -143,13 +148,13 @@ export default function Conductores() {
                 <div className="flex justify-between items-center px-6 py-4 border-b border-slate-100 bg-slate-50 shrink-0">
                     <div>
                         <h3 className="text-lg font-bold text-slate-800">Alta de Conductor</h3>
-                        <p className="text-xs text-slate-500">Complete todos los campos para el expediente digital.</p>
+                        <p className="text-xs text-slate-500">Complete el expediente digital y asigne unidad.</p>
                     </div>
                     <button onClick={() => setShowNewDriverModal(false)} className="text-slate-400 hover:text-red-500 transition"><X className="w-5 h-5" /></button>
                 </div>
                 
                 <div className="p-6 overflow-y-auto">
-                    {/* SECCIÓN 1: DATOS PERSONALES */}
+                    {/* SECCIÓN 1: DATOS PERSONALES (COMPLETA) */}
                     <div className="mb-6">
                         <h4 className="text-xs font-bold text-blue-600 uppercase mb-3 flex items-center gap-2">
                             <User className="w-4 h-4" /> Datos Personales
@@ -185,10 +190,41 @@ export default function Conductores() {
 
                     <hr className="border-slate-100 my-4" />
 
-                    {/* SECCIÓN 2: LICENCIA Y SALUD */}
+                    {/* SECCIÓN 2: DATOS DEL VEHÍCULO (NUEVA ZONA GRIS) */}
                     <div className="mb-6">
                         <h4 className="text-xs font-bold text-blue-600 uppercase mb-3 flex items-center gap-2">
-                            <FileText className="w-4 h-4" /> Licencia y Salud
+                            <Truck className="w-4 h-4" /> Asignación de Unidad
+                        </h4>
+                        <div className="grid grid-cols-3 gap-4 bg-slate-50 p-4 rounded-lg border border-slate-200">
+                            <div className="col-span-3 md:col-span-1">
+                                <label className="block text-xs font-medium text-slate-700 mb-1">Modelo de Unidad</label>
+                                <input type="text" placeholder="Ej. Nissan NP300" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-sm"
+                                    value={newDriver.vehicleModel} onChange={e => setNewDriver({...newDriver, vehicleModel: e.target.value})} />
+                            </div>
+                            <div className="col-span-3 md:col-span-1">
+                                <label className="block text-xs font-medium text-slate-700 mb-1">Placas</label>
+                                <input type="text" placeholder="Ej. A-123-BC" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-sm uppercase"
+                                    value={newDriver.vehiclePlate} onChange={e => setNewDriver({...newDriver, vehiclePlate: e.target.value})} />
+                            </div>
+                            <div className="col-span-3 md:col-span-1">
+                                <label className="block text-xs font-medium text-slate-700 mb-1">Tipo de Caja</label>
+                                <select className="w-full bg-white border border-slate-300 rounded-lg p-2 text-sm"
+                                    value={newDriver.vehicleType} onChange={e => setNewDriver({...newDriver, vehicleType: e.target.value})}>
+                                    <option>Caja Seca</option>
+                                    <option>Refrigerado</option>
+                                    <option>Plataforma</option>
+                                    <option>Van / Pasajeros</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr className="border-slate-100 my-4" />
+
+                    {/* SECCIÓN 3: LICENCIA Y EMERGENCIA (COMPLETA) */}
+                    <div>
+                        <h4 className="text-xs font-bold text-blue-600 uppercase mb-3 flex items-center gap-2">
+                            <FileText className="w-4 h-4" /> Licencia y Emergencia
                         </h4>
                         <div className="grid grid-cols-2 gap-4">
                             <div>
@@ -197,7 +233,7 @@ export default function Conductores() {
                                     value={newDriver.licenseNumber} onChange={e => setNewDriver({...newDriver, licenseNumber: e.target.value})} />
                             </div>
                             <div>
-                                <label className="block text-xs font-medium text-slate-700 mb-1">Tipo</label>
+                                <label className="block text-xs font-medium text-slate-700 mb-1">Tipo Licencia</label>
                                 <select className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm"
                                     value={newDriver.licenseType} onChange={e => setNewDriver({...newDriver, licenseType: e.target.value})}>
                                     <option>Federal Tipo B</option>
@@ -206,41 +242,21 @@ export default function Conductores() {
                                 </select>
                             </div>
                             <div>
-                                <label className="block text-xs font-medium text-slate-700 mb-1">Vigencia Hasta</label>
+                                <label className="block text-xs font-medium text-slate-700 mb-1">Vigencia</label>
                                 <input type="date" className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" 
                                     value={newDriver.licenseExp} onChange={e => setNewDriver({...newDriver, licenseExp: e.target.value})} />
                             </div>
                             <div>
-                                <label className="block text-xs font-medium text-slate-700 mb-1">Sangre</label>
+                                <label className="block text-xs font-medium text-slate-700 mb-1">Tipo Sangre</label>
                                 <select className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm"
                                     value={newDriver.bloodType} onChange={e => setNewDriver({...newDriver, bloodType: e.target.value})}>
-                                    <option>O+</option> <option>O-</option> <option>A+</option> <option>B+</option>
+                                    <option>O+</option> <option>O-</option> <option>A+</option> <option>B+</option> <option>AB+</option>
                                 </select>
                             </div>
-                        </div>
-                    </div>
-
-                    <hr className="border-slate-100 my-4" />
-
-                    {/* SECCIÓN 3: EMERGENCIA */}
-                    <div>
-                        <h4 className="text-xs font-bold text-blue-600 uppercase mb-3 flex items-center gap-2">
-                            <Heart className="w-4 h-4" /> Emergencia y Asignación
-                        </h4>
-                        <div className="grid grid-cols-2 gap-4">
                             <div className="col-span-2">
-                                <label className="block text-xs font-medium text-slate-700 mb-1">Contacto de Emergencia</label>
-                                <input type="text" className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm" placeholder="Nombre y Parentesco"
+                                <label className="block text-xs font-medium text-slate-700 mb-1">Contacto Emergencia</label>
+                                <input type="text" placeholder="Nombre y Teléfono" className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm"
                                     value={newDriver.emergencyContact} onChange={e => setNewDriver({...newDriver, emergencyContact: e.target.value})} />
-                            </div>
-                            <div className="col-span-2">
-                                <label className="block text-xs font-medium text-slate-700 mb-1">Asignar Vehículo Inicial</label>
-                                <select className="w-full bg-slate-50 border border-slate-300 rounded-lg p-2 text-sm"
-                                    value={newDriver.vehicle} onChange={e => setNewDriver({...newDriver, vehicle: e.target.value})}>
-                                    <option value="">-- Dejar Pendiente --</option>
-                                    <option value="Hino 300 - Disponible">Hino 300 - Disponible</option>
-                                    <option value="Nissan NV - Disponible">Nissan NV - Disponible</option>
-                                </select>
                             </div>
                         </div>
                     </div>
@@ -318,7 +334,7 @@ export default function Conductores() {
                                 <ul className="space-y-3">
                                     <li className="flex items-center gap-3 text-sm text-slate-700">
                                         <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-500"><Truck className="w-4 h-4"/></div>
-                                        <div><p className="text-xs text-slate-400">Vehículo</p><p className="font-medium">{selectedDriver.vehicle}</p></div>
+                                        <div><p className="text-xs text-slate-400">Unidad Asignada</p><p className="font-medium">{selectedDriver.vehicle}</p></div>
                                     </li>
                                     <li className="flex items-center gap-3 text-sm text-slate-700">
                                         <div className="w-8 h-8 rounded-full bg-blue-50 flex items-center justify-center text-blue-500"><FileText className="w-4 h-4"/></div>

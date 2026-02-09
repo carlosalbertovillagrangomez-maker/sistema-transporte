@@ -1,9 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Phone, Star, Truck, ShieldCheck, MoreHorizontal, Plus, X, User, FileText, MapPin, Calendar, Save, Search, Mail, Heart, AlertCircle, Briefcase, Trash2 } from 'lucide-react';
+import { Phone, Truck, Plus, X, User, FileText, MapPin, Save, Search, Mail, AlertCircle, Briefcase, Trash2, Loader2 } from 'lucide-react';
+
+// IMPORTAMOS LA CONEXIÓN A FIREBASE
+import { db } from './firebase';
+import { collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy } from 'firebase/firestore';
 
 export default function Conductores() {
   const [showNewDriverModal, setShowNewDriverModal] = useState(false);
   const [selectedDriver, setSelectedDriver] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   // === ESTADO MAESTRO: TODOS LOS CAMPOS ===
   const [newDriver, setNewDriver] = useState({
@@ -13,31 +18,30 @@ export default function Conductores() {
     licenseNumber: '', licenseType: 'Federal Tipo B', licenseExp: '', bloodType: 'O+',
     // 3. Emergencia
     emergencyContact: '',
-    // 4. Vehículo (LO NUEVO)
+    // 4. Vehículo
     vehicleModel: '', vehiclePlate: '', vehicleType: 'Caja Seca'
   });
 
-  // Datos de ejemplo
-  const defaultDrivers = [
-      { 
-          id: 'DRV-001', name: 'Juan Pérez', rfc: 'PEPJ850101Hom', initials: 'JP', email: 'juan.perez@logistica.com',
-          status: 'En Ruta', statusColor: 'green', vehicle: 'Hino 300 (A-556-CD)', 
-          phone: '+52 55 1234 5678', rating: 4.9, trips: 150, licenseNumber: 'A-12345678', licenseType: 'Federal Tipo B', licenseExp: '2026-12-01',
-          bloodType: 'O+', emergencyContact: 'María Pérez (Esposa)', address: 'Av. Central 45, Col. Industrial', joined: 'Marzo 2021'
-      }
-  ];
+  const [driversList, setDriversList] = useState([]);
 
-  const [driversList, setDriversList] = useState(() => {
-    const saved = localStorage.getItem('mis_conductores_v2');
-    return saved ? JSON.parse(saved) : defaultDrivers;
-  });
-
+  // === 1. LEER DATOS EN TIEMPO REAL (REALTIME) DE FIREBASE ===
   useEffect(() => {
-    localStorage.setItem('mis_conductores_v2', JSON.stringify(driversList));
-  }, [driversList]);
+    // Escucha la colección "conductores" ordenados por fecha de creación
+    const q = query(collection(db, "conductores"), orderBy("created", "desc"));
+    
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const driversArr = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setDriversList(driversArr);
+      setLoading(false);
+    });
+    return () => unsubscribe();
+  }, []);
 
-  // === FUNCIÓN GUARDAR ===
-  const handleSaveDriver = () => {
+  // === FUNCIÓN GUARDAR EN NUBE ===
+  const handleSaveDriver = async () => {
     if (!newDriver.name || !newDriver.phone || !newDriver.licenseNumber) return alert("Faltan datos obligatorios (Nombre, Teléfono o Licencia)");
 
     // Construir string del vehículo
@@ -45,8 +49,7 @@ export default function Conductores() {
         ? `${newDriver.vehicleModel} (${newDriver.vehiclePlate})` 
         : 'Sin Asignar';
 
-    const nuevo = {
-        id: `DRV-${Math.floor(Math.random() * 9000) + 1000}`,
+    const nuevoConductor = {
         name: newDriver.name,
         initials: newDriver.name.substring(0, 2).toUpperCase(),
         rfc: newDriver.rfc || 'N/A',
@@ -63,25 +66,36 @@ export default function Conductores() {
         emergencyContact: newDriver.emergencyContact || 'No registrado',
         rating: 5.0, 
         trips: 0,
-        joined: new Date().toLocaleDateString()
+        joined: new Date().toLocaleDateString(),
+        created: new Date().toISOString() // Para ordenar en Firebase
     };
 
-    setDriversList([...driversList, nuevo]);
-    setShowNewDriverModal(false);
-    
-    // Limpiar formulario completo
-    setNewDriver({
-        name: '', rfc: '', phone: '', email: '', address: '',
-        licenseNumber: '', licenseType: 'Federal Tipo B', licenseExp: '', bloodType: 'O+',
-        emergencyContact: '',
-        vehicleModel: '', vehiclePlate: '', vehicleType: 'Caja Seca'
-    });
+    try {
+        await addDoc(collection(db, "conductores"), nuevoConductor);
+        setShowNewDriverModal(false);
+        
+        // Limpiar formulario completo
+        setNewDriver({
+            name: '', rfc: '', phone: '', email: '', address: '',
+            licenseNumber: '', licenseType: 'Federal Tipo B', licenseExp: '', bloodType: 'O+',
+            emergencyContact: '',
+            vehicleModel: '', vehiclePlate: '', vehicleType: 'Caja Seca'
+        });
+    } catch (error) {
+        console.error("Error guardando:", error);
+        alert("Error al guardar en la nube: " + error.message);
+    }
   };
 
-  const handleDelete = (id) => {
-    if(confirm("¿Estás seguro de eliminar este expediente?")) {
-        setDriversList(driversList.filter(d => d.id !== id));
-        setSelectedDriver(null);
+  // === ELIMINAR DE NUBE ===
+  const handleDelete = async (id) => {
+    if(confirm("¿Estás seguro de eliminar este expediente de la base de datos?")) {
+        try {
+            await deleteDoc(doc(db, "conductores", id));
+            setSelectedDriver(null);
+        } catch (error) {
+            alert("Error al eliminar: " + error.message);
+        }
     }
   };
 
@@ -92,12 +106,12 @@ export default function Conductores() {
       <div className="flex justify-between items-center mb-8">
         <div>
             <h2 className="text-2xl font-bold text-slate-800">Gestión de Conductores</h2>
-            <p className="text-slate-500">{driversList.length} Expedientes Activos</p>
+            <p className="text-slate-500">{driversList.length} Expedientes en Nube</p>
         </div>
         <div className="flex gap-2">
             <div className="relative">
                 <Search className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-                <input type="text" placeholder="Buscar por nombre o ID..." className="bg-white border border-slate-300 text-sm rounded-lg pl-10 pr-4 py-2 w-64 shadow-sm outline-none focus:ring-2 focus:ring-blue-500" />
+                <input type="text" placeholder="Buscar por nombre..." className="bg-white border border-slate-300 text-sm rounded-lg pl-10 pr-4 py-2 w-64 shadow-sm outline-none focus:ring-2 focus:ring-blue-500" />
             </div>
             <button onClick={() => setShowNewDriverModal(true)} className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-slate-900 transition flex items-center gap-2 shadow-lg">
                 <Plus className="w-4 h-4" /> Nuevo Conductor
@@ -105,7 +119,11 @@ export default function Conductores() {
         </div>
       </div>
 
+      {/* LOADER */}
+      {loading && <div className="flex justify-center h-64 items-center gap-2 text-slate-500"><Loader2 className="animate-spin"/> Cargando nube...</div>}
+
       {/* GRID DE TARJETAS */}
+      {!loading && (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {driversList.map((driver) => (
             <div key={driver.id} className="bg-white rounded-xl p-6 border border-slate-200 shadow-sm hover:shadow-md transition group relative overflow-hidden">
@@ -121,7 +139,7 @@ export default function Conductores() {
                 </div>
                 <div className="pl-2">
                     <h3 className="text-lg font-bold text-slate-800">{driver.name}</h3>
-                    <p className="text-xs text-slate-500 mb-4 font-mono">{driver.id}</p>
+                    <p className="text-xs text-slate-500 mb-4 font-mono truncate w-40" title={driver.id}>{driver.id}</p>
                     <div className="space-y-2 text-sm text-slate-600 mb-6">
                         <div className="flex items-center gap-2">
                             <Truck className="w-4 h-4 text-slate-400" />
@@ -139,8 +157,9 @@ export default function Conductores() {
             </div>
         ))}
       </div>
+      )}
 
-      {/* ================= MODAL DE REGISTRO COMPLETO ================= */}
+      {/* ================= MODAL DE REGISTRO COMPLETO (TU DISEÑO ORIGINAL) ================= */}
       {showNewDriverModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
             <div className="bg-white w-full max-w-2xl rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -154,7 +173,7 @@ export default function Conductores() {
                 </div>
                 
                 <div className="p-6 overflow-y-auto">
-                    {/* SECCIÓN 1: DATOS PERSONALES (COMPLETA) */}
+                    {/* SECCIÓN 1: DATOS PERSONALES */}
                     <div className="mb-6">
                         <h4 className="text-xs font-bold text-blue-600 uppercase mb-3 flex items-center gap-2">
                             <User className="w-4 h-4" /> Datos Personales
@@ -190,7 +209,7 @@ export default function Conductores() {
 
                     <hr className="border-slate-100 my-4" />
 
-                    {/* SECCIÓN 2: DATOS DEL VEHÍCULO (NUEVA ZONA GRIS) */}
+                    {/* SECCIÓN 2: DATOS DEL VEHÍCULO */}
                     <div className="mb-6">
                         <h4 className="text-xs font-bold text-blue-600 uppercase mb-3 flex items-center gap-2">
                             <Truck className="w-4 h-4" /> Asignación de Unidad
@@ -221,7 +240,7 @@ export default function Conductores() {
 
                     <hr className="border-slate-100 my-4" />
 
-                    {/* SECCIÓN 3: LICENCIA Y EMERGENCIA (COMPLETA) */}
+                    {/* SECCIÓN 3: LICENCIA Y EMERGENCIA */}
                     <div>
                         <h4 className="text-xs font-bold text-blue-600 uppercase mb-3 flex items-center gap-2">
                             <FileText className="w-4 h-4" /> Licencia y Emergencia
@@ -265,14 +284,14 @@ export default function Conductores() {
                 <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3 shrink-0">
                     <button onClick={() => setShowNewDriverModal(false)} className="px-4 py-2 text-sm text-slate-600 hover:bg-white border border-transparent hover:border-slate-300 rounded-lg transition">Cancelar</button>
                     <button onClick={handleSaveDriver} className="px-6 py-2 text-sm text-white bg-slate-800 hover:bg-slate-900 rounded-lg flex items-center gap-2 shadow-lg transition">
-                        <Save className="w-4 h-4" /> Guardar Expediente
+                        <Save className="w-4 h-4" /> Guardar en Nube
                     </button>
                 </div>
             </div>
         </div>
       )}
 
-      {/* ================= MODAL DE PERFIL COMPLETO (LECTURA) ================= */}
+      {/* ================= MODAL DE PERFIL COMPLETO (TU DISEÑO ORIGINAL) ================= */}
       {selectedDriver && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
             <div className="bg-white w-full max-w-3xl rounded-xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">

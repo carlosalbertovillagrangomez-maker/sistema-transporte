@@ -1,88 +1,89 @@
-import React, { useState, useEffect } from 'react';
-import { Truck, Monitor, Map as MapIcon, Users, FileText, Bell, Maximize, AlertTriangle, X, Car, Play, CheckSquare, Clock, Zap, Calendar, Edit, Save, History, Eye, Briefcase } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet';
-import L from 'leaflet';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { Truck, Monitor, Map as MapIcon, Users, FileText, Bell, AlertTriangle, X, Play, CheckSquare, Clock, Zap, Calendar, Edit, Save, History, Eye, Briefcase, Loader2 } from 'lucide-react';
 
+// GOOGLE MAPS
+import { GoogleMap, useJsApiLoader, Marker, Polyline } from '@react-google-maps/api';
+
+// COMPONENTES
 import Historial from './Historial';
 import Planificacion from './Planificacion';
 import Conductores from './Conductores';
 import Clientes from './Clientes';
 import Login from './Login';
 
-// Fix Iconos Leaflet en App global
-import icon from 'leaflet/dist/images/marker-icon.png';
-import iconShadow from 'leaflet/dist/images/marker-shadow.png';
-let DefaultIcon = L.icon({
-    iconUrl: icon, shadowUrl: iconShadow, iconSize: [25, 41], iconAnchor: [12, 41]
-});
-L.Marker.prototype.options.icon = DefaultIcon;
+// FIREBASE
+import { db } from './firebase';
+import { collection, onSnapshot, query, orderBy, updateDoc, doc } from 'firebase/firestore';
 
-// Componente helper para mover el mapa
-function MapUpdater({ routeCoords }) {
-    const map = useMap();
-    useEffect(() => {
-        if (routeCoords && routeCoords.length > 0) {
-            const bounds = L.latLngBounds(routeCoords);
-            map.fitBounds(bounds, { padding: [50, 50] });
-        }
-    }, [routeCoords, map]);
-    return null;
-}
+// === CONFIGURACIÓN GOOGLE MAPS ===
+const GOOGLE_MAPS_API_KEY = "AIzaSyCue-ppitnj81zowobWCTiBvhHdqCDUrqg"; // TU CLAVE
+const containerStyle = { width: '100%', height: '100%' };
+const centerMX = { lat: 19.4326, lng: -99.1332 }; // CDMX
+const libraries = ['places']; // Misma config que en Planificación
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState('monitoreo');
   
+  // CARGAR GOOGLE MAPS
+  const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries });
+  const mapRef = useRef(null);
+
+  // DATOS FIREBASE
   const [liveRoutes, setLiveRoutes] = useState([]);
   const [editingRoute, setEditingRoute] = useState(null); 
   const [viewHistory, setViewHistory] = useState(false);
-  
-  // ESTADO DE RUTA SELECCIONADA PARA EL MAPA
   const [selectedRoute, setSelectedRoute] = useState(null);
 
+  // === CARGAR RUTAS EN TIEMPO REAL ===
   useEffect(() => {
-    const cargarRutas = () => {
-        const saved = localStorage.getItem('mis_rutas');
-        if (saved) setLiveRoutes(JSON.parse(saved));
-    };
-    cargarRutas();
-    const interval = setInterval(cargarRutas, 2000); 
-    return () => clearInterval(interval);
+    const q = query(collection(db, "rutas"), orderBy("createdDate", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+        const routesArr = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+        setLiveRoutes(routesArr);
+    });
+    return () => unsubscribe();
   }, [activeTab]);
 
-  const updateLocalStorage = (newRoutes) => {
-      setLiveRoutes(newRoutes);
-      localStorage.setItem('mis_rutas', JSON.stringify(newRoutes));
+  // === EFECTO PARA CENTRAR EL MAPA AL SELECCIONAR RUTA ===
+  useEffect(() => {
+      if(isLoaded && mapRef.current && selectedRoute?.technicalData?.geometry) {
+          const bounds = new window.google.maps.LatLngBounds();
+          const path = selectedRoute.technicalData.geometry;
+          
+          if(path && path.length > 0) {
+              path.forEach(coord => bounds.extend(coord));
+              mapRef.current.fitBounds(bounds);
+          }
+      }
+  }, [selectedRoute, isLoaded]);
+
+  const handleMapLoad = useCallback((map) => { mapRef.current = map; }, []);
+
+  const updateRouteStatus = async (id, status, updates = {}) => {
+      const routeRef = doc(db, "rutas", id);
+      await updateDoc(routeRef, { status, ...updates });
   };
 
   const handleStartTrip = (id) => {
       const now = new Date();
       const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const updated = liveRoutes.map(r => r.id === id ? { ...r, status: 'En Curso', startTime: timeString } : r);
-      updateLocalStorage(updated);
+      updateRouteStatus(id, 'En Curso', { startTime: timeString });
   };
 
   const handleEndTrip = (id) => {
       const now = new Date();
       const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      const updated = liveRoutes.map(r => r.id === id ? { ...r, status: 'Completado', endTime: timeString } : r);
-      updateLocalStorage(updated);
+      updateRouteStatus(id, 'Completado', { endTime: timeString });
   };
 
-  const saveTimeEdit = () => {
+  const saveTimeEdit = async () => {
       if (!editingRoute) return;
-      const updated = liveRoutes.map(r => {
-          if (r.id === editingRoute.id) {
-              return { 
-                  ...r, 
-                  startTime: editingRoute.startTime, 
-                  endTime: editingRoute.endTime,
-                  status: editingRoute.endTime ? 'Completado' : (editingRoute.startTime ? 'En Curso' : r.status)
-              };
-          }
-          return r;
-      });
-      updateLocalStorage(updated);
+      const newStatus = editingRoute.endTime ? 'Completado' : (editingRoute.startTime ? 'En Curso' : editingRoute.status);
+      await updateRouteStatus(editingRoute.id, newStatus, { startTime: editingRoute.startTime, endTime: editingRoute.endTime });
       setEditingRoute(null);
   };
 
@@ -111,10 +112,16 @@ function App() {
 
   const rutasVisibles = getFilteredAndSortedRoutes();
 
+  // PREPARAR DATOS DEL MAPA
+  const routePath = selectedRoute?.technicalData?.geometry || [];
+  const startPos = routePath.length > 0 ? routePath[0] : null;
+  const endPos = routePath.length > 0 ? routePath[routePath.length - 1] : null;
+
   if (!isAuthenticated) return <Login onLogin={() => setIsAuthenticated(true)} />;
 
   return (
     <div className="flex h-screen bg-gray-100 font-sans overflow-hidden">
+      {/* SIDEBAR */}
       <aside className="w-64 bg-slate-800 text-gray-300 flex flex-col shrink-0 transition-all duration-300">
         <div className="h-16 flex items-center px-6 border-b border-slate-700">
           <div className="flex items-center gap-2 text-white font-bold text-lg"><Truck className="text-blue-500 w-6 h-6" /><span>Despacho</span></div>
@@ -137,53 +144,38 @@ function App() {
 
         {activeTab === 'monitoreo' && (
             <div className="flex-1 flex overflow-hidden p-6 gap-6 animate-[fadeIn_0.3s_ease-out]">
-                {/* MAPA INTERACTIVO REEMPLAZADO */}
+                {/* MAPA GOOGLE */}
                 <div className="flex-1 relative bg-slate-200 rounded-xl shadow-inner overflow-hidden border border-slate-300">
-                    <MapContainer center={[19.4326, -99.1332]} zoom={12} style={{ height: "100%", width: "100%" }}>
-                        <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-                        
-                        {/* SI HAY RUTA SELECCIONADA, LA DIBUJAMOS */}
-                        {selectedRoute && selectedRoute.technicalData?.geometry && (
-                            <>
-                                <MapUpdater routeCoords={selectedRoute.technicalData.geometry} />
-                                <Polyline positions={selectedRoute.technicalData.geometry} color="#3b82f6" weight={5} />
-                                <Marker position={selectedRoute.technicalData.geometry[0]}><Popup>Inicio: {selectedRoute.start}</Popup></Marker>
-                                <Marker position={selectedRoute.technicalData.geometry[selectedRoute.technicalData.geometry.length - 1]}><Popup>Fin: {selectedRoute.end}</Popup></Marker>
-                            </>
-                        )}
-                    </MapContainer>
-                    
-                    {!selectedRoute && (
-                        <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-4 py-2 rounded-lg shadow-md z-[500] border border-slate-200 max-w-xs">
-                            <h5 className="font-bold text-slate-800 text-sm">Mapa en Vivo</h5>
-                            <p className="text-xs text-slate-500">Selecciona un viaje para ver su ruta.</p>
-                        </div>
-                    )}
+                    {isLoaded ? (
+                        <GoogleMap mapContainerStyle={containerStyle} center={centerMX} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false, mapTypeControl: false }}>
+                            {selectedRoute && routePath.length > 0 && (
+                                <>
+                                    <Polyline path={routePath} options={{ strokeColor: "#3b82f6", strokeOpacity: 1, strokeWeight: 5 }} />
+                                    {startPos && <Marker position={startPos} label="A" />}
+                                    {endPos && <Marker position={endPos} label="B" />}
+                                </>
+                            )}
+                        </GoogleMap>
+                    ) : <div className="h-full flex items-center justify-center text-slate-500 gap-2"><Loader2 className="animate-spin"/> Cargando Google Maps...</div>}
+
+                    {!selectedRoute && (<div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-4 py-2 rounded-lg shadow-md z-[500] border border-slate-200 max-w-xs"><h5 className="font-bold text-slate-800 text-sm">Mapa en Vivo</h5><p className="text-xs text-slate-500">Selecciona un viaje para ver su ruta.</p></div>)}
                 </div>
 
+                {/* LISTA LATERAL */}
                 <div className="w-96 bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col overflow-hidden">
                     <div className="p-4 border-b border-gray-100 bg-gray-50 flex justify-between items-center shrink-0">
                         <h2 className="font-bold text-gray-800 flex items-center gap-2"><Clock className="w-4 h-4 text-blue-600"/> {viewHistory ? 'Historial' : 'Activos'}</h2>
-                        <button onClick={() => setViewHistory(!viewHistory)} className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition ${viewHistory ? 'bg-slate-800 text-white' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-100'}`}>
-                            {viewHistory ? <><Eye className="w-3 h-3"/> Ver Activos</> : <><History className="w-3 h-3"/> Ver Pasados</>}
-                        </button>
+                        <button onClick={() => setViewHistory(!viewHistory)} className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-bold transition ${viewHistory ? 'bg-slate-800 text-white' : 'bg-white border border-slate-300 text-slate-600 hover:bg-slate-100'}`}>{viewHistory ? <><Eye className="w-3 h-3"/> Ver Activos</> : <><History className="w-3 h-3"/> Ver Pasados</>}</button>
                     </div>
                     
                     <div className="flex-1 overflow-y-auto p-4 space-y-4">
                         {rutasVisibles.length === 0 && <div className="text-center py-10 text-slate-400"><p>{viewHistory ? 'No hay historial reciente.' : 'No hay rutas pendientes hoy.'}</p></div>}
 
                         {rutasVisibles.map((ruta) => (
-                            <div 
-                                key={ruta.id} 
-                                onClick={() => setSelectedRoute(ruta)} // AL HACER CLIC, SELECCIONAMOS PARA EL MAPA
-                                className={`border rounded-lg p-3 transition shadow-sm cursor-pointer ${selectedRoute?.id === ruta.id ? 'border-blue-500 ring-1 ring-blue-500 bg-blue-50/10' : 'bg-white border-slate-200 hover:shadow-md'}`}
-                            >
+                            <div key={ruta.id} onClick={() => setSelectedRoute(ruta)} className={`border rounded-lg p-3 transition shadow-sm cursor-pointer ${selectedRoute?.id === ruta.id ? 'border-blue-500 ring-1 ring-blue-500 bg-blue-50/10' : 'bg-white border-slate-200 hover:shadow-md'}`}>
                                 <div className="flex justify-between items-start mb-2">
                                     <div>
-                                        {ruta.serviceType === 'Prioritario' ? 
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 mb-1 border border-orange-200"><Zap className="w-3 h-3 fill-orange-500 text-orange-600" /> SOLICITADO: {ruta.createdDate || 'Hoy'}</span> : 
-                                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 mb-1 border border-blue-100"><Calendar className="w-3 h-3" /> PROGRAMADO: {ruta.scheduledDate}</span>
-                                        }
+                                        {ruta.serviceType === 'Prioritario' ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-orange-100 text-orange-700 mb-1 border border-orange-200"><Zap className="w-3 h-3 fill-orange-500 text-orange-600" /> SOLICITADO: {ruta.createdDate || 'Hoy'}</span> : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 mb-1 border border-blue-100"><Calendar className="w-3 h-3" /> PROGRAMADO: {ruta.scheduledDate}</span>}
                                         <h4 className="font-bold text-slate-800 text-sm">{ruta.client}</h4>
                                     </div>
                                     <button onClick={(e) => { e.stopPropagation(); setEditingRoute(ruta); }} className="text-slate-300 hover:text-blue-500 transition"><Edit className="w-4 h-4" /></button>
@@ -194,12 +186,8 @@ function App() {
                                     <div className="flex justify-between text-xs"><span className="text-slate-500">Fin:</span><span className="font-mono font-bold text-slate-700">{ruta.endTime || '--:--'}</span></div>
                                 </div>
                                 <div className="flex gap-2">
-                                    {ruta.status !== 'En Curso' && ruta.status !== 'Completado' && (
-                                        <button onClick={(e) => { e.stopPropagation(); handleStartTrip(ruta.id); }} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1 transition shadow-sm"><Play className="w-3 h-3 fill-current" /> INICIAR</button>
-                                    )}
-                                    {ruta.status === 'En Curso' && (
-                                        <button onClick={(e) => { e.stopPropagation(); handleEndTrip(ruta.id); }} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1 transition shadow-sm animate-pulse"><CheckSquare className="w-3 h-3" /> FINALIZAR</button>
-                                    )}
+                                    {ruta.status !== 'En Curso' && ruta.status !== 'Completado' && (<button onClick={(e) => { e.stopPropagation(); handleStartTrip(ruta.id); }} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1 transition shadow-sm"><Play className="w-3 h-3 fill-current" /> INICIAR</button>)}
+                                    {ruta.status === 'En Curso' && (<button onClick={(e) => { e.stopPropagation(); handleEndTrip(ruta.id); }} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1 transition shadow-sm animate-pulse"><CheckSquare className="w-3 h-3" /> FINALIZAR</button>)}
                                     {ruta.status === 'Completado' && <div className="w-full text-center text-xs font-bold text-green-600 py-1.5 bg-green-50 rounded border border-green-100">✅ FINALIZADO</div>}
                                 </div>
                             </div>

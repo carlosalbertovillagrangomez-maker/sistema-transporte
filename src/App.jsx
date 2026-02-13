@@ -15,11 +15,14 @@ import Login from './Login';
 import { db } from './firebase';
 import { collection, onSnapshot, query, orderBy, updateDoc, doc } from 'firebase/firestore';
 
+// === TU NUEVA CLAVE DE API ===
+const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
+
 // === CONFIGURACIÓN GOOGLE MAPS ===
-const GOOGLE_MAPS_API_KEY = "AIzaSyCue-ppitnj81zowobWCTiBvhHdqCDUrqg"; // TU CLAVE
 const containerStyle = { width: '100%', height: '100%' };
 const centerMX = { lat: 19.4326, lng: -99.1332 }; // CDMX
-const libraries = ['places']; // Misma config que en Planificación
+// Importante para no causar conflictos con Planificacion
+const libraries = ['places']; 
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);

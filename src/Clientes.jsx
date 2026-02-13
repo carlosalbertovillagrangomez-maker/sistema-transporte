@@ -1,49 +1,64 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Users, Building, MapPin, Plus, Trash2, Save, X, User, Phone, Mail, Layout, Loader2, Filter, Pencil } from 'lucide-react';
 
 // FIREBASE
 import { db } from './firebase';
 import { collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy, updateDoc } from 'firebase/firestore';
 
-// Componente Autocomplete (Se mantiene igual)
-const AddressAutocomplete = ({ value, onSelect, placeholder }) => {
-    const [suggestions, setSuggestions] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
-    const [inputValue, setInputValue] = useState(value || '');
+// GOOGLE MAPS
+import { useJsApiLoader, Autocomplete } from '@react-google-maps/api';
 
-    // Sincronizar input cuando editamos
+// === CLAVE DE API ===
+const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0";
+const libraries = ['places'];
+
+// === NUEVO COMPONENTE AUTOCOMPLETE (GOOGLE) ===
+const AddressAutocomplete = ({ value, onSelect, placeholder }) => {
+    const [inputValue, setInputValue] = useState(value || '');
+    const autocompleteRef = useRef(null);
+
     useEffect(() => { setInputValue(value || ''); }, [value]);
 
-    const handleSearch = async (query) => {
-        setInputValue(query);
-        if (query.length < 3) { setSuggestions([]); return; }
-        setIsLoading(true);
-        try {
-            const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${query}&countrycodes=mx&limit=5&addressdetails=1`);
-            const data = await response.json();
-            setSuggestions(data);
-        } catch (error) { console.error(error); } finally { setIsLoading(false); }
+    const options = {
+        componentRestrictions: { country: "mx" },
+        fields: ["address_components", "geometry", "formatted_address"],
+    };
+
+    const handlePlaceChanged = () => {
+        if (autocompleteRef.current !== null) {
+            const place = autocompleteRef.current.getPlace();
+            if (place.geometry && place.geometry.location) {
+                const address = place.formatted_address;
+                const lat = place.geometry.location.lat();
+                const lng = place.geometry.location.lng();
+                
+                setInputValue(address);
+                onSelect({ address, lat, lon: lng }); // Google usa 'lng', tu código usa 'lon'
+            }
+        }
     };
 
     return (
-        <div className="relative">
-            <input type="text" placeholder={placeholder} className="w-full bg-white border border-slate-300 text-xs rounded p-2 outline-none"
-                value={inputValue} onChange={(e) => handleSearch(e.target.value)} />
-            {isLoading && <Loader2 className="absolute right-2 top-2 w-3 h-3 animate-spin text-slate-400" />}
-            {suggestions.length > 0 && (
-                <ul className="absolute left-0 right-0 top-full mt-1 bg-white border border-slate-200 rounded shadow-xl z-50 max-h-40 overflow-y-auto">
-                    {suggestions.map((item, idx) => (
-                        <li key={idx} onClick={() => { setInputValue(item.display_name); setSuggestions([]); onSelect(item); }} className="px-3 py-2 text-xs hover:bg-blue-50 cursor-pointer border-b border-slate-50 truncate">
-                            {item.display_name}
-                        </li>
-                    ))}
-                </ul>
-            )}
-        </div>
+        <Autocomplete
+            onLoad={(ref) => (autocompleteRef.current = ref)}
+            onPlaceChanged={handlePlaceChanged}
+            options={options}
+        >
+            <input 
+                type="text" 
+                placeholder={placeholder} 
+                className="w-full bg-white border border-slate-300 text-xs rounded p-2 outline-none focus:border-blue-500 transition"
+                value={inputValue} 
+                onChange={(e) => setInputValue(e.target.value)} 
+            />
+        </Autocomplete>
     );
 };
 
 export default function Clientes() {
+  // Cargar Google Maps (Usamos el mismo ID que en App.jsx para evitar errores)
+  const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries });
+
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(true);
   
@@ -85,7 +100,6 @@ export default function Clientes() {
               const clientRef = doc(db, "clientes", editingId);
               await updateDoc(clientRef, {
                   ...newClient,
-                  // No actualizamos 'created' ni 'joined' para mantener la fecha original
               });
           } else {
               // === MODO CREACIÓN ===
@@ -123,7 +137,7 @@ export default function Clientes() {
       setNewClient({ name: '', type: 'Empresa', phone: '', email: '', users: [], locations: [] });
       setTempUser({ name: '', email: '', role: 'Encargado' });
       setTempLoc({ alias: '', address: '', lat: null, lon: null, assignedTo: 'General' });
-      setEditingId(null); // Importante: Limpiar ID de edición
+      setEditingId(null);
   };
 
   const handleDelete = async (id) => {
@@ -141,13 +155,16 @@ export default function Clientes() {
   const addLocation = () => {
       if(!tempLoc.alias || !tempLoc.address) return alert("Define un alias y dirección");
       setNewClient({...newClient, locations: [...newClient.locations, tempLoc]});
+      // Resetear formulario de ubicación
       setTempLoc({ alias: '', address: '', lat: null, lon: null, assignedTo: 'General' });
   };
 
   const filteredClients = filterType === 'Todos' ? clients : clients.filter(c => c.type === filterType);
 
+  if (!isLoaded) return <div className="flex items-center justify-center h-full text-slate-400">Cargando módulos...</div>;
+
   return (
-    <div className="flex-1 p-8 bg-slate-50 overflow-y-auto h-full">
+    <div className="flex-1 p-8 bg-slate-50 overflow-y-auto h-full relative">
       <div className="flex justify-between items-center mb-6">
         <div>
             <h2 className="text-2xl font-bold text-slate-800">Cartera de Clientes</h2>
@@ -177,7 +194,6 @@ export default function Clientes() {
                           {client.type === 'Empresa' ? <Building className="w-5 h-5"/> : <User className="w-5 h-5"/>}
                       </div>
                       <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition">
-                          {/* BOTÓN EDITAR RESTAURADO */}
                           <button onClick={() => handleEdit(client)} className="text-slate-400 hover:text-blue-600 bg-slate-50 p-1.5 rounded hover:bg-blue-50 transition"><Pencil className="w-4 h-4"/></button>
                           <button onClick={() => handleDelete(client.id)} className="text-slate-400 hover:text-red-500 bg-slate-50 p-1.5 rounded hover:bg-red-50 transition"><Trash2 className="w-4 h-4"/></button>
                       </div>
@@ -215,6 +231,7 @@ export default function Clientes() {
                 </div>
                 
                 <div className="flex-1 flex overflow-hidden">
+                    {/* COLUMNA IZQUIERDA */}
                     <div className="w-1/3 p-6 border-r border-slate-100 overflow-y-auto bg-slate-50/50">
                         <h4 className="text-xs font-bold text-slate-500 uppercase mb-4">Información General</h4>
                         <div className="space-y-4">
@@ -231,7 +248,9 @@ export default function Clientes() {
                         </div>
                     </div>
 
+                    {/* COLUMNA DERECHA */}
                     <div className="flex-1 p-6 overflow-y-auto">
+                        {/* SECCIÓN USUARIOS (SOLO EMPRESAS) */}
                         {newClient.type === 'Empresa' && (
                             <div className="mb-8">
                                 <h4 className="text-xs font-bold text-slate-500 uppercase mb-3 flex items-center gap-2"><Users className="w-4 h-4"/> Usuarios Autorizados</h4>
@@ -253,27 +272,51 @@ export default function Clientes() {
                             </div>
                         )}
 
+                        {/* SECCIÓN UBICACIONES */}
                         <div>
                             <h4 className="text-xs font-bold text-slate-500 uppercase mb-3 flex items-center gap-2"><MapPin className="w-4 h-4"/> Ubicaciones Frecuentes</h4>
                             <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 mb-3">
                                 <div className="space-y-2 mb-2">
                                     <div className="flex gap-2">
                                         <input placeholder="Alias (Ej. Bodega Norte)" className="text-xs p-2 rounded border flex-1" value={tempLoc.alias} onChange={e => setTempLoc({...tempLoc, alias: e.target.value})} />
+                                        
+                                        {/* === AQUÍ ESTÁ LA CORRECCIÓN: SELECTOR DE USUARIOS === */}
                                         {newClient.type === 'Empresa' && (
-                                            <select className="text-xs p-2 rounded border w-1/3 text-slate-600 outline-none" value={tempLoc.assignedTo} onChange={e => setTempLoc({...tempLoc, assignedTo: e.target.value})}>
+                                            <select 
+                                                className="text-xs p-2 rounded border w-1/3 text-slate-600 outline-none bg-white" 
+                                                value={tempLoc.assignedTo} 
+                                                onChange={e => setTempLoc({...tempLoc, assignedTo: e.target.value})}
+                                            >
                                                 <option value="General">🏢 General (Empresa)</option>
-                                                {newClient.users.map((u, i) => (<option key={i} value={u.name}>👤 {u.name}</option>))}
+                                                {/* Iteramos sobre los usuarios ACTUALES que estás agregando */}
+                                                {newClient.users.map((u, i) => (
+                                                    <option key={i} value={u.name}>👤 {u.name}</option>
+                                                ))}
                                             </select>
                                         )}
                                     </div>
-                                    <AddressAutocomplete placeholder="Buscar dirección..." value={tempLoc.address} onSelect={(item) => setTempLoc({...tempLoc, address: item.display_name, lat: item.lat, lon: item.lon})} />
+                                    
+                                    {/* Componente Google Autocomplete */}
+                                    <AddressAutocomplete 
+                                        placeholder="Buscar dirección en Google Maps..." 
+                                        value={tempLoc.address} 
+                                        onSelect={(item) => setTempLoc({...tempLoc, address: item.address, lat: item.lat, lon: item.lon})} 
+                                    />
                                 </div>
                                 <button onClick={addLocation} className="w-full py-1.5 bg-blue-600 text-white text-xs rounded font-bold hover:bg-blue-700">Guardar Ubicación</button>
+                                
                                 <div className="space-y-2 mt-3">
                                     {newClient.locations.map((l, i) => (
                                         <div key={i} className="flex justify-between items-center text-xs bg-white p-2 rounded border border-blue-100">
                                             <div>
-                                                <p className="font-bold text-slate-800 flex items-center gap-2">{l.alias} {l.assignedTo && l.assignedTo !== 'General' ? <span className="text-[9px] bg-purple-100 text-purple-700 px-1.5 rounded-full">👤 {l.assignedTo}</span> : <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 rounded-full">🏢 General</span>}</p>
+                                                <p className="font-bold text-slate-800 flex items-center gap-2">
+                                                    {l.alias} 
+                                                    {l.assignedTo && l.assignedTo !== 'General' ? 
+                                                        <span className="text-[9px] bg-purple-100 text-purple-700 px-1.5 rounded-full">👤 {l.assignedTo}</span> 
+                                                        : 
+                                                        <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 rounded-full">🏢 General</span>
+                                                    }
+                                                </p>
                                                 <p className="text-slate-500 truncate w-64">{l.address}</p>
                                             </div>
                                             <button onClick={() => setNewClient({...newClient, locations: newClient.locations.filter((_, idx) => idx !== i)})} className="text-red-400"><Trash2 className="w-3 h-3"/></button>
@@ -289,6 +332,25 @@ export default function Clientes() {
             </div>
         </div>
       )}
+
+      {/* ESTILOS PARA QUE GOOGLE NO QUEDE OCULTO */}
+      <style>{`
+        .pac-container {
+          z-index: 20000 !important;
+          border-radius: 8px;
+          margin-top: 5px;
+          box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+          font-family: inherit;
+        }
+        .pac-item {
+          padding: 8px 12px;
+          font-size: 12px;
+          cursor: pointer;
+        }
+        .pac-item:hover {
+          background-color: #f1f5f9;
+        }
+      `}</style>
     </div>
   );
 }

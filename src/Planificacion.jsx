@@ -1,65 +1,59 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, MapPin, X, Trash2, User, Loader2, Share2, Zap, Calendar, Navigation, ArrowDown, Star, Building, Briefcase } from 'lucide-react';
-// GOOGLE MAPS
-import { GoogleMap, useJsApiLoader, Marker, Polyline } from '@react-google-maps/api';
+import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, ArrowDown, Star } from 'lucide-react';
+// GOOGLE MAPS (Importamos Autocomplete)
+import { GoogleMap, useJsApiLoader, Marker, Polyline, Autocomplete } from '@react-google-maps/api';
 
 // FIREBASE
 import { db } from './firebase';
 import { collection, addDoc, onSnapshot, doc, query, orderBy, deleteDoc } from 'firebase/firestore';
 
-// === TU CLAVE DE API ===
-const GOOGLE_MAPS_API_KEY = "AIzaSyCue-ppitnj81zowobWCTiBvhHdqCDUrqg"; 
+// === TU NUEVA CLAVE DE API ===
+const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
 
 // === CONFIGURACIÓN GOOGLE MAPS ===
 const containerStyle = { width: '100%', height: '100%' };
 const centerMX = { lat: 19.4326, lng: -99.1332 }; // CDMX
-const libraries = ['places']; // Librerías necesarias
+// IMPORTANTE: 'places' es necesario para el buscador
+const libraries = ['places']; 
 
-// === AUTOCOMPLETE (Usamos Nominatim para búsqueda gratuita, pero convertimos a formato Google) ===
+// === NUEVO COMPONENTE AUTOCOMPLETE DE GOOGLE ===
 const AddressAutocomplete = ({ value, onSelect, placeholder, iconColor = "text-slate-400", zIndex = 50, favorites = [] }) => {
-    const [suggestions, setSuggestions] = useState([]);
-    const [isLoading, setIsLoading] = useState(false);
-    const [showSuggestions, setShowSuggestions] = useState(false);
     const [inputValue, setInputValue] = useState(value || '');
+    const autocompleteRef = useRef(null);
 
     useEffect(() => { setInputValue(value || ''); }, [value]);
 
     const personalFavs = favorites.filter(f => f.assignedTo && f.assignedTo !== 'General');
     const generalFavs = favorites.filter(f => !f.assignedTo || f.assignedTo === 'General');
 
-    const handleSearch = async (query) => {
-        setInputValue(query);
-        if (query.length < 3) { setSuggestions([]); return; }
-        setIsLoading(true);
-        try {
-            const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${query}&countrycodes=mx&limit=5&addressdetails=1`);
-            const data = await response.json();
-            setSuggestions(data);
-            setShowSuggestions(true);
-        } catch (error) { console.error(error); } finally { setIsLoading(false); }
+    // Configuración para restringir a México
+    const options = {
+        componentRestrictions: { country: "mx" },
+        fields: ["address_components", "geometry", "formatted_address"],
     };
 
-    const handleSelection = (item) => {
-        setInputValue(item.display_name);
-        // Google usa { lat, lng }, Nominatim devuelve strings, convertimos aquí
-        onSelect({ 
-            address: item.display_name, 
-            lat: parseFloat(item.lat), 
-            lng: parseFloat(item.lon) // Ojo: Nominatim usa "lon", Google usa "lng"
-        });
-        setShowSuggestions(false);
-        setSuggestions([]);
+    const handlePlaceChanged = () => {
+        if (autocompleteRef.current !== null) {
+            const place = autocompleteRef.current.getPlace();
+            
+            if (place.geometry && place.geometry.location) {
+                const address = place.formatted_address;
+                const lat = place.geometry.location.lat();
+                const lng = place.geometry.location.lng();
+
+                setInputValue(address);
+                onSelect({ address, lat, lng });
+            }
+        }
     };
 
     const handleFavoriteClick = (fav) => {
         setInputValue(fav.address);
-        // Aseguramos formato Google
         onSelect({ 
             address: fav.address, 
             lat: parseFloat(fav.lat), 
-            lng: parseFloat(fav.lon || fav.lng) // Compatibilidad
+            lng: parseFloat(fav.lon || fav.lng) 
         });
-        setShowSuggestions(false);
     };
 
     return (
@@ -69,11 +63,24 @@ const AddressAutocomplete = ({ value, onSelect, placeholder, iconColor = "text-s
                     <MapPin className={`w-4 h-4 ${iconColor === 'green' ? 'text-green-700' : iconColor === 'red' ? 'text-red-600' : 'text-blue-600'}`} />
                 </div>
                 <div className="flex-1 relative">
-                    <input type="text" placeholder={placeholder} className="w-full bg-slate-50 border border-slate-300 text-sm rounded-lg p-2.5 outline-none focus:border-blue-500 focus:bg-white transition"
-                        value={inputValue} onChange={(e) => handleSearch(e.target.value)} onBlur={() => setTimeout(() => setShowSuggestions(false), 200)} />
-                    {isLoading && <Loader2 className="absolute right-3 top-2.5 w-4 h-4 animate-spin text-slate-400" />}
+                    {/* Componente Oficial de Google */}
+                    <Autocomplete
+                        onLoad={(ref) => (autocompleteRef.current = ref)}
+                        onPlaceChanged={handlePlaceChanged}
+                        options={options}
+                    >
+                        <input 
+                            type="text" 
+                            placeholder={placeholder} 
+                            className="w-full bg-slate-50 border border-slate-300 text-sm rounded-lg p-2.5 outline-none focus:border-blue-500 focus:bg-white transition shadow-sm"
+                            value={inputValue} 
+                            onChange={(e) => setInputValue(e.target.value)} 
+                        />
+                    </Autocomplete>
                 </div>
             </div>
+
+            {/* Favoritos */}
             {favorites && favorites.length > 0 && (
                 <div className="pl-[52px] mt-2 space-y-2">
                     {personalFavs.length > 0 && (
@@ -83,16 +90,6 @@ const AddressAutocomplete = ({ value, onSelect, placeholder, iconColor = "text-s
                         <div>{personalFavs.length > 0 && <p className="text-[9px] font-bold text-slate-400 uppercase mb-1 ml-1 mt-2">🏢 Empresa</p>}<div className="flex flex-wrap gap-2">{generalFavs.map((fav, i) => (<button key={i} onClick={() => handleFavoriteClick(fav)} className="text-[10px] bg-yellow-50 text-slate-600 border border-yellow-200 px-2 py-1 rounded-lg hover:bg-yellow-100 flex items-center gap-1 transition shadow-sm whitespace-nowrap"><Star className="w-3 h-3 fill-yellow-400 text-yellow-500"/> <span className="font-bold">{fav.alias}</span></button>))}</div></div>
                     )}
                 </div>
-            )}
-            {showSuggestions && suggestions.length > 0 && (
-                <ul className="absolute left-14 right-0 top-full mt-1 bg-white border border-slate-200 rounded-lg shadow-2xl max-h-48 overflow-y-auto ring-1 ring-black/5 z-[100]">
-                    {suggestions.map((item, index) => (
-                        <li key={index} onClick={() => handleSelection(item)} className="px-3 py-2 text-xs text-slate-600 hover:bg-blue-50 cursor-pointer border-b border-slate-50 last:border-0">
-                            <span className="font-bold block text-slate-800">{item.address.road || item.display_name.split(',')[0]}</span>
-                            <span className="block truncate opacity-70">{item.display_name}</span>
-                        </li>
-                    ))}
-                </ul>
             )}
         </div>
     );
@@ -138,13 +135,10 @@ export default function Planificacion() {
           const bounds = new window.google.maps.LatLngBounds();
           let hasPoints = false;
 
-          // Si estamos viendo una ruta del historial
           if (viewRoute?.technicalData?.geometry) {
               viewRoute.technicalData.geometry.forEach(coord => bounds.extend(coord));
               hasPoints = true;
-          } 
-          // Si estamos creando una ruta nueva
-          else {
+          } else {
               if (startPoint) { bounds.extend(startPoint); hasPoints = true; }
               if (endPoint) { bounds.extend(endPoint); hasPoints = true; }
               if (routeInfo.geometry.length > 0) {
@@ -152,10 +146,7 @@ export default function Planificacion() {
                   hasPoints = true;
               }
           }
-
-          if (hasPoints) {
-              mapRef.current.fitBounds(bounds);
-          }
+          if (hasPoints) mapRef.current.fitBounds(bounds);
       }
   }, [startPoint, endPoint, routeInfo, viewRoute, isLoaded]);
 
@@ -182,7 +173,7 @@ export default function Planificacion() {
       });
   };
 
-  // CÁLCULO DE RUTA (OSRM para calcular geometría, luego convertir a Google)
+  // CÁLCULO DE RUTA
   useEffect(() => { if (startPoint && endPoint) calculateRoute(); }, [startPoint, endPoint, waypoints]);
 
   const calculateRoute = async () => {
@@ -192,7 +183,6 @@ export default function Planificacion() {
           const validPoints = points.filter(p => p && p.lat && p.lng);
           if (validPoints.length < 2) return;
           
-          // OSRM usa lon,lat
           const coordsString = validPoints.map(p => `${p.lng},${p.lat}`).join(';');
           const response = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordsString}?overview=full&geometries=geojson&steps=true`);
           const data = await response.json();
@@ -200,7 +190,6 @@ export default function Planificacion() {
           if (data.code === 'Ok' && data.routes.length > 0) {
               const ruta = data.routes[0];
               const segmentsData = ruta.legs.map(leg => ({ distance: (leg.distance / 1000).toFixed(1), duration: Math.round(leg.duration / 60) }));
-              // CORRECCIÓN CRÍTICA: Convertimos [lon, lat] a { lat, lng } para que Firebase y Google sean felices
               const geometry = ruta.geometry.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
               
               setRouteInfo({ totalDistance: (ruta.distance / 1000).toFixed(1), totalDuration: Math.round(ruta.duration / 60), segments: segmentsData, geometry: geometry });
@@ -218,13 +207,12 @@ export default function Planificacion() {
       const rutaSave = {
           ...newRoute,
           start: startPoint.address, end: endPoint.address, waypoints: waypoints.map(w => w.address),
-          technicalData: { ...routeInfo }, // Ya incluye geometry en formato objeto {lat, lng}
+          technicalData: { ...routeInfo },
           finalDate: newRoute.serviceType === 'Programado' ? newRoute.scheduledDate : today, createdDate: new Date().toISOString()
       };
       try { 
           await addDoc(collection(db, "rutas"), rutaSave); 
           setShowModal(false); 
-          // Reset
           setNewRoute({ client: '', requestUser: '', driver: '', status: 'Pendiente', serviceType: 'Prioritario', scheduledDate: '', scheduledTime: '' });
           setStartPoint(null); setEndPoint(null); setWaypoints([]); setRouteInfo({ totalDistance: 0, totalDuration: 0, segments: [], geometry: [] }); setSelectedClientData(null);
       } catch (e) { alert(e.message); }
@@ -239,10 +227,10 @@ export default function Planificacion() {
   };
 
   const handleMapLoad = useCallback((map) => { mapRef.current = map; }, []);
-
-  // Determinar qué mostrar en el mapa principal
   const routeToDisplay = viewRoute?.technicalData?.geometry ? viewRoute.technicalData.geometry : [];
   const mapCenter = routeToDisplay.length > 0 ? routeToDisplay[0] : centerMX;
+
+  if (!isLoaded) return <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin w-8 h-8 text-blue-600"/></div>;
 
   return (
     <div className="flex-1 p-6 bg-slate-50 h-full flex flex-col overflow-hidden relative">
@@ -252,7 +240,6 @@ export default function Planificacion() {
       </div>
 
       <div className="flex-1 flex gap-6 overflow-hidden">
-          {/* LISTA IZQUIERDA */}
           <div className="w-1/3 flex flex-col gap-4 overflow-y-auto pr-2 pb-4">
               {routesList.map((ruta) => (
                 <div key={ruta.id} onClick={() => setViewRoute(ruta)} className={`bg-white p-4 rounded-xl shadow-sm border transition cursor-pointer group ${viewRoute?.id === ruta.id ? 'border-blue-500 ring-1 ring-blue-500' : 'border-slate-200 hover:shadow-md'}`}>
@@ -270,23 +257,19 @@ export default function Planificacion() {
               ))}
           </div>
 
-          {/* MAPA GOOGLE PRINCIPAL */}
           <div className="flex-1 bg-slate-200 rounded-xl border border-slate-300 relative overflow-hidden flex items-center justify-center">
-             {isLoaded ? (
-                 <GoogleMap mapContainerStyle={containerStyle} center={mapCenter} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false, mapTypeControl: false }}>
-                     {routeToDisplay.length > 0 && (
-                         <>
-                            <Polyline path={routeToDisplay} options={{ strokeColor: "#3b82f6", strokeOpacity: 1, strokeWeight: 5 }} />
-                            <Marker position={routeToDisplay[0]} label="A" />
-                            <Marker position={routeToDisplay[routeToDisplay.length - 1]} label="B" />
-                         </>
-                     )}
-                 </GoogleMap>
-             ) : <div className="text-slate-500 flex items-center gap-2"><Loader2 className="animate-spin"/> Cargando Google Maps...</div>}
+             <GoogleMap mapContainerStyle={containerStyle} center={mapCenter} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false, mapTypeControl: false }}>
+                 {routeToDisplay.length > 0 && (
+                     <>
+                        <Polyline path={routeToDisplay} options={{ strokeColor: "#3b82f6", strokeOpacity: 1, strokeWeight: 5 }} />
+                        <Marker position={routeToDisplay[0]} label="A" />
+                        <Marker position={routeToDisplay[routeToDisplay.length - 1]} label="B" />
+                     </>
+                 )}
+             </GoogleMap>
           </div>
       </div>
 
-      {/* MODAL NUEVA RUTA */}
       {showModal && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <div className="bg-white w-full max-w-5xl h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
@@ -295,7 +278,6 @@ export default function Planificacion() {
                     <button onClick={() => setShowModal(false)}><X className="w-6 h-6 text-slate-400 hover:text-red-500" /></button>
                 </div>
                 <div className="flex-1 flex overflow-hidden">
-                    {/* FORMULARIO IZQUIERDO */}
                     <div className="w-1/3 p-6 overflow-y-auto border-r border-slate-100 bg-white z-10 shadow-lg relative">
                         <div className="space-y-5">
                             <div>
@@ -322,15 +304,12 @@ export default function Planificacion() {
                         </div>
                     </div>
 
-                    {/* MAPA GOOGLE EN EL MODAL */}
                     <div className="flex-1 bg-slate-100 relative">
-                        {isLoaded ? (
-                            <GoogleMap mapContainerStyle={containerStyle} center={centerMX} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false }}>
-                                {startPoint && <Marker position={startPoint} label="A" />}
-                                {endPoint && <Marker position={endPoint} label="B" />}
-                                {routeInfo.geometry.length > 0 && <Polyline path={routeInfo.geometry} options={{ strokeColor: "#3b82f6", strokeOpacity: 1, strokeWeight: 5 }} />}
-                            </GoogleMap>
-                        ) : <div className="p-10 text-center text-slate-500">Cargando Mapa...</div>}
+                        <GoogleMap mapContainerStyle={containerStyle} center={centerMX} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false }}>
+                            {startPoint && <Marker position={startPoint} label="A" />}
+                            {endPoint && <Marker position={endPoint} label="B" />}
+                            {routeInfo.geometry.length > 0 && <Polyline path={routeInfo.geometry} options={{ strokeColor: "#3b82f6", strokeOpacity: 1, strokeWeight: 5 }} />}
+                        </GoogleMap>
                         
                         <div className="absolute bottom-4 right-4 bg-white p-4 rounded-xl shadow-xl border border-slate-200 max-w-xs z-[1000]">
                              <h5 className="font-bold text-slate-800 text-sm mb-2">Resumen Total</h5>
@@ -345,6 +324,31 @@ export default function Planificacion() {
             </div>
         </div>
       )}
+
+      {/* ESTILOS ESPECÍFICOS PARA ARREGLAR GOOGLE AUTOCOMPLETE */}
+      <style>{`
+        .pac-container {
+          z-index: 20000 !important;
+          border-radius: 8px;
+          margin-top: 5px;
+          box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+          font-family: inherit;
+        }
+        .pac-item {
+          padding: 10px;
+          font-size: 13px;
+          cursor: pointer;
+          border-top: 1px solid #f1f5f9;
+        }
+        .pac-item:hover {
+          background-color: #f8fafc;
+        }
+        .pac-item-query {
+          font-size: 13px;
+          color: #1e293b;
+          font-weight: 600;
+        }
+      `}</style>
     </div>
   );
 }

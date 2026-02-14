@@ -1,22 +1,20 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, ArrowDown, Star } from 'lucide-react';
-// GOOGLE MAPS (Importamos Autocomplete)
+import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, ArrowDown, Star, Clock, MoreVertical, ChevronRight } from 'lucide-react';
+// GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline, Autocomplete } from '@react-google-maps/api';
 
 // FIREBASE
 import { db } from './firebase';
 import { collection, addDoc, onSnapshot, doc, query, orderBy, deleteDoc } from 'firebase/firestore';
 
-// === TU NUEVA CLAVE DE API ===
+// TU CLAVE DE API
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
 
-// === CONFIGURACIÓN GOOGLE MAPS ===
 const containerStyle = { width: '100%', height: '100%' };
-const centerMX = { lat: 19.4326, lng: -99.1332 }; // CDMX
-// IMPORTANTE: 'places' es necesario para el buscador
+const centerMX = { lat: 19.4326, lng: -99.1332 }; 
 const libraries = ['places']; 
 
-// === NUEVO COMPONENTE AUTOCOMPLETE DE GOOGLE ===
+// --- COMPONENTE AUTOCOMPLETE ---
 const AddressAutocomplete = ({ value, onSelect, placeholder, iconColor = "text-slate-400", zIndex = 50, favorites = [] }) => {
     const [inputValue, setInputValue] = useState(value || '');
     const autocompleteRef = useRef(null);
@@ -26,7 +24,6 @@ const AddressAutocomplete = ({ value, onSelect, placeholder, iconColor = "text-s
     const personalFavs = favorites.filter(f => f.assignedTo && f.assignedTo !== 'General');
     const generalFavs = favorites.filter(f => !f.assignedTo || f.assignedTo === 'General');
 
-    // Configuración para restringir a México
     const options = {
         componentRestrictions: { country: "mx" },
         fields: ["address_components", "geometry", "formatted_address"],
@@ -35,12 +32,10 @@ const AddressAutocomplete = ({ value, onSelect, placeholder, iconColor = "text-s
     const handlePlaceChanged = () => {
         if (autocompleteRef.current !== null) {
             const place = autocompleteRef.current.getPlace();
-            
             if (place.geometry && place.geometry.location) {
                 const address = place.formatted_address;
                 const lat = place.geometry.location.lat();
                 const lng = place.geometry.location.lng();
-
                 setInputValue(address);
                 onSelect({ address, lat, lng });
             }
@@ -63,7 +58,6 @@ const AddressAutocomplete = ({ value, onSelect, placeholder, iconColor = "text-s
                     <MapPin className={`w-4 h-4 ${iconColor === 'green' ? 'text-green-700' : iconColor === 'red' ? 'text-red-600' : 'text-blue-600'}`} />
                 </div>
                 <div className="flex-1 relative">
-                    {/* Componente Oficial de Google */}
                     <Autocomplete
                         onLoad={(ref) => (autocompleteRef.current = ref)}
                         onPlaceChanged={handlePlaceChanged}
@@ -79,8 +73,6 @@ const AddressAutocomplete = ({ value, onSelect, placeholder, iconColor = "text-s
                     </Autocomplete>
                 </div>
             </div>
-
-            {/* Favoritos */}
             {favorites && favorites.length > 0 && (
                 <div className="pl-[52px] mt-2 space-y-2">
                     {personalFavs.length > 0 && (
@@ -95,31 +87,36 @@ const AddressAutocomplete = ({ value, onSelect, placeholder, iconColor = "text-s
     );
 };
 
+// --- INFO DEL TRAMO ---
 const SegmentInfo = ({ distance, duration }) => {
     if (!distance) return <div className="pl-[19px] py-1"><div className="w-0.5 h-4 bg-slate-200 ml-0.5"></div></div>;
     return (
         <div className="pl-[20px] py-2 flex items-center relative z-0">
             <div className="w-0.5 h-full absolute left-[21px] top-0 bottom-0 bg-slate-200 -z-10"></div>
-            <div className="bg-slate-100 border border-slate-200 rounded px-2 py-1 text-[10px] text-slate-500 flex items-center gap-2 shadow-sm ml-4">
-                <span className="flex items-center gap-1"><ArrowDown className="w-3 h-3"/> Tramo:</span><span className="font-bold text-slate-700">{distance} km</span><span className="text-slate-300">|</span><span className="font-bold text-green-600">{duration} min</span>
+            <div className="bg-slate-100 border border-slate-200 rounded px-2 py-1 text-[10px] text-slate-500 flex items-center gap-2 shadow-sm ml-4 animate-in fade-in slide-in-from-left-2 duration-300">
+                <span className="flex items-center gap-1"><ArrowDown className="w-3 h-3"/> Tramo:</span>
+                <span className="font-bold text-slate-700">{distance} km</span>
+                <span className="text-slate-300">|</span>
+                <span className="font-bold text-green-600">{duration} min</span>
             </div>
         </div>
     );
 };
+
+// --- HELPER PARA LETRAS ---
+const getMarkerLabel = (index) => String.fromCharCode(65 + index);
 
 export default function Planificacion() {
   const [showModal, setShowModal] = useState(false);
   const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries });
   const mapRef = useRef(null);
 
-  // DATOS FIREBASE
   const [availableDrivers, setAvailableDrivers] = useState([]);
   const [availableClients, setAvailableClients] = useState([]);
   const [routesList, setRoutesList] = useState([]);
 
-  // ESTADOS MAPA Y RUTA
   const [viewRoute, setViewRoute] = useState(null);
-  const [newRoute, setNewRoute] = useState({ client: '', requestUser: '', driver: '', status: 'Pendiente', serviceType: 'Prioritario', scheduledDate: '', scheduledTime: '' });
+  const [newRoute, setNewRoute] = useState({ client: '', requestUser: '', driver: '', driverId: '', status: 'Pendiente', serviceType: 'Prioritario', scheduledDate: '', scheduledTime: '' });
   const [selectedClientData, setSelectedClientData] = useState(null);
   
   const [startPoint, setStartPoint] = useState(null);
@@ -129,18 +126,19 @@ export default function Planificacion() {
   const [routeInfo, setRouteInfo] = useState({ totalDistance: 0, totalDuration: 0, segments: [], geometry: [] });
   const [isLoadingRoute, setIsLoadingRoute] = useState(false);
 
-  // EFECTO PARA CENTRAR EL MAPA
+  // CENTRAR MAPA
   useEffect(() => {
       if(isLoaded && mapRef.current) {
           const bounds = new window.google.maps.LatLngBounds();
           let hasPoints = false;
-
           if (viewRoute?.technicalData?.geometry) {
               viewRoute.technicalData.geometry.forEach(coord => bounds.extend(coord));
               hasPoints = true;
           } else {
               if (startPoint) { bounds.extend(startPoint); hasPoints = true; }
               if (endPoint) { bounds.extend(endPoint); hasPoints = true; }
+              waypoints.forEach(wp => { if(wp.lat && wp.lng) { bounds.extend(wp); hasPoints = true; } });
+              
               if (routeInfo.geometry.length > 0) {
                   routeInfo.geometry.forEach(coord => bounds.extend(coord));
                   hasPoints = true;
@@ -148,9 +146,8 @@ export default function Planificacion() {
           }
           if (hasPoints) mapRef.current.fitBounds(bounds);
       }
-  }, [startPoint, endPoint, routeInfo, viewRoute, isLoaded]);
+  }, [startPoint, endPoint, waypoints, routeInfo, viewRoute, isLoaded]);
 
-  // CARGAR DATOS
   useEffect(() => {
     const u1 = onSnapshot(collection(db, "conductores"), (s) => setAvailableDrivers(s.docs.map(d => ({id: d.id, ...d.data()}))));
     const u2 = onSnapshot(collection(db, "clientes"), (s) => setAvailableClients(s.docs.map(d => ({id: d.id, ...d.data()}))));
@@ -164,6 +161,16 @@ export default function Planificacion() {
       setNewRoute({ ...newRoute, client: e.target.value, requestUser: '' });
   };
 
+  const handleDriverChange = (e) => {
+    const driverName = e.target.value;
+    const selectedDriver = availableDrivers.find(d => d.name === driverName);
+    if (selectedDriver) {
+        setNewRoute({ ...newRoute, driver: driverName, driverId: selectedDriver.id });
+    } else {
+        setNewRoute({ ...newRoute, driver: '', driverId: '' });
+    }
+  };
+
   const getFilteredFavorites = () => {
       if (!selectedClientData?.locations) return [];
       return selectedClientData.locations.filter(loc => {
@@ -173,7 +180,6 @@ export default function Planificacion() {
       });
   };
 
-  // CÁLCULO DE RUTA
   useEffect(() => { if (startPoint && endPoint) calculateRoute(); }, [startPoint, endPoint, waypoints]);
 
   const calculateRoute = async () => {
@@ -181,7 +187,11 @@ export default function Planificacion() {
       try {
           const points = [startPoint, ...waypoints, endPoint];
           const validPoints = points.filter(p => p && p.lat && p.lng);
-          if (validPoints.length < 2) return;
+          
+          if (validPoints.length < 2) {
+             setRouteInfo({ totalDistance: 0, totalDuration: 0, segments: [], geometry: [] });
+             return;
+          }
           
           const coordsString = validPoints.map(p => `${p.lng},${p.lat}`).join(';');
           const response = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordsString}?overview=full&geometries=geojson&steps=true`);
@@ -189,10 +199,18 @@ export default function Planificacion() {
           
           if (data.code === 'Ok' && data.routes.length > 0) {
               const ruta = data.routes[0];
-              const segmentsData = ruta.legs.map(leg => ({ distance: (leg.distance / 1000).toFixed(1), duration: Math.round(leg.duration / 60) }));
+              const segmentsData = ruta.legs.map(leg => ({ 
+                  distance: (leg.distance / 1000).toFixed(1), 
+                  duration: Math.round(leg.duration / 60) 
+              }));
               const geometry = ruta.geometry.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
               
-              setRouteInfo({ totalDistance: (ruta.distance / 1000).toFixed(1), totalDuration: Math.round(ruta.duration / 60), segments: segmentsData, geometry: geometry });
+              setRouteInfo({ 
+                  totalDistance: (ruta.distance / 1000).toFixed(1), 
+                  totalDuration: Math.round(ruta.duration / 60), 
+                  segments: segmentsData, 
+                  geometry: geometry 
+              });
           }
       } catch (error) { console.error("Error ruta:", error); } finally { setIsLoadingRoute(false); }
   };
@@ -202,25 +220,34 @@ export default function Planificacion() {
   const updateWaypoint = (i, item) => { const w = [...waypoints]; w[i] = item; setWaypoints(w); };
 
   const handleSaveRoute = async () => {
-      if(!newRoute.client || !endPoint || !newRoute.driver) return alert("Faltan datos.");
+      if(!newRoute.client || !endPoint || !newRoute.driver) return alert("Faltan datos obligatorios.");
       const today = new Date().toISOString().split('T')[0];
+      
       const rutaSave = {
           ...newRoute,
-          start: startPoint.address, end: endPoint.address, waypoints: waypoints.map(w => w.address),
+          driver: newRoute.driver,
+          driverId: newRoute.driverId, 
+          start: startPoint.address, 
+          end: endPoint.address, 
+          waypointsData: waypoints.map(w => ({ address: w.address, lat: w.lat, lng: w.lng })),
+          waypoints: waypoints.map(w => w.address),
+          startCoords: { lat: startPoint.lat, lng: startPoint.lng },
+          endCoords: { lat: endPoint.lat, lng: endPoint.lng },
           technicalData: { ...routeInfo },
-          finalDate: newRoute.serviceType === 'Programado' ? newRoute.scheduledDate : today, createdDate: new Date().toISOString()
+          finalDate: newRoute.serviceType === 'Programado' ? newRoute.scheduledDate : today, 
+          createdDate: new Date().toISOString()
       };
       try { 
           await addDoc(collection(db, "rutas"), rutaSave); 
           setShowModal(false); 
-          setNewRoute({ client: '', requestUser: '', driver: '', status: 'Pendiente', serviceType: 'Prioritario', scheduledDate: '', scheduledTime: '' });
+          setNewRoute({ client: '', requestUser: '', driver: '', driverId: '', status: 'Pendiente', serviceType: 'Prioritario', scheduledDate: '', scheduledTime: '' });
           setStartPoint(null); setEndPoint(null); setWaypoints([]); setRouteInfo({ totalDistance: 0, totalDuration: 0, segments: [], geometry: [] }); setSelectedClientData(null);
       } catch (e) { alert(e.message); }
   };
 
   const handleDeleteRoute = async (id, e) => {
     e.stopPropagation();
-    if(confirm("¿Eliminar ruta?")) {
+    if(confirm("¿Eliminar ruta permanentemente?")) {
         await deleteDoc(doc(db, "rutas", id));
         if(viewRoute?.id === id) setViewRoute(null);
     }
@@ -228,7 +255,9 @@ export default function Planificacion() {
 
   const handleMapLoad = useCallback((map) => { mapRef.current = map; }, []);
   const routeToDisplay = viewRoute?.technicalData?.geometry ? viewRoute.technicalData.geometry : [];
-  const mapCenter = routeToDisplay.length > 0 ? routeToDisplay[0] : centerMX;
+  
+  let mapCenter = centerMX;
+  if(routeToDisplay.length > 0) mapCenter = routeToDisplay[0];
 
   if (!isLoaded) return <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin w-8 h-8 text-blue-600"/></div>;
 
@@ -240,36 +269,112 @@ export default function Planificacion() {
       </div>
 
       <div className="flex-1 flex gap-6 overflow-hidden">
+          {/* LISTA DE RUTAS */}
           <div className="w-1/3 flex flex-col gap-4 overflow-y-auto pr-2 pb-4">
               {routesList.map((ruta) => (
-                <div key={ruta.id} onClick={() => setViewRoute(ruta)} className={`bg-white p-4 rounded-xl shadow-sm border transition cursor-pointer group ${viewRoute?.id === ruta.id ? 'border-blue-500 ring-1 ring-blue-500' : 'border-slate-200 hover:shadow-md'}`}>
+                <div key={ruta.id} onClick={() => setViewRoute(ruta)} className={`bg-white p-4 rounded-xl shadow-sm border transition cursor-pointer group ${viewRoute?.id === ruta.id ? 'border-blue-500 ring-1 ring-blue-500 shadow-md' : 'border-slate-200 hover:shadow-md'}`}>
                     <div className="flex justify-between items-start mb-2">
                          {ruta.serviceType === 'Prioritario' ? <span className="text-[10px] font-bold px-2 py-1 rounded bg-orange-100 text-orange-700 flex items-center gap-1 animate-pulse"><Zap className="w-3 h-3"/> PRIORITARIO</span> : <span className="text-[10px] font-bold px-2 py-1 rounded bg-blue-100 text-blue-700 flex items-center gap-1"><Calendar className="w-3 h-3"/> {ruta.scheduledDate}</span>}
                          <div className="flex gap-1"><button onClick={(e) => handleDeleteRoute(ruta.id, e)} className="text-red-400 bg-red-50 p-1.5 rounded hover:bg-red-100"><Trash2 className="w-4 h-4"/></button></div>
                     </div>
                     <h4 className="font-bold text-slate-800 text-sm mb-0.5">{ruta.client}</h4>
                     {ruta.requestUser && <p className="text-xs text-slate-400 mb-2 flex items-center gap-1"><User className="w-3 h-3"/> Solicitó: {ruta.requestUser}</p>}
+                    
                     <div className="space-y-2 mt-2">
                         <div className="flex items-center gap-2 text-slate-600 text-xs"><MapPin className="w-3 h-3 text-green-600" /> <span className="truncate">{ruta.start.split(',')[0]}</span></div>
+                        
+                        {ruta.waypoints && ruta.waypoints.length > 0 && (
+                            <div className="pl-5">
+                                <div className="text-[10px] text-slate-400 font-bold bg-slate-50 border border-slate-100 rounded px-2 py-1 inline-flex items-center gap-1">
+                                    <MoreVertical className="w-3 h-3"/> {ruta.waypoints.length} paradas intermedias
+                                </div>
+                            </div>
+                        )}
+
                         <div className="flex items-center gap-2 text-slate-600 text-xs"><MapPin className="w-3 h-3 text-red-600" /> <span className="truncate">{ruta.end.split(',')[0]}</span></div>
                     </div>
+
+                    {/* DESGLOSE DETALLADO DE TRAMOS (SOLO AL SELECCIONAR) */}
+                    {viewRoute?.id === ruta.id && ruta.technicalData?.segments && (
+                        <div className="mt-4 bg-slate-50 rounded-lg p-2 border border-slate-100 animate-in fade-in slide-in-from-top-2 duration-300">
+                             <p className="text-[9px] font-black text-slate-400 uppercase mb-2 tracking-wider">Detalle del trayecto</p>
+                             <div className="space-y-2">
+                                {ruta.technicalData.segments.map((seg, idx) => (
+                                    <div key={idx} className="flex items-center justify-between text-[10px]">
+                                        <div className="flex items-center gap-1.5">
+                                            <span className="font-bold text-slate-700 bg-white border border-slate-200 w-4 h-4 flex items-center justify-center rounded-full shadow-sm">
+                                                {getMarkerLabel(idx)}
+                                            </span>
+                                            <div className="w-2 h-0.5 bg-slate-300"></div>
+                                            <span className="font-bold text-slate-700 bg-white border border-slate-200 w-4 h-4 flex items-center justify-center rounded-full shadow-sm">
+                                                {getMarkerLabel(idx + 1)}
+                                            </span>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <span className="font-mono text-slate-600">{seg.distance} km</span>
+                                            <span className="font-mono text-green-600 font-bold">{seg.duration} min</span>
+                                        </div>
+                                    </div>
+                                ))}
+                             </div>
+                        </div>
+                    )}
+                    
+                    {/* BARRA DE DATOS TOTALES (SIEMPRE VISIBLE) */}
+                    {ruta.technicalData && (
+                        <div className="mt-3 flex items-center justify-between text-[10px] bg-slate-50 p-2 rounded-lg border border-slate-100">
+                             <div className="flex items-center gap-1">
+                                <Navigation className="w-3 h-3 text-slate-400"/>
+                                <span className="font-bold text-slate-600">{ruta.technicalData.totalDistance} km</span>
+                             </div>
+                             <div className="w-px h-3 bg-slate-200"></div>
+                             <div className="flex items-center gap-1">
+                                <Clock className="w-3 h-3 text-green-500"/>
+                                <span className="font-bold text-green-600">{ruta.technicalData.totalDuration} min</span>
+                             </div>
+                        </div>
+                    )}
                 </div>
               ))}
           </div>
 
+          {/* MAPA PRINCIPAL */}
           <div className="flex-1 bg-slate-200 rounded-xl border border-slate-300 relative overflow-hidden flex items-center justify-center">
              <GoogleMap mapContainerStyle={containerStyle} center={mapCenter} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false, mapTypeControl: false }}>
                  {routeToDisplay.length > 0 && (
                      <>
                         <Polyline path={routeToDisplay} options={{ strokeColor: "#3b82f6", strokeOpacity: 1, strokeWeight: 5 }} />
                         <Marker position={routeToDisplay[0]} label="A" />
-                        <Marker position={routeToDisplay[routeToDisplay.length - 1]} label="B" />
+                        
+                        {viewRoute?.waypointsData && viewRoute.waypointsData.map((wp, idx) => (
+                            <Marker key={idx} position={{lat: wp.lat, lng: wp.lng}} label={getMarkerLabel(idx + 1)} />
+                        ))}
+
+                        <Marker 
+                            position={routeToDisplay[routeToDisplay.length - 1]} 
+                            label={getMarkerLabel((viewRoute?.waypointsData?.length || 0) + 1)} 
+                        />
                      </>
                  )}
              </GoogleMap>
+             
+             {viewRoute?.technicalData && viewRoute.technicalData.totalDistance > 0 && (
+                <div className="absolute bottom-4 right-4 bg-white p-4 rounded-xl shadow-xl border border-slate-200 max-w-xs z-[10] animate-in fade-in slide-in-from-bottom-4 duration-500">
+                     <h5 className="font-bold text-slate-800 text-sm mb-2 flex items-center gap-2"><Navigation className="w-4 h-4 text-blue-500"/> Resumen de Ruta</h5>
+                     <div className="flex justify-between text-sm mb-1 gap-4">
+                        <span className="text-slate-500">Distancia Total:</span> 
+                        <b>{viewRoute.technicalData.totalDistance} km</b>
+                     </div>
+                     <div className="flex justify-between text-sm gap-4">
+                        <span className="text-slate-500">Tiempo Estimado:</span> 
+                        <b className="text-green-600">{viewRoute.technicalData.totalDuration} min</b>
+                     </div>
+                </div>
+             )}
           </div>
       </div>
 
+      {/* MODAL NUEVA RUTA */}
       {showModal && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <div className="bg-white w-full max-w-5xl h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
@@ -291,23 +396,45 @@ export default function Planificacion() {
                                 <select className="w-full mt-1 bg-slate-50 border border-slate-300 rounded p-2 text-sm" value={newRoute.client} onChange={handleClientChange}><option value="">Seleccionar...</option>{availableClients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</select>
                                 {selectedClientData?.type === 'Empresa' && (<select className="w-full mt-2 bg-slate-50 border border-slate-300 rounded p-2 text-xs" value={newRoute.requestUser} onChange={e => setNewRoute({...newRoute, requestUser: e.target.value})}><option value="">-- Solicitado por --</option>{selectedClientData.users?.map(u => <option key={u.name} value={u.name}>{u.name}</option>)}</select>)}
                             </div>
+
                             <div className="relative pt-2">
                                 <label className="text-xs font-bold text-slate-500 uppercase mb-2 block">Itinerario</label>
+                                <div className="absolute left-[-15px] top-[30px] bottom-[30px] w-0.5 bg-slate-200 border-l-2 border-dashed border-slate-200 ml-5 -z-10"></div>
+
                                 <AddressAutocomplete placeholder="Inicio..." value={startPoint?.address} onSelect={setStartPoint} iconColor="green" zIndex={50} favorites={getFilteredFavorites()} />
                                 <SegmentInfo distance={routeInfo.segments[0]?.distance} duration={routeInfo.segments[0]?.duration} />
-                                {waypoints.map((wp, index) => (<div key={index} className="relative" style={{zIndex: 40-index}}><AddressAutocomplete placeholder="Parada..." value={wp.address} onSelect={(i) => updateWaypoint(index, i)} iconColor="blue" zIndex={40-index} favorites={getFilteredFavorites()} /><button onClick={() => removeWaypoint(index)} className="absolute right-0 top-2 text-red-400"><Trash2 className="w-4 h-4"/></button><SegmentInfo distance={routeInfo.segments[index+1]?.distance} duration={routeInfo.segments[index+1]?.duration} /></div>))}
+                                
+                                {waypoints.map((wp, index) => (
+                                    <div key={index} className="relative" style={{zIndex: 40-index}}>
+                                        <AddressAutocomplete placeholder={`Parada ${getMarkerLabel(index+1)}...`} value={wp.address} onSelect={(i) => updateWaypoint(index, i)} iconColor="blue" zIndex={40-index} favorites={getFilteredFavorites()} />
+                                        <button onClick={() => removeWaypoint(index)} className="absolute right-0 top-2 text-red-400"><Trash2 className="w-4 h-4"/></button>
+                                        <SegmentInfo distance={routeInfo.segments[index+1]?.distance} duration={routeInfo.segments[index+1]?.duration} />
+                                    </div>
+                                ))}
+                                
                                 <button onClick={addWaypoint} className="ml-4 text-xs text-blue-600 font-bold mb-2 flex gap-1"><Plus className="w-3 h-3"/> Agregar Parada</button>
+                                
                                 <AddressAutocomplete placeholder="Destino..." value={endPoint?.address} onSelect={setEndPoint} iconColor="red" zIndex={10} favorites={getFilteredFavorites()} />
                             </div>
+
                             <hr className="border-slate-100" />
-                            <div><label className="text-xs font-bold text-slate-500 uppercase">Conductor</label><select className="w-full mt-1 bg-slate-50 border border-slate-300 rounded p-2 text-sm" value={newRoute.driver} onChange={e => setNewRoute({...newRoute, driver: e.target.value})}><option value="">Seleccionar...</option>{availableDrivers.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}</select></div>
+                            <div>
+                                <label className="text-xs font-bold text-slate-500 uppercase">Conductor</label>
+                                <select className="w-full mt-1 bg-slate-50 border border-slate-300 rounded p-2 text-sm" value={newRoute.driver} onChange={handleDriverChange}>
+                                    <option value="">Seleccionar...</option>
+                                    {availableDrivers.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                                </select>
+                            </div>
                         </div>
                     </div>
 
                     <div className="flex-1 bg-slate-100 relative">
                         <GoogleMap mapContainerStyle={containerStyle} center={centerMX} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false }}>
                             {startPoint && <Marker position={startPoint} label="A" />}
-                            {endPoint && <Marker position={endPoint} label="B" />}
+                            {waypoints.map((wp, idx) => (
+                                wp.lat && wp.lng && <Marker key={idx} position={{lat: wp.lat, lng: wp.lng}} label={getMarkerLabel(idx + 1)} />
+                            ))}
+                            {endPoint && <Marker position={endPoint} label={getMarkerLabel(waypoints.length + 1)} />}
                             {routeInfo.geometry.length > 0 && <Polyline path={routeInfo.geometry} options={{ strokeColor: "#3b82f6", strokeOpacity: 1, strokeWeight: 5 }} />}
                         </GoogleMap>
                         
@@ -325,29 +452,11 @@ export default function Planificacion() {
         </div>
       )}
 
-      {/* ESTILOS ESPECÍFICOS PARA ARREGLAR GOOGLE AUTOCOMPLETE */}
       <style>{`
-        .pac-container {
-          z-index: 20000 !important;
-          border-radius: 8px;
-          margin-top: 5px;
-          box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
-          font-family: inherit;
-        }
-        .pac-item {
-          padding: 10px;
-          font-size: 13px;
-          cursor: pointer;
-          border-top: 1px solid #f1f5f9;
-        }
-        .pac-item:hover {
-          background-color: #f8fafc;
-        }
-        .pac-item-query {
-          font-size: 13px;
-          color: #1e293b;
-          font-weight: 600;
-        }
+        .pac-container { z-index: 20000 !important; border-radius: 8px; margin-top: 5px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); font-family: inherit; }
+        .pac-item { padding: 10px; font-size: 13px; cursor: pointer; border-top: 1px solid #f1f5f9; }
+        .pac-item:hover { background-color: #f8fafc; }
+        .pac-item-query { font-size: 13px; color: #1e293b; font-weight: 600; }
       `}</style>
     </div>
   );

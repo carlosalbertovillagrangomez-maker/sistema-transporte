@@ -452,9 +452,24 @@ export default function Planificacion() {
         </div>
       )}
 
+      {/* ESTILOS DEL AUTOCOMPLETE AJUSTADOS */}
       <style>{`
-        .pac-container { z-index: 20000 !important; border-radius: 8px; margin-top: 5px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); font-family: inherit; }
-        .pac-item { padding: 10px; font-size: 13px; cursor: pointer; border-top: 1px solid #f1f5f9; }
+        .pac-container { 
+            z-index: 20000 !important; 
+            border-radius: 8px; 
+            margin-top: 5px; 
+            box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.1); 
+            font-family: inherit; 
+            min-width: 400px !important; /* Forza a que el cuadro sea más ancho que el input */
+        }
+        .pac-item { 
+            padding: 12px 10px; 
+            font-size: 13px; 
+            cursor: pointer; 
+            border-top: 1px solid #f1f5f9; 
+            white-space: normal !important; /* Permite que el texto largo baje a otra línea */
+            line-height: 1.4;
+        }
         .pac-item:hover { background-color: #f8fafc; }
         .pac-item-query { font-size: 13px; color: #1e293b; font-weight: 600; }
       `}</style>

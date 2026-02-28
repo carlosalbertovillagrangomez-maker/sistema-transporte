@@ -15,77 +15,94 @@ import Login from './Login';
 import { db } from './firebase';
 import { collection, onSnapshot, query, orderBy, updateDoc, doc } from 'firebase/firestore';
 
-// === TU NUEVA CLAVE DE API ===
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
-
-// === CONFIGURACIÓN GOOGLE MAPS ===
 const containerStyle = { width: '100%', height: '100%' };
-const centerMX = { lat: 19.4326, lng: -99.1332 }; // CDMX
-// Importante para no causar conflictos con Planificacion
+const centerMX = { lat: 19.4326, lng: -99.1332 }; 
 const libraries = ['places']; 
+
+// Íconos estándar de Google
+const ICON_START = "http://maps.google.com/mapfiles/ms/icons/green-dot.png";
+const ICON_WAYPOINT = "http://maps.google.com/mapfiles/ms/icons/blue-dot.png";
+const ICON_END = "http://maps.google.com/mapfiles/ms/icons/red-dot.png";
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [activeTab, setActiveTab] = useState('monitoreo');
   
-  // CARGAR GOOGLE MAPS
   const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries });
   const mapRef = useRef(null);
 
-  // DATOS FIREBASE
   const [liveRoutes, setLiveRoutes] = useState([]);
   const [editingRoute, setEditingRoute] = useState(null); 
   const [viewHistory, setViewHistory] = useState(false);
   const [selectedRoute, setSelectedRoute] = useState(null);
 
-  // === CARGAR RUTAS EN TIEMPO REAL ===
+  // CARGAR RUTAS EN TIEMPO REAL (Con actualización segura)
   useEffect(() => {
     const q = query(collection(db, "rutas"), orderBy("createdDate", "desc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-        const routesArr = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-        }));
+        const routesArr = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setLiveRoutes(routesArr);
+        
+        // Actualización segura de la ruta seleccionada para no romper React
+        setSelectedRoute(prevSelected => {
+            if (!prevSelected) return prevSelected;
+            const updated = routesArr.find(r => r.id === prevSelected.id);
+            return updated || prevSelected;
+        });
+    }, (error) => {
+        console.error("Error leyendo Firebase:", error);
     });
     return () => unsubscribe();
-  }, [activeTab]);
+  }, []);
 
-  // === EFECTO PARA CENTRAR EL MAPA AL SELECCIONAR RUTA ===
+  // CENTRAR EL MAPA (Con paracaídas anti-errores)
   useEffect(() => {
       if(isLoaded && mapRef.current && selectedRoute?.technicalData?.geometry) {
-          const bounds = new window.google.maps.LatLngBounds();
-          const path = selectedRoute.technicalData.geometry;
-          
-          if(path && path.length > 0) {
-              path.forEach(coord => bounds.extend(coord));
-              mapRef.current.fitBounds(bounds);
+          try {
+              const bounds = new window.google.maps.LatLngBounds();
+              const path = selectedRoute.technicalData.geometry;
+              
+              if(Array.isArray(path) && path.length > 0) {
+                  path.forEach(coord => {
+                      if (coord && typeof coord.lat === 'number') bounds.extend(coord);
+                  });
+                  // Si el chofer está en vivo, incluimos su posición en el encuadre
+                  if (selectedRoute.currentLocation && typeof selectedRoute.currentLocation.lat === 'number') {
+                      bounds.extend(selectedRoute.currentLocation);
+                  }
+                  mapRef.current.fitBounds(bounds);
+              }
+          } catch (error) {
+              console.error("Error al centrar el mapa:", error);
           }
       }
-  }, [selectedRoute, isLoaded]);
+  }, [selectedRoute?.id, isLoaded]);
 
   const handleMapLoad = useCallback((map) => { mapRef.current = map; }, []);
 
   const updateRouteStatus = async (id, status, updates = {}) => {
-      const routeRef = doc(db, "rutas", id);
-      await updateDoc(routeRef, { status, ...updates });
+      try {
+          const routeRef = doc(db, "rutas", id);
+          await updateDoc(routeRef, { status, ...updates });
+      } catch (error) {
+          console.error("Error al actualizar estatus:", error);
+      }
   };
 
   const handleStartTrip = (id) => {
-      const now = new Date();
-      const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      updateRouteStatus(id, 'En Curso', { startTime: timeString });
+      const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      updateRouteStatus(id, 'En Ruta', { startTime: timeString }); 
   };
 
   const handleEndTrip = (id) => {
-      const now = new Date();
-      const timeString = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      updateRouteStatus(id, 'Completado', { endTime: timeString });
+      const timeString = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      updateRouteStatus(id, 'Finalizado', { endTime: timeString }); 
   };
 
   const saveTimeEdit = async () => {
       if (!editingRoute) return;
-      const newStatus = editingRoute.endTime ? 'Completado' : (editingRoute.startTime ? 'En Curso' : editingRoute.status);
+      const newStatus = editingRoute.endTime ? 'Finalizado' : (editingRoute.startTime ? 'En Ruta' : editingRoute.status);
       await updateRouteStatus(editingRoute.id, newStatus, { startTime: editingRoute.startTime, endTime: editingRoute.endTime });
       setEditingRoute(null);
   };
@@ -93,15 +110,12 @@ function App() {
   const getFilteredAndSortedRoutes = () => {
       const today = new Date().toISOString().split('T')[0];
       const filtered = liveRoutes.filter(ruta => {
-          if (viewHistory) {
-              return ruta.status === 'Completado' || ruta.status === 'Cancelado';
-          } else {
-              return ruta.status !== 'Completado' && ruta.status !== 'Cancelado';
-          }
+          if (viewHistory) return ruta.status === 'Finalizado' || ruta.status === 'Completado' || ruta.status === 'Cancelado';
+          return ruta.status !== 'Finalizado' && ruta.status !== 'Completado' && ruta.status !== 'Cancelado';
       });
       return filtered.sort((a, b) => {
-          const dateA = a.finalDate || '9999-99-99';
-          const dateB = b.finalDate || '9999-99-99';
+          const dateA = String(a.finalDate || '9999-99-99');
+          const dateB = String(b.finalDate || '9999-99-99');
           if (dateA === dateB) {
               if (a.serviceType === 'Prioritario' && b.serviceType !== 'Prioritario') return -1;
               if (b.serviceType === 'Prioritario' && a.serviceType !== 'Prioritario') return 1;
@@ -115,16 +129,10 @@ function App() {
 
   const rutasVisibles = getFilteredAndSortedRoutes();
 
-  // PREPARAR DATOS DEL MAPA
-  const routePath = selectedRoute?.technicalData?.geometry || [];
-  const startPos = routePath.length > 0 ? routePath[0] : null;
-  const endPos = routePath.length > 0 ? routePath[routePath.length - 1] : null;
-
   if (!isAuthenticated) return <Login onLogin={() => setIsAuthenticated(true)} />;
 
   return (
     <div className="flex h-screen bg-gray-100 font-sans overflow-hidden">
-      {/* SIDEBAR */}
       <aside className="w-64 bg-slate-800 text-gray-300 flex flex-col shrink-0 transition-all duration-300">
         <div className="h-16 flex items-center px-6 border-b border-slate-700">
           <div className="flex items-center gap-2 text-white font-bold text-lg"><Truck className="text-blue-500 w-6 h-6" /><span>Despacho</span></div>
@@ -151,17 +159,39 @@ function App() {
                 <div className="flex-1 relative bg-slate-200 rounded-xl shadow-inner overflow-hidden border border-slate-300">
                     {isLoaded ? (
                         <GoogleMap mapContainerStyle={containerStyle} center={centerMX} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false, mapTypeControl: false }}>
-                            {selectedRoute && routePath.length > 0 && (
+                            {selectedRoute && selectedRoute.technicalData?.geometry?.length > 0 && (
                                 <>
-                                    <Polyline path={routePath} options={{ strokeColor: "#3b82f6", strokeOpacity: 1, strokeWeight: 5 }} />
-                                    {startPos && <Marker position={startPos} label="A" />}
-                                    {endPos && <Marker position={endPos} label="B" />}
+                                    <Polyline path={selectedRoute.technicalData.geometry} options={{ strokeColor: "#94a3b8", strokeOpacity: 1, strokeWeight: 5 }} />
+                                    
+                                    {/* PINES CLÁSICOS DE RUTA */}
+                                    {selectedRoute.startCoords && <Marker position={selectedRoute.startCoords} icon={ICON_START} />}
+                                    {Array.isArray(selectedRoute.waypointsData) && selectedRoute.waypointsData.map((wp, idx) => (
+                                        wp?.lat && wp?.lng ? <Marker key={idx} position={{lat: wp.lat, lng: wp.lng}} icon={ICON_WAYPOINT} /> : null
+                                    ))}
+                                    {selectedRoute.endCoords && <Marker position={selectedRoute.endCoords} icon={ICON_END} />}
+                                    
+                                    {/* PUNTO GPS EN VIVO DEL CONDUCTOR */}
+                                    {selectedRoute.currentLocation && selectedRoute.status === 'En Ruta' && (
+                                        <Marker 
+                                            position={selectedRoute.currentLocation} 
+                                            icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 10, fillColor: "#22c55e", fillOpacity: 1, strokeWeight: 3, strokeColor: "white" }} 
+                                            zIndex={999}
+                                        />
+                                    )}
                                 </>
                             )}
                         </GoogleMap>
                     ) : <div className="h-full flex items-center justify-center text-slate-500 gap-2"><Loader2 className="animate-spin"/> Cargando Google Maps...</div>}
 
-                    {!selectedRoute && (<div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-4 py-2 rounded-lg shadow-md z-[500] border border-slate-200 max-w-xs"><h5 className="font-bold text-slate-800 text-sm">Mapa en Vivo</h5><p className="text-xs text-slate-500">Selecciona un viaje para ver su ruta.</p></div>)}
+                    {!selectedRoute && (<div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-4 py-2 rounded-lg shadow-md z-[500] border border-slate-200 max-w-xs"><h5 className="font-bold text-slate-800 text-sm">Mapa en Vivo</h5><p className="text-xs text-slate-500">Selecciona un viaje para ver su ruta y GPS.</p></div>)}
+                    
+                    {/* INDICADOR GPS EN LA ESQUINA */}
+                    {selectedRoute?.status === 'En Ruta' && selectedRoute?.currentLocation && (
+                        <div className="absolute top-4 right-4 bg-white/90 backdrop-blur px-3 py-1.5 rounded-full shadow-md z-[500] border border-green-200 flex items-center gap-2">
+                            <div className="w-2.5 h-2.5 bg-green-500 rounded-full animate-pulse"></div>
+                            <p className="text-[10px] font-black text-green-700 uppercase tracking-widest">Señal GPS Activa</p>
+                        </div>
+                    )}
                 </div>
 
                 {/* LISTA LATERAL */}
@@ -189,9 +219,9 @@ function App() {
                                     <div className="flex justify-between text-xs"><span className="text-slate-500">Fin:</span><span className="font-mono font-bold text-slate-700">{ruta.endTime || '--:--'}</span></div>
                                 </div>
                                 <div className="flex gap-2">
-                                    {ruta.status !== 'En Curso' && ruta.status !== 'Completado' && (<button onClick={(e) => { e.stopPropagation(); handleStartTrip(ruta.id); }} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1 transition shadow-sm"><Play className="w-3 h-3 fill-current" /> INICIAR</button>)}
-                                    {ruta.status === 'En Curso' && (<button onClick={(e) => { e.stopPropagation(); handleEndTrip(ruta.id); }} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1 transition shadow-sm animate-pulse"><CheckSquare className="w-3 h-3" /> FINALIZAR</button>)}
-                                    {ruta.status === 'Completado' && <div className="w-full text-center text-xs font-bold text-green-600 py-1.5 bg-green-50 rounded border border-green-100">✅ FINALIZADO</div>}
+                                    {ruta.status !== 'En Ruta' && ruta.status !== 'Finalizado' && (<button onClick={(e) => { e.stopPropagation(); handleStartTrip(ruta.id); }} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1 transition shadow-sm"><Play className="w-3 h-3 fill-current" /> INICIAR</button>)}
+                                    {ruta.status === 'En Ruta' && (<button onClick={(e) => { e.stopPropagation(); handleEndTrip(ruta.id); }} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1 transition shadow-sm animate-pulse"><CheckSquare className="w-3 h-3" /> FINALIZAR</button>)}
+                                    {ruta.status === 'Finalizado' && <div className="w-full text-center text-xs font-bold text-green-600 py-1.5 bg-green-50 rounded border border-green-100">✅ FINALIZADO</div>}
                                 </div>
                             </div>
                         ))}
@@ -206,7 +236,7 @@ function App() {
       </main>
 
       {editingRoute && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
               <div className="bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm animate-[fadeIn_0.2s_ease-out]">
                   <h3 className="font-bold text-slate-800 text-lg mb-1">Ajuste Manual de Tiempos</h3>
                   <p className="text-xs text-slate-500 mb-4">Ruta: {editingRoute.client}</p>

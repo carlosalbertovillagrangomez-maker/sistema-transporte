@@ -1,11 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2 } from 'lucide-react';
+import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, SteeringWheel } from 'lucide-react';
 // GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline, Autocomplete } from '@react-google-maps/api';
 
 // FIREBASE
 import { db } from './firebase';
-import { collection, addDoc, onSnapshot, doc, query, orderBy, deleteDoc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, doc, query, orderBy, deleteDoc, updateDoc } from 'firebase/firestore';
 
 // TU CLAVE DE API
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
@@ -100,6 +100,10 @@ const getMarkerLabel = (index) => String.fromCharCode(65 + index);
 
 export default function Planificacion() {
   const [showModal, setShowModal] = useState(false);
+  // --- NUEVO: ESTADO PARA EL MODAL DE ASIGNACIÓN RÁPIDA ---
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [routeToAssign, setRouteToAssign] = useState(null);
+
   const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries });
   const mapRef = useRef(null);
 
@@ -356,25 +360,44 @@ export default function Planificacion() {
     }
   };
 
+  // --- NUEVO: FUNCIÓN PARA CONFIRMAR ASIGNACIÓN RÁPIDA ---
+  const confirmAssignDriver = async () => {
+      if (!newRoute.driver) return alert("Selecciona un conductor primero.");
+      try {
+          await updateDoc(doc(db, "rutas", routeToAssign.id), {
+              driver: newRoute.driver,
+              driverId: newRoute.driverId
+          });
+          setShowAssignModal(false);
+          setRouteToAssign(null);
+          setNewRoute({ ...newRoute, driver: '', driverId: '' });
+      } catch (e) { alert("Error al asignar unidad"); }
+  };
+
   const handleMapLoad = useCallback((map) => { mapRef.current = map; }, []);
   const routeToDisplay = viewRoute?.technicalData?.geometry ? viewRoute.technicalData.geometry : [];
   
   let mapCenter = centerMX;
   if(routeToDisplay.length > 0) mapCenter = routeToDisplay[0];
 
+  // FILTRAMOS LAS RUTAS PARA MOSTRAR SOLO LAS PENDIENTES O PROGRAMADAS FUTURAS
+  const activePlanRoutes = routesList.filter(r => r.status === 'Pendiente' || r.status === 'En Ruta');
+
   if (!isLoaded) return <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin w-8 h-8 text-blue-600"/></div>;
 
   return (
     <div className="flex-1 p-6 bg-slate-50 h-full flex flex-col overflow-hidden relative">
       <div className="flex justify-between items-center mb-6 shrink-0">
-          <div><h2 className="text-2xl font-bold text-slate-800">Planificador de Rutas</h2><p className="text-slate-500 text-sm">{routesList.length} traslados programados</p></div>
+          <div><h2 className="text-2xl font-bold text-slate-800">Planificador de Rutas</h2><p className="text-slate-500 text-sm">{activePlanRoutes.length} viajes pendientes o activos</p></div>
           <button onClick={() => { setViewRoute(null); setShowModal(true); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg hover:bg-blue-700 transition"><Plus className="w-4 h-4" /> Nueva Ruta</button>
       </div>
 
       <div className="flex-1 flex gap-6 overflow-hidden">
           {/* LISTA DE RUTAS */}
           <div className="w-1/3 flex flex-col gap-4 overflow-y-auto pr-2 pb-4 scrollbar-thin">
-              {routesList.map((ruta) => (
+              {activePlanRoutes.length === 0 && <div className="text-center text-slate-400 mt-10">No hay viajes programados.</div>}
+              
+              {activePlanRoutes.map((ruta) => (
                 <div key={ruta.id} onClick={() => setViewRoute(ruta)} className={`bg-white p-4 rounded-xl shadow-sm border transition cursor-pointer group ${viewRoute?.id === ruta.id ? 'border-blue-500 ring-1 ring-blue-500 shadow-md' : 'border-slate-200 hover:shadow-md'}`}>
                     <div className="flex justify-between items-start mb-2">
                          {ruta.serviceType === 'Prioritario' ? <span className="text-[10px] font-bold px-2 py-1 rounded bg-orange-100 text-orange-700 flex items-center gap-1"><Zap className="w-3 h-3"/> INMEDIATO</span> : <span className="text-[10px] font-bold px-2 py-1 rounded bg-blue-100 text-blue-700 flex items-center gap-1"><Calendar className="w-3 h-3"/> {ruta.scheduledDate} {ruta.scheduledTime}</span>}
@@ -429,6 +452,23 @@ export default function Planificacion() {
                              </div>
                         </div>
                     )}
+
+                    {/* NUEVO: BOTÓN DE ASIGNACIÓN RÁPIDA SI NO TIENE CHOFER */}
+                    {!ruta.driver && ruta.status === 'Pendiente' && (
+                        <button 
+                            onClick={(e) => { e.stopPropagation(); setRouteToAssign(ruta); setShowAssignModal(true); }}
+                            className="w-full mt-3 bg-orange-100 hover:bg-orange-200 text-orange-700 border border-orange-200 font-black p-2 rounded-lg text-[10px] flex items-center justify-center gap-1.5 transition-colors shadow-sm animate-pulse"
+                        >
+                            <User className="w-3.5 h-3.5"/> ASIGNAR UNIDAD Y CONDUCTOR
+                        </button>
+                    )}
+
+                    {/* INDICADOR SI YA TIENE CHOFER */}
+                    {ruta.driver && (
+                        <div className="w-full mt-3 bg-slate-50 text-slate-600 border border-slate-200 font-bold p-2 rounded-lg text-[10px] flex items-center justify-center gap-1.5 shadow-sm">
+                            <SteeringWheel className="w-3.5 h-3.5 text-blue-500"/> UNIDAD ASIGNADA: {ruta.driver}
+                        </div>
+                    )}
                 </div>
               ))}
           </div>
@@ -469,9 +509,38 @@ export default function Planificacion() {
           </div>
       </div>
 
-      {/* MODAL NUEVA RUTA */}
+      {/* --- NUEVO: MODAL DE ASIGNACIÓN RÁPIDA DE CHOFER --- */}
+      {showAssignModal && routeToAssign && (
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+              <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+                  <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
+                      <div><h3 className="text-lg font-bold text-slate-800">Asignar Operador</h3></div>
+                      <button onClick={() => { setShowAssignModal(false); setRouteToAssign(null); }}><X className="w-5 h-5 text-slate-400 hover:text-red-500 transition" /></button>
+                  </div>
+                  
+                  <div className="p-6">
+                      <p className="text-xs text-slate-500 mb-4">Selecciona el conductor disponible para el viaje de <strong>{routeToAssign.client}</strong>.</p>
+                      
+                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                          <label className="text-xs font-bold text-slate-500 uppercase">Unidad / Conductor</label>
+                          <select className="w-full mt-1.5 bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-400 font-bold text-slate-700" value={newRoute.driver} onChange={handleDriverChange}>
+                              <option value="">Seleccionar conductor...</option>
+                              {availableDrivers.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                          </select>
+                      </div>
+                  </div>
+
+                  <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 shrink-0">
+                      <button onClick={() => { setShowAssignModal(false); setRouteToAssign(null); }} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-200 rounded-lg transition">Cancelar</button>
+                      <button onClick={confirmAssignDriver} className="px-6 py-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-md transition">Confirmar Asignación</button>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* MODAL NUEVA RUTA COMPLETA */}
       {showModal && (
-        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[9990] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <div className="bg-white w-full max-w-6xl h-[95vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
                 <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
                     <div><h3 className="text-lg font-bold text-slate-800">Planificar Ruta de Personal</h3></div>

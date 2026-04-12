@@ -24,7 +24,7 @@ const ICON_START = "http://maps.google.com/mapfiles/ms/icons/green-dot.png";
 const ICON_WAYPOINT = "http://maps.google.com/mapfiles/ms/icons/blue-dot.png";
 const ICON_END = "http://maps.google.com/mapfiles/ms/icons/red-dot.png";
 
-// === HELPER PARA CALCULAR DISTANCIA EN LÍNEA RECTA (Haversine) ===
+// === HELPER PARA CALCULAR DISTANCIA ===
 const getDistance = (p1, p2) => {
     if (!p1 || !p2 || !p1.lat || !p2.lat) return Infinity;
     const R = 6371; 
@@ -44,7 +44,7 @@ function App() {
   const mapRef = useRef(null);
 
   const [liveRoutes, setLiveRoutes] = useState([]);
-  const [onlineDrivers, setOnlineDrivers] = useState([]); // Choferes conectados
+  const [onlineDrivers, setOnlineDrivers] = useState([]); 
   const [editingRoute, setEditingRoute] = useState(null); 
   const [viewHistory, setViewHistory] = useState(false);
   const [selectedRoute, setSelectedRoute] = useState(null);
@@ -54,15 +54,13 @@ function App() {
   const [chatInput, setChatInput] = useState('');
   const chatScrollRef = useRef(null);
 
-  // 1. CARGAR RUTAS Y CONDUCTORES EN TIEMPO REAL
+  // 1. CARGAR RUTAS Y CONDUCTORES
   useEffect(() => {
     const qRoutes = query(collection(db, "rutas"), orderBy("createdDate", "desc"));
     const unsubRoutes = onSnapshot(qRoutes, (snapshot) => {
         const routesArr = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setLiveRoutes(routesArr);
-        
         setActiveAlertsCount(routesArr.filter(r => r.proximityAlert?.active === true).length);
-        
         setSelectedRoute(prev => prev ? (routesArr.find(r => r.id === prev.id) || prev) : null);
         setChatModalRoute(prev => prev ? (routesArr.find(r => r.id === prev.id) || prev) : null);
     });
@@ -70,63 +68,56 @@ function App() {
     const qDrivers = query(collection(db, "conductores"));
     const unsubDrivers = onSnapshot(qDrivers, (snapshot) => {
         const driversArr = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        // Filtramos solo a los que están "En Línea" y aprobados
         setOnlineDrivers(driversArr.filter(d => d.isOnline && d.status === 'Aprobado'));
     });
 
     return () => { unsubRoutes(); unsubDrivers(); };
   }, []);
 
-  // 2. EL CEREBRO DE AUTO-ASIGNACIÓN (ROBOT INVISIBLE)
+  // 2. EL CEREBRO DE AUTO-ASIGNACIÓN
   useEffect(() => {
-      // Solo buscamos asignar viajes que sean "Prioritarios", estén "Pendientes" y NO tengan a nadie asignado, 
-      // y que no estén siendo ofrecidos actualmente a un chofer (estado "Ofreciendo").
       const viajesParaAsignar = liveRoutes.filter(r => r.status === 'Pendiente' && !r.driverId && r.serviceType === 'Prioritario' && r.ofertaEstado !== 'Pendiente');
 
       if (viajesParaAsignar.length === 0 || onlineDrivers.length === 0) return;
 
       viajesParaAsignar.forEach(async (viaje) => {
-          // Filtrar choferes que YA estén ocupados en otra ruta "En Ruta"
           const choferesOcupadosIds = liveRoutes.filter(r => r.status === 'En Ruta' && r.driverId).map(r => r.driverId);
-          // Filtrar choferes que ya rechazaron ESTE viaje específico
           const choferesQueRechazaron = viaje.rechazadoPor || [];
 
+          // En la prueba quitamos el requisito estricto de GPS por si el chofer lo prueba desde una PC sin sensores
           const choferesElegibles = onlineDrivers.filter(d => 
               !choferesOcupadosIds.includes(d.id) && 
-              !choferesQueRechazaron.includes(d.id) &&
-              d.currentLocation // Tienen que tener GPS activo
+              !choferesQueRechazaron.includes(d.id)
           );
 
-          if (choferesElegibles.length === 0) return; // Nadie disponible cerca
+          if (choferesElegibles.length === 0) return;
 
-          // Encontrar al más cercano
           let choferMasCercano = null;
           let menorDistancia = Infinity;
 
           choferesElegibles.forEach(chofer => {
-              const dist = getDistance(chofer.currentLocation, viaje.startCoords);
+              // Si no tiene GPS le asignamos 0 para que gane la prueba automáticamente
+              const dist = (chofer.currentLocation && viaje.startCoords) ? getDistance(chofer.currentLocation, viaje.startCoords) : 0;
               if (dist < menorDistancia) {
                   menorDistancia = dist;
                   choferMasCercano = chofer;
               }
           });
 
-          // Si encontramos a alguien a menos de 50km (rango razonable), le lanzamos la oferta
           if (choferMasCercano && menorDistancia <= 50) {
               try {
                   await updateDoc(doc(db, "rutas", viaje.id), {
                       ofertaPara: choferMasCercano.id,
                       ofertaNombre: choferMasCercano.name,
-                      ofertaEstado: 'Pendiente', // El chofer tiene que aceptarlo
-                      ofertaTiempo: new Date().getTime() // Para que la oferta expire si no contesta
+                      ofertaEstado: 'Pendiente',
+                      ofertaTiempo: new Date().getTime()
                   });
-                  console.log(`Ofreciendo viaje ${viaje.id} a ${choferMasCercano.name} a ${menorDistancia.toFixed(1)}km`);
-              } catch (e) { console.error("Error al lanzar oferta:", e); }
+              } catch (e) {}
           }
       });
   }, [liveRoutes, onlineDrivers]);
 
-  // Auto-scroll del chat
+  // RESTO DEL DESPACHADOR...
   useEffect(() => { if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight; }, [chatModalRoute?.chat]);
 
   useEffect(() => {
@@ -144,11 +135,7 @@ function App() {
   }, [selectedRoute?.id, isLoaded]);
 
   const handleMapLoad = useCallback((map) => { mapRef.current = map; }, []);
-
-  const updateRouteStatus = async (id, status, updates = {}) => {
-      try { await updateDoc(doc(db, "rutas", id), { status, ...updates }); } catch (error) {}
-  };
-
+  const updateRouteStatus = async (id, status, updates = {}) => { try { await updateDoc(doc(db, "rutas", id), { status, ...updates }); } catch (error) {} };
   const handleStartTrip = (id) => updateRouteStatus(id, 'En Ruta', { startTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
   const handleEndTrip = (id) => updateRouteStatus(id, 'Finalizado', { endTime: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) });
   
@@ -219,9 +206,7 @@ function App() {
                 <div className="flex-1 relative bg-slate-200 rounded-xl shadow-inner overflow-hidden border border-slate-300">
                     {isLoaded ? (
                         <GoogleMap mapContainerStyle={containerStyle} center={centerMX} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false, mapTypeControl: false }}>
-                            {/* Choferes conectados (puntos verdes) */}
                             {onlineDrivers.map(d => d.currentLocation && <Marker key={d.id} position={d.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: "#22c55e", fillOpacity: 0.8, strokeWeight: 2, strokeColor: "white" }} title={`Operador: ${d.name}`} />)}
-
                             {selectedRoute && selectedRoute.technicalData?.geometry?.length > 0 && (
                                 <>
                                     <Polyline path={selectedRoute.technicalData.geometry} options={{ strokeColor: "#94a3b8", strokeOpacity: 1, strokeWeight: 5 }} />
@@ -259,7 +244,6 @@ function App() {
                             
                             return (
                                 <div key={ruta.id} onClick={() => setSelectedRoute(ruta)} className={`border rounded-lg p-3 transition shadow-sm cursor-pointer relative overflow-hidden ${selectedRoute?.id === ruta.id ? 'border-blue-500 ring-1 ring-blue-500 bg-blue-50/10' : 'bg-white border-slate-200 hover:shadow-md'} ${ruta.proximityAlert?.active ? 'border-orange-400 ring-1 ring-orange-400 bg-orange-50/30' : ''}`}>
-                                    
                                     {ruta.proximityAlert?.active && <div className="absolute top-0 left-0 right-0 bg-orange-500 text-white text-[10px] font-black text-center py-1 flex items-center justify-center gap-1 animate-pulse"><BellRing className="w-3 h-3"/> ¡LLEGANDO A: {ruta.proximityAlert.passenger.toUpperCase()}!</div>}
 
                                     <div className={`flex justify-between items-start mb-2 ${ruta.proximityAlert?.active ? 'mt-4' : ''}`}>
@@ -270,7 +254,6 @@ function App() {
                                         <button onClick={(e) => { e.stopPropagation(); setEditingRoute(ruta); }} className="text-slate-300 hover:text-blue-500 transition"><Edit className="w-4 h-4" /></button>
                                     </div>
 
-                                    {/* MUESTRA SI SE ESTÁ OFRECIENDO A UN CHOFER */}
                                     {ruta.ofertaEstado === 'Pendiente' ? (
                                         <div className="bg-yellow-50 border border-yellow-200 text-yellow-700 text-[10px] font-black px-2 py-1.5 rounded uppercase flex items-center gap-2 mb-3 animate-pulse">
                                             <Loader2 className="w-3 h-3 animate-spin"/> OFRECIENDO A: {ruta.ofertaNombre.split(' ')[0]}
@@ -312,7 +295,7 @@ function App() {
         {activeTab === 'reportes' && <Historial />}
       </main>
 
-      {/* MODAL: CENTRO DE COMUNICACIÓN (CHAT Y EVIDENCIAS) */}
+      {/* MODAL CHAT Y EVIDENCIAS */}
       {chatModalRoute && (
           <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
               <div className="bg-white w-full max-w-4xl h-[85vh] rounded-2xl shadow-2xl flex overflow-hidden border border-slate-300">

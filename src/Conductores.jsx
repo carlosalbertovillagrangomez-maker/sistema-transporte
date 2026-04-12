@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Phone, Truck, Plus, X, User, FileText, MapPin, Save, Mail, 
-  Trash2, Loader2, ShieldCheck, Clock, Eye, Lock, Heart, ShieldAlert 
+  Trash2, Loader2, ShieldCheck, Clock, Eye, Lock, Heart, ShieldAlert, Wifi
 } from 'lucide-react';
 
 // FIREBASE
@@ -15,7 +15,6 @@ export default function Conductores() {
   const [filterStatus, setFilterStatus] = useState('Todos');
   const [viewDoc, setViewDoc] = useState(null);
 
-  // === ESTADO MAESTRO CON TODOS LOS CAMPOS ===
   const [newDriver, setNewDriver] = useState({
     name: '', rfc: '', phone: '', email: '', password: '', address: '',
     licenseNumber: '', licenseType: 'Federal Tipo B', licenseExp: '', bloodType: 'O+',
@@ -54,6 +53,7 @@ export default function Conductores() {
         email: newDriver.email.trim().toLowerCase(),
         initials: newDriver.name.substring(0, 2).toUpperCase(),
         status: 'Pendiente',
+        isOnline: false, // <-- NUEVO: Por defecto inician desconectados
         vehicle: vehiculoFinal,
         rating: 5, trips: 0,
         joined: new Date().toLocaleDateString(),
@@ -63,7 +63,6 @@ export default function Conductores() {
     try {
         await addDoc(collection(db, "conductores"), nuevoConductor);
         setShowNewDriverModal(false);
-        // Resetear todos los campos
         setNewDriver({
             name: '', rfc: '', phone: '', email: '', password: '', address: '',
             licenseNumber: '', licenseType: 'Federal Tipo B', licenseExp: '', bloodType: 'O+',
@@ -110,6 +109,15 @@ export default function Conductores() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredList.map((driver) => (
             <div key={driver.id} className={`bg-white rounded-2xl p-6 border-2 transition-all group relative ${driver.status === 'Pendiente' ? 'border-orange-100' : 'border-transparent shadow-sm hover:shadow-md'}`}>
+                
+                {/* --- NUEVO: INDICADOR DE ESTADO EN LÍNEA --- */}
+                {driver.status === 'Aprobado' && (
+                    <div className={`absolute top-4 right-4 px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 border shadow-sm transition-colors ${driver.isOnline ? 'bg-green-50 text-green-700 border-green-200' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
+                        <div className={`w-1.5 h-1.5 rounded-full ${driver.isOnline ? 'bg-green-500 animate-pulse shadow-[0_0_5px_#22c55e]' : 'bg-slate-300'}`}></div>
+                        {driver.isOnline ? 'En Línea' : 'Inactivo'}
+                    </div>
+                )}
+
                 <div className="flex justify-between items-start mb-4">
                     <div className="relative">
                         {driver.fotoPerfil ? (
@@ -121,7 +129,7 @@ export default function Conductores() {
                             {driver.status === 'Aprobado' ? <ShieldCheck className="w-3 h-3 text-white"/> : <Clock className="w-3 h-3 text-white"/>}
                         </div>
                     </div>
-                    <div className="flex flex-col items-end">
+                    <div className="flex flex-col items-end mt-8">
                         <span className={`text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest mb-2 ${driver.status === 'Aprobado' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>{driver.status}</span>
                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition">
                             <button onClick={() => setViewDoc(driver.identificacion)} className="p-1.5 bg-slate-50 text-slate-400 hover:text-blue-600 rounded-lg border border-slate-100"><Eye className="w-4 h-4"/></button>
@@ -315,7 +323,10 @@ export default function Conductores() {
                             )}
                          </div>
                          <div className="mb-6">
-                            <h2 className="text-4xl font-black text-white tracking-tight">{selectedDriver.name}</h2>
+                            <div className="flex items-center gap-3">
+                                <h2 className="text-4xl font-black text-white tracking-tight">{selectedDriver.name}</h2>
+                                {selectedDriver.isOnline && <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_#22c55e]" title="En línea"></div>}
+                            </div>
                             <p className="text-blue-400 text-xs font-black uppercase tracking-[0.3em]">{selectedDriver.status} • OPERADOR ID: {selectedDriver.id.slice(0,8)}</p>
                          </div>
                     </div>

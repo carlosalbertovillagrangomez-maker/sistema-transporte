@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { FileSpreadsheet, Calendar, ArrowUp, X, MapPin, User, Clock, Building, Search, Filter, Zap, Navigation, UserCheck, CheckCircle2 } from 'lucide-react';
+import { FileSpreadsheet, Calendar, ArrowUp, X, MapPin, User, Clock, Building, Search, Filter, Zap, Navigation, UserCheck, CheckCircle2, Camera } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 // FIREBASE
@@ -48,14 +48,13 @@ export default function Historial() {
   });
   const mapRef = useRef(null);
 
-  // === 1. CARGAR DATOS REALES DESDE FIREBASE ===
+  // === CARGAR DATOS ===
   useEffect(() => {
     const q = query(collection(db, "rutas"), orderBy("createdDate", "desc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
         const routesArr = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
         setAllRoutes(routesArr);
         
-        // Extraer conductores y clientes únicos
         const drivers = [...new Set(routesArr.map(r => r.driver).filter(Boolean))];
         const clients = [...new Set(routesArr.map(r => r.client).filter(Boolean))];
         setUniqueDrivers(drivers);
@@ -64,9 +63,9 @@ export default function Historial() {
     return () => unsubscribe();
   }, []);
 
-  // === 2. LÓGICA DE FILTRADO SEGURO ===
+  // === FILTRADO ===
   useEffect(() => {
-    let result = allRoutes.filter(r => r.status === 'Finalizado' || r.status === 'Completado' || r.status === 'Cancelado'); // Incluimos cancelados para tener el log completo
+    let result = allRoutes.filter(r => r.status === 'Finalizado' || r.status === 'Completado' || r.status === 'Cancelado'); 
 
     if (filterDateStart) result = result.filter(r => getSafeDate(r) >= filterDateStart);
     if (filterDateEnd) result = result.filter(r => getSafeDate(r) <= filterDateEnd);
@@ -76,7 +75,7 @@ export default function Historial() {
     setFilteredRoutes(result);
   }, [filterDateStart, filterDateEnd, filterDriver, filterClient, allRoutes]);
 
-  // === 3. CENTRAR MAPA DEL MODAL ===
+  // === CENTRAR MAPA ===
   useEffect(() => {
       if(isLoaded && mapRef.current && showModal && selectedRoute?.technicalData?.geometry?.length > 0) {
           const bounds = new window.google.maps.LatLngBounds();
@@ -87,14 +86,11 @@ export default function Historial() {
 
   const handleMapLoad = useCallback((map) => { mapRef.current = map; }, []);
 
-  // === 4. CÁLCULO DE KPIs ===
+  // === KPIs (USANDO ODÓMETRO REAL SI EXISTE) ===
   const totalViajes = filteredRoutes.filter(r => r.status !== 'Cancelado').length;
-  const totalKm = filteredRoutes
-      .filter(r => r.status !== 'Cancelado')
-      .reduce((acc, curr) => acc + parseFloat(curr.technicalData?.totalDistance || 0), 0)
-      .toFixed(1);
+  const totalKm = filteredRoutes.filter(r => r.status !== 'Cancelado').reduce((acc, curr) => acc + parseFloat(curr.realDistanceDriven || curr.technicalData?.totalDistance || 0), 0).toFixed(1);
 
-  // === 5. EXPORTAR A EXCEL ===
+  // === EXPORTAR A EXCEL ===
   const handleExport = () => {
     const datosParaExcel = filteredRoutes.map(fila => {
         const origin = encodeURIComponent(fila.start || ''); 
@@ -107,12 +103,10 @@ export default function Historial() {
             "Fecha": getSafeDate(fila),
             "Tipo Servicio": fila.serviceType || 'N/A',
             "Cliente": fila.client || 'N/A',
-            "Solicitante": fila.requestUser || 'N/A',
             "Conductor": fila.driver || 'Sin asignar',
             "Punto de Inicio": fila.start || 'N/A',
-            "Paradas Intermedias": fila.waypoints?.length > 0 ? fila.waypoints.join(' -> ') : 'Directo',
             "Punto Final": fila.end || 'N/A',
-            "Distancia (km)": fila.technicalData?.totalDistance || '-',
+            "Distancia Real (km)": fila.realDistanceDriven ? parseFloat(fila.realDistanceDriven).toFixed(1) : (fila.technicalData?.totalDistance || '-'),
             "Tiempo Estimado (min)": fila.technicalData?.totalDuration || '-',
             "Hora Inicio Real": fila.startTime || '-',
             "Hora Fin Real": fila.endTime || '-',
@@ -123,12 +117,7 @@ export default function Historial() {
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(datosParaExcel);
-    
-    const wscols = [
-        {wch: 15}, {wch: 12}, {wch: 15}, {wch: 25}, {wch: 20}, 
-        {wch: 20}, {wch: 40}, {wch: 40}, {wch: 40}, 
-        {wch: 15}, {wch: 20}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 60}
-    ];
+    const wscols = [ {wch: 15}, {wch: 12}, {wch: 15}, {wch: 25}, {wch: 20}, {wch: 40}, {wch: 40}, {wch: 15}, {wch: 20}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 60} ];
     ws['!cols'] = wscols;
 
     XLSX.utils.book_append_sheet(wb, ws, "Reporte Finalizados");
@@ -213,7 +202,10 @@ export default function Historial() {
                               </td>
                               <td className="px-6 py-4">
                                   <div className="font-bold text-slate-800">{fila.technicalData?.totalDuration || '--'} min</div>
-                                  <div className="text-xs text-slate-400">{fila.technicalData?.totalDistance || '--'} km</div>
+                                  {/* MUESTRA ODÓMETRO SI EXISTE */}
+                                  <div className="text-xs text-blue-600 font-bold">
+                                      Real: {fila.realDistanceDriven ? parseFloat(fila.realDistanceDriven).toFixed(1) : (fila.technicalData?.totalDistance || '--')} km
+                                  </div>
                               </td>
                               <td className="px-6 py-4 text-right">
                                   <div className="flex flex-col items-end gap-1">
@@ -233,7 +225,7 @@ export default function Historial() {
       {/* === MODAL DE DETALLES MEJORADO === */}
       {showModal && selectedRoute && (
         <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-[9999] backdrop-blur-sm p-4 animate-[fadeIn_0.2s_ease-out]">
-            <div className="bg-white w-full max-w-4xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+            <div className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
                 
                 <div className="flex justify-between items-center px-8 py-5 border-b border-slate-100 bg-slate-50 shrink-0">
                     <div>
@@ -245,7 +237,7 @@ export default function Historial() {
 
                 <div className="flex-1 overflow-y-auto flex">
                     {/* Panel Izquierdo: Info */}
-                    <div className="w-1/2 p-8 border-r border-slate-100 space-y-6 bg-white">
+                    <div className="w-1/2 p-8 border-r border-slate-100 space-y-6 bg-white overflow-y-auto">
                         
                         <div className="grid grid-cols-2 gap-4">
                             <div><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Cliente</p><p className="font-black text-slate-800">{selectedRoute.client}</p></div>
@@ -287,6 +279,33 @@ export default function Historial() {
                             </div>
                         </div>
 
+                        {/* --- NUEVO: EVIDENCIAS FOTOGRÁFICAS --- */}
+                        {(selectedRoute.evidencias?.length > 0 || selectedRoute.evidenciasLlegada?.length > 0) && (
+                            <div className="mt-8 pt-6 border-t border-slate-100">
+                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><Camera className="w-4 h-4"/> Evidencias Fotográficas</h4>
+                                <div className="grid grid-cols-2 gap-4">
+                                    {selectedRoute.evidenciasLlegada?.map((ev, i) => (
+                                        <div key={`llegada-${i}`} className="bg-green-50 rounded-xl p-2 border border-green-100">
+                                            <p className="text-[9px] font-bold text-green-600 uppercase mb-1">{ev.label} - Abordado</p>
+                                            <a href={ev.photo} target="_blank" rel="noreferrer">
+                                                <img src={ev.photo} className="w-full h-24 object-cover rounded-lg shadow-sm border border-green-200 hover:opacity-80 transition"/>
+                                            </a>
+                                            <p className="text-[9px] text-slate-500 mt-1 text-right">{ev.time}</p>
+                                        </div>
+                                    ))}
+                                    {selectedRoute.evidencias?.map((ev, i) => (
+                                        <div key={`ausencia-${i}`} className="bg-red-50 rounded-xl p-2 border border-red-100">
+                                            <p className="text-[9px] font-bold text-red-600 uppercase mb-1">No se presentó</p>
+                                            <a href={ev.photo} target="_blank" rel="noreferrer">
+                                                <img src={ev.photo} className="w-full h-24 object-cover rounded-lg shadow-sm border border-red-200 hover:opacity-80 transition"/>
+                                            </a>
+                                            <p className="text-[9px] text-slate-500 mt-1 text-right">{ev.time}</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
                     </div>
 
                     {/* Panel Derecho: Mapa */}
@@ -305,9 +324,15 @@ export default function Historial() {
 
                         {selectedRoute.technicalData && (
                             <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-white px-6 py-3 rounded-full shadow-xl border border-slate-200 flex gap-6 z-10">
-                                <div className="text-center"><p className="text-[10px] font-black uppercase text-slate-400">Total Recorrido</p><p className="font-black text-slate-800">{selectedRoute.technicalData.totalDistance} km</p></div>
+                                <div className="text-center">
+                                    <p className="text-[10px] font-black uppercase text-slate-400">Total Real Recorrido</p>
+                                    <p className="font-black text-slate-800">{selectedRoute.realDistanceDriven ? parseFloat(selectedRoute.realDistanceDriven).toFixed(1) : (selectedRoute.technicalData?.totalDistance || '--')} km</p>
+                                </div>
                                 <div className="w-px bg-slate-200"></div>
-                                <div className="text-center"><p className="text-[10px] font-black uppercase text-slate-400">Tiempo de Ruta</p><p className="font-black text-blue-600">{selectedRoute.technicalData.totalDuration} min</p></div>
+                                <div className="text-center">
+                                    <p className="text-[10px] font-black uppercase text-slate-400">Tiempo Estimado</p>
+                                    <p className="font-black text-blue-600">{selectedRoute.technicalData.totalDuration} min</p>
+                                </div>
                             </div>
                         )}
                     </div>

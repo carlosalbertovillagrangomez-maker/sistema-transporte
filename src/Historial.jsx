@@ -97,30 +97,26 @@ export default function Historial() {
   const totalViajes = filteredRoutes.filter(r => r.status !== 'Cancelado').length;
   const totalKm = filteredRoutes.filter(r => r.status !== 'Cancelado').reduce((acc, curr) => acc + parseFloat(curr.realDistanceDriven || curr.technicalData?.totalDistance || 0), 0).toFixed(1);
 
-  // === EXPORTAR A EXCEL (FORMATO CORPORATIVO + INTERNO) ===
+  // === EXPORTAR A EXCEL ===
   const handleExport = () => {
     const datosParaExcel = filteredRoutes.map(fila => {
         const fechaSegura = getSafeDate(fila);
         const dia = getDiaSemana(fechaSegura);
         
-        // 1. Formatear la bitácora
         const bitacoraTexto = fila.bitacora && fila.bitacora.length > 0 
             ? fila.bitacora.map(b => `[${b.time}] ${b.evento}: ${b.motivo}`).join(" | ")
             : 'Sin desviaciones';
 
-        // 2. Reconstruir Link de Google Maps original
         const origin = encodeURIComponent(fila.start || ''); 
         const destination = encodeURIComponent(fila.end || '');
         let waypointsStr = fila.waypoints?.length > 0 ? '&waypoints=' + fila.waypoints.map(wp => encodeURIComponent(wp)).join('|') : '';
         const mapLink = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}${waypointsStr}&travelmode=driving`;
 
-        // 3. Extraer registro de horas de las fotos (evitamos romper Excel con base64)
         const fotosLlegada = fila.evidenciasLlegada?.map(e => `Abordaje (${e.time})`).join(", ") || '';
         const fotosAusencia = fila.evidencias?.map(e => `No Show (${e.time})`).join(", ") || '';
         const resumenFotos = [fotosLlegada, fotosAusencia].filter(Boolean).join(" | ") || 'Sin registro fotográfico';
 
         return {
-            // --- FORMATO CORPORATIVO DEL CLIENTE ---
             "DÍA": dia,
             "FECHA": fechaSegura,
             "HORA ENTRADA": fila.startTime || '-',
@@ -129,8 +125,6 @@ export default function Historial() {
             "PUNTO DE RECOGIDA": fila.start || 'N/A',
             "PUNTO DE DESCARGUE": fila.end || 'N/A',
             "KMTS": fila.realDistanceDriven ? parseFloat(fila.realDistanceDriven).toFixed(1) : (fila.technicalData?.totalDistance || '-'),
-            
-            // --- TUS COLUMNAS ORIGINALES Y DE AUDITORÍA ---
             "ESTATUS": fila.status,
             "BITÁCORA / JUSTIFICACIONES": bitacoraTexto,
             "REGISTRO FOTOGRÁFICO": resumenFotos,
@@ -145,7 +139,6 @@ export default function Historial() {
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(datosParaExcel);
     
-    // Ajustar anchos para que se vea estético
     const wscols = [ 
         {wch: 12}, {wch: 12}, {wch: 15}, {wch: 15}, {wch: 35}, 
         {wch: 45}, {wch: 45}, {wch: 10}, {wch: 15}, {wch: 50}, 

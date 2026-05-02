@@ -111,8 +111,16 @@ export default function Planificacion() {
   const [startTimeDisplay, setStartTimeDisplay] = useState('');
   const [isLoadingRoute, setIsLoadingRoute] = useState(false);
 
+  // === ESTADOS PARA EL NUEVO MÓDULO DE CARPOOLING INTELIGENTE ===
   const [showCarpoolModal, setShowCarpoolModal] = useState(false);
-  const [carpoolDriver, setCarpoolDriver] = useState({ name: '', id: '' }); 
+  const [carpoolGroups, setCarpoolGroups] = useState([]);
+  const [globalCarpool, setGlobalCarpool] = useState({
+      syncAll: true,
+      pickupTime: '',
+      arrivalTime: '',
+      createReturn: false,
+      returnTime: ''
+  });
 
   const isProgramado = newRoute.serviceType === 'Programado';
 
@@ -277,51 +285,143 @@ export default function Planificacion() {
       } catch (e) { alert(e.message); }
   };
 
+  // =================================================================================
+  // === LÓGICA DEL NUEVO MÓDULO DE CARPOOLING INTELIGENTE (AGRUPACIÓN Y HORARIOS) ===
+  // =================================================================================
+
+  const openCarpoolModal = () => {
+      setShowCarpoolModal(true);
+      setNewRoute({...newRoute, client: '', serviceType: 'Programado', scheduledDate: ''});
+      setCarpoolGroups([]);
+      setGlobalCarpool({ syncAll: true, pickupTime: '', arrivalTime: '', createReturn: false, returnTime: '' });
+      setSelectedClientData(null);
+  };
+
+  const handleCarpoolClientChange = (e) => {
+      const clientName = e.target.value;
+      setNewRoute({ ...newRoute, client: clientName });
+      const clientObj = availableClients.find(c => c.name === clientName);
+      setSelectedClientData(clientObj || null);
+
+      if (clientObj) {
+          const empleados = clientObj.locations.filter(loc => loc.assignedTo && loc.assignedTo !== 'General');
+          const grupos = [];
+          for (let i = 0; i < empleados.length; i += 4) {
+              grupos.push({
+                  id: i,
+                  employees: empleados.slice(i, i + 4),
+                  pickupTime: globalCarpool.pickupTime,
+                  arrivalTime: globalCarpool.arrivalTime,
+                  createReturn: globalCarpool.createReturn,
+                  returnTime: globalCarpool.returnTime,
+                  driverId: '',
+                  driverName: ''
+              });
+          }
+          setCarpoolGroups(grupos);
+      } else {
+          setCarpoolGroups([]);
+      }
+  };
+
+  // Sincronizar horarios de grupos si la casilla maestra está activada
+  useEffect(() => {
+      if (globalCarpool.syncAll && carpoolGroups.length > 0) {
+          setCarpoolGroups(prev => prev.map(g => ({
+              ...g,
+              pickupTime: globalCarpool.pickupTime,
+              arrivalTime: globalCarpool.arrivalTime,
+              createReturn: globalCarpool.createReturn,
+              returnTime: globalCarpool.returnTime
+          })));
+      }
+  }, [globalCarpool]);
+
+  const removeEmployeeFromGroup = (groupId, empIndex) => {
+      setCarpoolGroups(prev => prev.map(g => {
+          if (g.id === groupId) {
+              const newEmp = [...g.employees];
+              newEmp.splice(empIndex, 1);
+              return { ...g, employees: newEmp };
+          }
+          return g;
+      }));
+  };
+
+  const setGroupDriver = (groupId, driverId) => {
+      const driver = availableDrivers.find(d => d.id === driverId);
+      setCarpoolGroups(prev => prev.map(g => g.id === groupId ? { ...g, driverId, driverName: driver?.name || '' } : g));
+  };
+
   const handleGenerateCarpoolGroups = async () => {
-      if(!newRoute.client || !newRoute.scheduledDate || !newRoute.scheduledTime) return alert("Falta configurar Empresa, Fecha u Hora Llegada corporativa.");
-      if(!carpoolDriver.id) return alert("⚠️ Debes seleccionar un Conductor disponible obligatoriamente para esta ruta corporativa.");
-
-      const empleados = selectedClientData.locations.filter(loc => loc.assignedTo && loc.assignedTo !== 'General');
-      const oficina = selectedClientData.locations.find(loc => loc.assignedTo === 'General');
+      if(!newRoute.client || !newRoute.scheduledDate) return alert("Falta configurar Empresa y Fecha.");
       
-      if(empleados.length === 0) return alert("Esta empresa no tiene empleados con direcciones asignadas.");
-      if(!oficina) return alert("Esta empresa no tiene configurada la Sede 'General' (oficina central).");
+      const oficina = selectedClientData?.locations.find(loc => loc.assignedTo === 'General');
+      if(!oficina) return alert("Esta empresa no tiene configurada la Sede 'General' (oficina central). Ve a la pestaña Clientes para agregarla.");
 
-      const grupos = [];
-      for (let i = 0; i < empleados.length; i += 4) {
-          grupos.push(empleados.slice(i, i + 4));
+      const validGroups = carpoolGroups.filter(g => g.employees.length > 0);
+      if(validGroups.length === 0) return alert("No hay grupos con empleados para programar.");
+
+      for(let g of validGroups) {
+          if(!g.driverId) return alert("⚠️ Todos los grupos generados deben tener un conductor asignado.");
+          if(!g.pickupTime || !g.arrivalTime) return alert("⚠️ Todos los grupos deben tener Hora de Inicio (Recogida) y Llegada a la Oficina.");
+          if(g.createReturn && !g.returnTime) return alert("⚠️ Activaste el viaje de Regreso en algún grupo, debes indicar su hora de salida.");
       }
 
       try {
-          for (let idx = 0; idx < grupos.length; idx++) {
-              const grupo = grupos[idx];
-              const inicio = grupo[0]; 
-              const intermedias = grupo.slice(1); 
+          for (let g of validGroups) {
+              const inicio = g.employees[0];
+              const intermedias = g.employees.slice(1);
 
-              const rutaGenerada = {
+              // 1. CREAR VIAJE DE IDA (Hogar -> Oficina)
+              const rutaIda = {
                   client: newRoute.client,
-                  driver: carpoolDriver.name, 
-                  driverId: carpoolDriver.id, 
+                  driver: g.driverName, 
+                  driverId: g.driverId, 
                   status: 'Aceptada',
                   serviceType: 'Programado',
                   scheduledDate: newRoute.scheduledDate,
-                  scheduledTime: newRoute.scheduledTime,
+                  scheduledTime: g.arrivalTime, // Meta de llegada
+                  startTime: g.pickupTime, // Indicador interno de a qué hora iniciar recolección
                   start: inicio.address,
                   startCoords: { lat: parseFloat(inicio.lat), lng: parseFloat(inicio.lon || inicio.lng), contact: inicio.assignedTo },
                   end: oficina.address,
-                  endCoords: { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng), contact: 'Oficina Central (Sede General)' },
+                  endCoords: { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng), contact: 'Oficina Central' },
                   waypointsData: intermedias.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo })),
                   waypoints: intermedias.map(w => w.address),
                   finalDate: newRoute.scheduledDate,
                   createdDate: new Date().toISOString()
               };
-              await addDoc(collection(db, "rutas"), rutaGenerada);
+              await addDoc(collection(db, "rutas"), rutaIda);
+
+              // 2. CREAR VIAJE DE REGRESO (Oficina -> Hogar) SI ESTÁ ACTIVADO
+              if (g.createReturn) {
+                  const revEmployees = [...g.employees].reverse(); // Dejamos al último más lejano
+                  const finRegreso = revEmployees[revEmployees.length - 1];
+                  const intermediasRegreso = revEmployees.slice(0, -1);
+
+                  const rutaRegreso = {
+                      client: newRoute.client,
+                      driver: g.driverName, 
+                      driverId: g.driverId, 
+                      status: 'Aceptada',
+                      serviceType: 'Programado',
+                      scheduledDate: newRoute.scheduledDate,
+                      scheduledTime: g.returnTime, // Hora a la que salen de la oficina
+                      start: oficina.address,
+                      startCoords: { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng), contact: 'Oficina Central' },
+                      end: finRegreso.address,
+                      endCoords: { lat: parseFloat(finRegreso.lat), lng: parseFloat(finRegreso.lon || finRegreso.lng), contact: finRegreso.assignedTo },
+                      waypointsData: intermediasRegreso.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo })),
+                      waypoints: intermediasRegreso.map(w => w.address),
+                      finalDate: newRoute.scheduledDate,
+                      createdDate: new Date().toISOString()
+                  };
+                  await addDoc(collection(db, "rutas"), rutaRegreso);
+              }
           }
-          alert(`✅ ¡Rutas automatizadas creadas con éxito! Se generaron ${grupos.length} viajes corporativos para ${empleados.length} empleados, asignados a ${carpoolDriver.name}.`);
+          alert(`✅ ¡Logística completada! Rutas corporativas (Idas y Regresos) creadas y asignadas a sus respectivos conductores con éxito.`);
           setShowCarpoolModal(false);
-          setNewRoute({ ...newRoute, client: '', scheduledDate: '', scheduledTime: '' });
-          setSelectedClientData(null);
-          setCarpoolDriver({ name: '', id: '' });
       } catch(e) { 
           alert("Ocurrió un error técnico al generar las rutas corporativas."); 
       }
@@ -350,7 +450,7 @@ export default function Planificacion() {
       <div className="flex justify-between items-center mb-6 shrink-0">
           <div><h2 className="text-2xl font-bold text-slate-800">Planificador de Rutas</h2><p className="text-slate-500 text-sm">{activePlanRoutes.length} viajes pendientes o activos</p></div>
           <div className="flex gap-3">
-              <button onClick={() => { setShowCarpoolModal(true); setCarpoolDriver({ name: '', id: '' }); setNewRoute({...newRoute, serviceType: 'Programado'}) }} className="bg-purple-100 text-purple-700 border border-purple-200 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-purple-200 transition"><Network className="w-4 h-4" /> Auto-Agrupar Personal (Manual)</button>
+              <button onClick={openCarpoolModal} className="bg-purple-100 text-purple-700 border border-purple-200 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-purple-200 transition"><Network className="w-4 h-4" /> Optimizar Grupos de Personal</button>
               <button onClick={() => { setViewRoute(null); setShowModal(true); }} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg hover:bg-blue-700 transition"><Plus className="w-4 h-4" /> Nueva Ruta Manual</button>
           </div>
       </div>
@@ -362,8 +462,8 @@ export default function Planificacion() {
               {activePlanRoutes.map((ruta) => (
                 <div key={ruta.id} onClick={() => setViewRoute(ruta)} className={`bg-white p-4 rounded-xl shadow-sm border transition cursor-pointer group ${viewRoute?.id === ruta.id ? 'border-blue-500 ring-1 ring-blue-500 shadow-md' : 'border-slate-200 hover:shadow-md'}`}>
                     <div className="flex justify-between items-start mb-2">
-                         {ruta.serviceType === 'Prioritario' ? <span className="text-[10px] font-bold px-2 py-1 rounded bg-orange-100 text-orange-700 flex items-center gap-1"><Zap className="w-3 h-3"/> INMEDIATO</span> : <span className="text-[10px] font-bold px-2 py-1 rounded bg-blue-100 text-blue-700 flex items-center gap-1"><Calendar className="w-3 h-3"/> {ruta.scheduledDate} {ruta.scheduledTime}</span>}
-                         <div className="flex gap-1"><button onClick={(e) => handleDeleteRoute(ruta.id, e)} className="text-red-400 bg-red-50 p-1.5 rounded hover:bg-red-100 transition"><Trash2 className="w-4 h-4"/></button></div>
+                          {ruta.serviceType === 'Prioritario' ? <span className="text-[10px] font-bold px-2 py-1 rounded bg-orange-100 text-orange-700 flex items-center gap-1"><Zap className="w-3 h-3"/> INMEDIATO</span> : <span className="text-[10px] font-bold px-2 py-1 rounded bg-blue-100 text-blue-700 flex items-center gap-1"><Calendar className="w-3 h-3"/> {ruta.scheduledDate} {ruta.scheduledTime}</span>}
+                          <div className="flex gap-1"><button onClick={(e) => handleDeleteRoute(ruta.id, e)} className="text-red-400 bg-red-50 p-1.5 rounded hover:bg-red-100 transition"><Trash2 className="w-4 h-4"/></button></div>
                     </div>
                     <h4 className="font-bold text-slate-800 text-sm mb-0.5 truncate">{ruta.client}</h4>
                     
@@ -447,48 +547,136 @@ export default function Planificacion() {
           </div>
       )}
 
-      {/* --- MODAL 2: CARPOOLING MANUAL --- */}
+      {/* --- MODAL 2: CARPOOLING INTELIGENTE --- */}
       {showCarpoolModal && (
           <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-              <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl flex flex-col overflow-hidden">
-                  <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-purple-600 text-white shrink-0">
-                      <div><h3 className="text-lg font-bold flex items-center gap-2"><Network className="w-5 h-5"/> Enjambre Carpooling (Asignación Manual)</h3></div>
-                      <button onClick={() => setShowCarpoolModal(false)}><X className="w-5 h-5 text-purple-200 hover:text-white transition" /></button>
+              <div className="bg-white w-full max-w-5xl h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+                  <div className="px-6 py-4 border-b border-purple-300 flex justify-between items-center bg-purple-700 text-white shrink-0">
+                      <div><h3 className="text-lg font-bold flex items-center gap-2"><Network className="w-5 h-5"/> Optimizador de Carpooling</h3></div>
+                      <button onClick={() => setShowCarpoolModal(false)}><X className="w-6 h-6 text-purple-200 hover:text-white transition" /></button>
                   </div>
                   
-                  <div className="p-6 space-y-4 overflow-y-auto scrollbar-thin max-h-[70vh]">
-                      <p className="text-xs text-slate-500 mb-4">Genera múltiples rutas automáticamente agrupando empleados de 4 en 4. **A diferencia del modo automático, aquí debes elegir al Conductor de forma manual antes de guardar.**</p>
-                      
-                      <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3">
-                          <div>
-                              <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1.5"><Building2 className="w-3.5 h-3.5"/> Empresa Corporativa</label>
-                              <select className="w-full mt-1.5 bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none font-bold text-slate-700" value={newRoute.client} onChange={handleClientChange}>
-                                  <option value="">Selecciona la empresa...</option>
-                                  {availableClients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
-                              </select>
-                          </div>
-                          <div className="grid grid-cols-2 gap-3">
-                              <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Fecha Programada</label><input type="date" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-sm outline-none" value={newRoute.scheduledDate} onChange={(e) => setNewRoute({...newRoute, scheduledDate: e.target.value})} /></div>
-                              <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Hora Llegada Sede Central</label><input type="time" className="w-full bg-white border border-slate-300 rounded-lg p-2 text-sm outline-none" value={newRoute.scheduledTime} onChange={(e) => setNewRoute({...newRoute, scheduledTime: e.target.value})} /></div>
+                  <div className="flex-1 flex overflow-hidden">
+                      {/* PANEL IZQUIERDO: CONFIGURACIÓN MAESTRA */}
+                      <div className="w-[35%] bg-slate-50 border-r border-slate-200 p-6 overflow-y-auto">
+                          <p className="text-xs text-slate-500 mb-6">Genera múltiples rutas automáticamente agrupando empleados. Configura las horas globales aquí.</p>
+                          
+                          <div className="space-y-5">
+                              <div>
+                                  <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1.5 mb-2"><Building2 className="w-4 h-4"/> Empresa Corporativa</label>
+                                  <select className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none font-bold text-slate-700 shadow-sm" value={newRoute.client} onChange={handleCarpoolClientChange}>
+                                      <option value="">Selecciona la empresa...</option>
+                                      {availableClients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                                  </select>
+                              </div>
+                              
+                              <div>
+                                  <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1.5 mb-2"><Calendar className="w-4 h-4"/> Fecha Programada</label>
+                                  <input type="date" className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none shadow-sm" value={newRoute.scheduledDate} onChange={(e) => setNewRoute({...newRoute, scheduledDate: e.target.value})} />
+                              </div>
+
+                              <div className="bg-white p-4 rounded-xl border-2 border-purple-100 shadow-sm">
+                                  <div className="flex items-center gap-2 mb-4">
+                                      <input type="checkbox" id="syncAll" className="w-4 h-4 text-purple-600 rounded" checked={globalCarpool.syncAll} onChange={(e) => setGlobalCarpool({...globalCarpool, syncAll: e.target.checked})} />
+                                      <label htmlFor="syncAll" className="text-xs font-black text-purple-700 uppercase cursor-pointer">Sincronizar horarios para todos</label>
+                                  </div>
+
+                                  <div className={`space-y-3 ${!globalCarpool.syncAll ? 'opacity-50 pointer-events-none' : ''}`}>
+                                      <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Hora inicio de Ruta (Ida)</label><input type="time" className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-sm outline-none" value={globalCarpool.pickupTime} onChange={(e) => setGlobalCarpool({...globalCarpool, pickupTime: e.target.value})} /></div>
+                                      <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Llegada a Oficina (Ida)</label><input type="time" className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-sm outline-none" value={globalCarpool.arrivalTime} onChange={(e) => setGlobalCarpool({...globalCarpool, arrivalTime: e.target.value})} /></div>
+                                      
+                                      <div className="pt-3 mt-3 border-t border-slate-100">
+                                          <div className="flex items-center gap-2 mb-3">
+                                              <input type="checkbox" id="createReturn" className="w-4 h-4 text-purple-600 rounded" checked={globalCarpool.createReturn} onChange={(e) => setGlobalCarpool({...globalCarpool, createReturn: e.target.checked})} />
+                                              <label htmlFor="createReturn" className="text-xs font-bold text-slate-600 cursor-pointer">Programar también ruta de Regreso</label>
+                                          </div>
+                                          {globalCarpool.createReturn && (
+                                              <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Salida de Oficina (Regreso)</label><input type="time" className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-sm outline-none" value={globalCarpool.returnTime} onChange={(e) => setGlobalCarpool({...globalCarpool, returnTime: e.target.value})} /></div>
+                                          )}
+                                      </div>
+                                  </div>
+                              </div>
                           </div>
                       </div>
 
-                      <div className="bg-white p-4 rounded-xl border-2 border-dashed border-purple-300 mt-4 relative overflow-visible">
-                         <label className="block text-xs font-black text-purple-700 uppercase mb-2 flex items-center gap-1.5"><Car className="w-4 h-4 text-purple-600"/> Conductor Asignado (Obligatorio)</label>
-                         {availableDrivers.length > 0 ? (
-                             <select className="w-full bg-purple-50 border-2 border-purple-200 text-slate-900 text-xs font-bold rounded-lg p-2.5 outline-none focus:border-purple-400 focus:bg-white shadow-sm transition" value={carpoolDriver.id} onChange={(e) => { const dr = availableDrivers.find(d => d.id === e.target.value); setCarpoolDriver({ name: dr?.name || '', id: dr?.id || '' }) }}>
-                                 <option value="">👤 Seleccionar chofer disponible para estos grupos...</option>
-                                 {availableDrivers.map(d => <option key={d.id} value={d.id} className="text-sm font-bold">{d.name} {d.vehicleModel ? `(${d.vehicleModel})` : ''}</option>)}
-                             </select>
-                         ) : (
-                             <div className="text-center text-xs text-slate-500 font-medium py-3 bg-slate-100 rounded-lg border border-slate-200"><Loader2 className="animate-spin w-4 h-4 text-slate-400 mx-auto mb-1.5"/> Cargando lista de choferes...</div>
-                         )}
+                      {/* PANEL DERECHO: GRUPOS GENERADOS */}
+                      <div className="w-[65%] bg-slate-200 p-6 overflow-y-auto">
+                          {carpoolGroups.length === 0 ? (
+                              <div className="h-full flex flex-col items-center justify-center text-slate-400">
+                                  <Users className="w-16 h-16 mb-4 opacity-50"/>
+                                  <p className="font-bold text-sm">Selecciona una empresa para agrupar a su personal.</p>
+                              </div>
+                          ) : (
+                              <div className="space-y-6">
+                                  {carpoolGroups.filter(g => g.employees.length > 0).map((grupo, idx) => (
+                                      <div key={grupo.id} className="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden">
+                                          <div className="bg-slate-800 text-white px-4 py-3 flex justify-between items-center">
+                                              <h4 className="font-black text-sm flex items-center gap-2"><Car className="w-4 h-4 text-blue-400"/> Vehículo {idx + 1}</h4>
+                                              <span className="text-xs bg-slate-700 px-2 py-1 rounded font-bold">{grupo.employees.length} pasajeros</span>
+                                          </div>
+                                          
+                                          <div className="p-4 grid grid-cols-2 gap-4">
+                                              {/* Lado A: Pasajeros y Chofer */}
+                                              <div className="space-y-4">
+                                                  <div>
+                                                      <label className="block text-[10px] font-black text-blue-600 uppercase mb-1.5">Conductor Asignado</label>
+                                                      <select className="w-full bg-blue-50 border border-blue-200 rounded p-2 text-xs font-bold text-slate-700 outline-none" value={grupo.driverId} onChange={(e) => setGroupDriver(grupo.id, e.target.value)}>
+                                                          <option value="">👤 Seleccionar chofer...</option>
+                                                          {availableDrivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                                      </select>
+                                                  </div>
+                                                  
+                                                  <div>
+                                                      <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Ruta de Recogida</label>
+                                                      <div className="space-y-2">
+                                                          {grupo.employees.map((emp, eIdx) => (
+                                                              <div key={eIdx} className="flex justify-between items-center bg-slate-50 border border-slate-100 p-2 rounded">
+                                                                  <div className="flex items-center gap-2 overflow-hidden">
+                                                                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 ${eIdx===0 ? 'bg-green-500' : 'bg-blue-500'}`}>{eIdx===0 ? 'A' : String.fromCharCode(65+eIdx)}</div>
+                                                                      <p className="text-xs font-bold text-slate-700 truncate">{emp.assignedTo}</p>
+                                                                  </div>
+                                                                  <button onClick={() => removeEmployeeFromGroup(grupo.id, eIdx)} className="text-slate-300 hover:text-red-500 p-1"><X className="w-3.5 h-3.5"/></button>
+                                                              </div>
+                                                          ))}
+                                                      </div>
+                                                  </div>
+                                              </div>
+
+                                              {/* Lado B: Horarios Individuales (Si no hay syncGlobal) */}
+                                              {!globalCarpool.syncAll && (
+                                                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-3">
+                                                      <label className="block text-[10px] font-black text-purple-600 uppercase mb-1">Ajuste Manual de Horarios</label>
+                                                      <div className="grid grid-cols-2 gap-2">
+                                                          <div><label className="block text-[9px] font-bold text-slate-500 uppercase">Inicio Ruta</label><input type="time" className="w-full border rounded p-1.5 text-xs" value={grupo.pickupTime} onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, pickupTime: e.target.value} : g))} /></div>
+                                                          <div><label className="block text-[9px] font-bold text-slate-500 uppercase">Llegada Ofic.</label><input type="time" className="w-full border rounded p-1.5 text-xs" value={grupo.arrivalTime} onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, arrivalTime: e.target.value} : g))} /></div>
+                                                      </div>
+                                                      <div className="pt-2 mt-2 border-t border-slate-200">
+                                                          <div className="flex items-center gap-2 mb-2">
+                                                              <input type="checkbox" checked={grupo.createReturn} onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, createReturn: e.target.checked} : g))} />
+                                                              <label className="text-[10px] font-bold text-slate-600">Viaje Regreso</label>
+                                                          </div>
+                                                          {grupo.createReturn && (
+                                                              <div><label className="block text-[9px] font-bold text-slate-500 uppercase">Salida de Oficina</label><input type="time" className="w-full border rounded p-1.5 text-xs" value={grupo.returnTime} onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, returnTime: e.target.value} : g))} /></div>
+                                                          )}
+                                                      </div>
+                                                  </div>
+                                              )}
+                                              {globalCarpool.syncAll && (
+                                                  <div className="flex items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded-xl p-4 text-center">
+                                                      <p className="text-xs text-slate-400 font-bold">Horarios sincronizados<br/>por configuración global.</p>
+                                                  </div>
+                                              )}
+                                          </div>
+                                      </div>
+                                  ))}
+                              </div>
+                          )}
                       </div>
                   </div>
 
-                  <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 shrink-0">
-                      <button onClick={() => setShowCarpoolModal(false)} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-200 rounded-lg transition">Cancelar</button>
-                      <button onClick={handleGenerateCarpoolGroups} className="px-6 py-2.5 text-sm font-bold text-white bg-purple-600 hover:bg-purple-700 rounded-lg shadow-md transition flex items-center gap-2 animate-pulse"><Wand2 className="w-4 h-4"/> Generar Grupos y Asignar Manualmente</button>
+                  <div className="p-4 border-t border-slate-100 bg-white flex justify-end gap-3 shrink-0 shadow-[0_-10px_15px_rgba(0,0,0,0.05)] z-10">
+                      <button onClick={() => setShowCarpoolModal(false)} className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition">Cancelar</button>
+                      <button onClick={handleGenerateCarpoolGroups} className="px-8 py-2.5 text-sm font-black text-white bg-purple-600 hover:bg-purple-700 rounded-lg shadow-xl shadow-purple-600/30 transition flex items-center gap-2"><Wand2 className="w-4 h-4"/> Confirmar y Despachar Grupos</button>
                   </div>
               </div>
           </div>

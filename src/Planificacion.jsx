@@ -11,7 +11,7 @@ const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0";
 
 const containerStyle = { width: '100%', height: '100%' };
 const centerMX = { lat: 19.4326, lng: -99.1332 }; 
-const libraries = ['places']; 
+const libraries = ['places', 'geometry'];
 
 // --- COMPONENTE AUTOCOMPLETE MEJORADO ---
 const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor = "text-slate-400", zIndex = 50, favorites = [] }) => {

@@ -12,7 +12,7 @@ import { GoogleMap, useJsApiLoader, Marker, Polyline } from '@react-google-maps/
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
 const containerStyle = { width: '100%', height: '100%' };
 const centerMX = { lat: 19.4326, lng: -99.1332 }; 
-const libraries = ['places']; 
+const libraries = ['places', 'geometry'];
 
 // --- HELPER: EXTRACCIÓN SEGURA DE FECHAS Y DÍAS ---
 const getSafeDate = (ruta) => {

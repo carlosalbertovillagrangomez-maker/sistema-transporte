@@ -10,7 +10,7 @@ import { useJsApiLoader, Autocomplete } from '@react-google-maps/api';
 
 // === CLAVE DE API ===
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0";
-const libraries = ['places'];
+const libraries = ['places', 'geometry'];
 
 // === NUEVO COMPONENTE AUTOCOMPLETE (GOOGLE) ===
 const AddressAutocomplete = ({ value, onSelect, placeholder }) => {

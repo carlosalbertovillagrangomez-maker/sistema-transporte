@@ -18,7 +18,9 @@ import { collection, onSnapshot, query, orderBy, updateDoc, doc, arrayUnion } fr
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
 const containerStyle = { width: '100%', height: '100%' };
 const centerMX = { lat: 19.4326, lng: -99.1332 }; 
-const libraries = ['places']; 
+
+// CAMBIO 1: Agregamos 'geometry' para calcular la rotación del coche en vivo
+const libraries = ['places', 'geometry']; 
 
 const ICON_START = "http://maps.google.com/mapfiles/ms/icons/green-dot.png";
 const ICON_WAYPOINT = "http://maps.google.com/mapfiles/ms/icons/blue-dot.png";
@@ -54,6 +56,10 @@ function App() {
   const [chatInput, setChatInput] = useState('');
   const chatScrollRef = useRef(null);
 
+  // CAMBIO 2: Estados para estabilizar la brújula del coche en el Despachador
+  const prevLocRef = useRef(null);
+  const [carHeading, setCarHeading] = useState(0);
+
   // 1. CARGAR RUTAS Y CONDUCTORES
   useEffect(() => {
     const qRoutes = query(collection(db, "rutas"), orderBy("createdDate", "desc"));
@@ -84,7 +90,6 @@ function App() {
           const choferesOcupadosIds = liveRoutes.filter(r => r.status === 'En Ruta' && r.driverId).map(r => r.driverId);
           const choferesQueRechazaron = viaje.rechazadoPor || [];
 
-          // En la prueba quitamos el requisito estricto de GPS por si el chofer lo prueba desde una PC sin sensores
           const choferesElegibles = onlineDrivers.filter(d => 
               !choferesOcupadosIds.includes(d.id) && 
               !choferesQueRechazaron.includes(d.id)
@@ -96,7 +101,6 @@ function App() {
           let menorDistancia = Infinity;
 
           choferesElegibles.forEach(chofer => {
-              // Si no tiene GPS le asignamos 0 para que gane la prueba automáticamente
               const dist = (chofer.currentLocation && viaje.startCoords) ? getDistance(chofer.currentLocation, viaje.startCoords) : 0;
               if (dist < menorDistancia) {
                   menorDistancia = dist;
@@ -119,6 +123,28 @@ function App() {
 
   // RESTO DEL DESPACHADOR...
   useEffect(() => { if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight; }, [chatModalRoute?.chat]);
+
+  // CAMBIO 3: Lógica para calcular la rotación del coche con filtro estabilizador
+  useEffect(() => {
+      if (selectedRoute?.status === 'En Ruta' && selectedRoute?.currentLocation && window.google?.maps?.geometry) {
+          const loc = selectedRoute.currentLocation;
+          if (prevLocRef.current) {
+              const p1 = new window.google.maps.LatLng(prevLocRef.current.lat, prevLocRef.current.lng);
+              const p2 = new window.google.maps.LatLng(loc.lat, loc.lng);
+              const dist = window.google.maps.geometry.spherical.computeDistanceBetween(p1, p2);
+              
+              if (dist > 3) {
+                  const newHeading = window.google.maps.geometry.spherical.computeHeading(p1, p2);
+                  setCarHeading(newHeading);
+                  prevLocRef.current = loc;
+              }
+          } else {
+              prevLocRef.current = loc;
+          }
+      } else if (!selectedRoute) {
+          prevLocRef.current = null;
+      }
+  }, [selectedRoute?.currentLocation, selectedRoute?.status]);
 
   useEffect(() => {
       if(isLoaded && mapRef.current && selectedRoute?.technicalData?.geometry) {
@@ -205,15 +231,30 @@ function App() {
                 {/* MAPA GOOGLE */}
                 <div className="flex-1 relative bg-slate-200 rounded-xl shadow-inner overflow-hidden border border-slate-300">
                     {isLoaded ? (
-                        <GoogleMap mapContainerStyle={containerStyle} center={centerMX} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false, mapTypeControl: false }}>
+                        <GoogleMap 
+                            mapContainerStyle={containerStyle} 
+                            center={centerMX} 
+                            zoom={12} 
+                            onLoad={handleMapLoad} 
+                            // CAMBIO 4: Añadido tu ID Vectorial de 3D para que pinte todo correctamente
+                            options={{ mapId: "73f56298887c80075f6fc648", streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy" }}
+                        >
                             {onlineDrivers.map(d => d.currentLocation && <Marker key={d.id} position={d.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: "#22c55e", fillOpacity: 0.8, strokeWeight: 2, strokeColor: "white" }} title={`Operador: ${d.name}`} />)}
                             {selectedRoute && selectedRoute.technicalData?.geometry?.length > 0 && (
                                 <>
-                                    <Polyline path={selectedRoute.technicalData.geometry} options={{ strokeColor: "#94a3b8", strokeOpacity: 1, strokeWeight: 5 }} />
+                                    <Polyline path={selectedRoute.technicalData.geometry} options={{ strokeColor: "#3b82f6", strokeOpacity: 0.8, strokeWeight: 6 }} />
                                     {selectedRoute.startCoords && <Marker position={selectedRoute.startCoords} icon={ICON_START} />}
                                     {Array.isArray(selectedRoute.waypointsData) && selectedRoute.waypointsData.map((wp, idx) => ( wp?.lat && wp?.lng ? <Marker key={idx} position={{lat: wp.lat, lng: wp.lng}} icon={ICON_WAYPOINT} /> : null ))}
                                     {selectedRoute.endCoords && <Marker position={selectedRoute.endCoords} icon={ICON_END} />}
-                                    {selectedRoute.currentLocation && selectedRoute.status === 'En Ruta' && ( <Marker position={selectedRoute.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 10, fillColor: "#3b82f6", fillOpacity: 1, strokeWeight: 3, strokeColor: "white" }} zIndex={999}/> )}
+                                    
+                                    {/* CAMBIO 5: El coche dinámico que gira en el Despachador */}
+                                    {selectedRoute.currentLocation && selectedRoute.status === 'En Ruta' && ( 
+                                        <Marker 
+                                            position={selectedRoute.currentLocation} 
+                                            icon={{ path: window.google.maps.SymbolPath.FORWARD_CLOSED_ARROW, scale: 6, fillColor: "#3b82f6", fillOpacity: 1, strokeWeight: 2, strokeColor: "white", rotation: carHeading }} 
+                                            zIndex={999}
+                                        /> 
+                                    )}
                                 </>
                             )}
                         </GoogleMap>

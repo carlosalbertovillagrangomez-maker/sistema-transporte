@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { FileSpreadsheet, Calendar, ArrowUp, X, MapPin, User, Clock, Building, Search, Filter, Zap, Navigation, UserCheck, CheckCircle2, Camera } from 'lucide-react';
+import { FileSpreadsheet, Calendar, ArrowUp, X, MapPin, User, Clock, Building, Search, Filter, Zap, Navigation, UserCheck, CheckCircle2, Camera, AlertOctagon } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 // FIREBASE
@@ -14,7 +14,7 @@ const containerStyle = { width: '100%', height: '100%' };
 const centerMX = { lat: 19.4326, lng: -99.1332 }; 
 const libraries = ['places']; 
 
-// --- HELPER: EXTRACCIÓN SEGURA DE FECHAS ---
+// --- HELPER: EXTRACCIÓN SEGURA DE FECHAS Y DÍAS ---
 const getSafeDate = (ruta) => {
     if (ruta.finalDate) return ruta.finalDate;
     if (ruta.scheduledDate) return ruta.scheduledDate;
@@ -22,6 +22,13 @@ const getSafeDate = (ruta) => {
         return ruta.createdDate.includes('T') ? ruta.createdDate.split('T')[0] : ruta.createdDate.split(' ')[0];
     }
     return 'Sin Fecha';
+};
+
+const getDiaSemana = (fechaStr) => {
+    if (!fechaStr || fechaStr === 'Sin Fecha') return '';
+    const dias = ['DOMINGO', 'LUNES', 'MARTES', 'MIÉRCOLES', 'JUEVES', 'VIERNES', 'SÁBADO'];
+    const date = new Date(fechaStr + 'T12:00:00Z');
+    return dias[date.getUTCDay()];
 };
 
 export default function Historial() {
@@ -90,38 +97,64 @@ export default function Historial() {
   const totalViajes = filteredRoutes.filter(r => r.status !== 'Cancelado').length;
   const totalKm = filteredRoutes.filter(r => r.status !== 'Cancelado').reduce((acc, curr) => acc + parseFloat(curr.realDistanceDriven || curr.technicalData?.totalDistance || 0), 0).toFixed(1);
 
-  // === EXPORTAR A EXCEL ===
+  // === EXPORTAR A EXCEL (FORMATO CORPORATIVO + INTERNO) ===
   const handleExport = () => {
     const datosParaExcel = filteredRoutes.map(fila => {
+        const fechaSegura = getSafeDate(fila);
+        const dia = getDiaSemana(fechaSegura);
+        
+        // 1. Formatear la bitácora
+        const bitacoraTexto = fila.bitacora && fila.bitacora.length > 0 
+            ? fila.bitacora.map(b => `[${b.time}] ${b.evento}: ${b.motivo}`).join(" | ")
+            : 'Sin desviaciones';
+
+        // 2. Reconstruir Link de Google Maps original
         const origin = encodeURIComponent(fila.start || ''); 
         const destination = encodeURIComponent(fila.end || '');
         let waypointsStr = fila.waypoints?.length > 0 ? '&waypoints=' + fila.waypoints.map(wp => encodeURIComponent(wp)).join('|') : '';
         const mapLink = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}${waypointsStr}&travelmode=driving`;
 
+        // 3. Extraer registro de horas de las fotos (evitamos romper Excel con base64)
+        const fotosLlegada = fila.evidenciasLlegada?.map(e => `Abordaje (${e.time})`).join(", ") || '';
+        const fotosAusencia = fila.evidencias?.map(e => `No Show (${e.time})`).join(", ") || '';
+        const resumenFotos = [fotosLlegada, fotosAusencia].filter(Boolean).join(" | ") || 'Sin registro fotográfico';
+
         return {
-            "ID Ruta": fila.id,
-            "Fecha": getSafeDate(fila),
-            "Tipo Servicio": fila.serviceType || 'N/A',
-            "Cliente": fila.client || 'N/A',
-            "Conductor": fila.driver || 'Sin asignar',
-            "Punto de Inicio": fila.start || 'N/A',
-            "Punto Final": fila.end || 'N/A',
-            "Distancia Real (km)": fila.realDistanceDriven ? parseFloat(fila.realDistanceDriven).toFixed(1) : (fila.technicalData?.totalDistance || '-'),
-            "Tiempo Estimado (min)": fila.technicalData?.totalDuration || '-',
-            "Hora Inicio Real": fila.startTime || '-',
-            "Hora Fin Real": fila.endTime || '-',
-            "Estado": fila.status,
-            "Link Google Maps": mapLink
+            // --- FORMATO CORPORATIVO DEL CLIENTE ---
+            "DÍA": dia,
+            "FECHA": fechaSegura,
+            "HORA ENTRADA": fila.startTime || '-',
+            "HORA SALIDA": fila.endTime || '-',
+            "NOMBRE COMPLETO": fila.driver || 'Sin asignar',
+            "PUNTO DE RECOGIDA": fila.start || 'N/A',
+            "PUNTO DE DESCARGUE": fila.end || 'N/A',
+            "KMTS": fila.realDistanceDriven ? parseFloat(fila.realDistanceDriven).toFixed(1) : (fila.technicalData?.totalDistance || '-'),
+            
+            // --- TUS COLUMNAS ORIGINALES Y DE AUDITORÍA ---
+            "ESTATUS": fila.status,
+            "BITÁCORA / JUSTIFICACIONES": bitacoraTexto,
+            "REGISTRO FOTOGRÁFICO": resumenFotos,
+            "CLIENTE SOLICITANTE": fila.client || 'N/A',
+            "ID RUTA": fila.id,
+            "TIPO SERVICIO": fila.serviceType || 'N/A',
+            "TIEMPO ESTIMADO (MIN)": fila.technicalData?.totalDuration || '-',
+            "LINK GOOGLE MAPS": mapLink
         };
     });
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(datosParaExcel);
-    const wscols = [ {wch: 15}, {wch: 12}, {wch: 15}, {wch: 25}, {wch: 20}, {wch: 40}, {wch: 40}, {wch: 15}, {wch: 20}, {wch: 15}, {wch: 15}, {wch: 15}, {wch: 60} ];
+    
+    // Ajustar anchos para que se vea estético
+    const wscols = [ 
+        {wch: 12}, {wch: 12}, {wch: 15}, {wch: 15}, {wch: 35}, 
+        {wch: 45}, {wch: 45}, {wch: 10}, {wch: 15}, {wch: 50}, 
+        {wch: 35}, {wch: 25}, {wch: 25}, {wch: 15}, {wch: 22}, {wch: 60} 
+    ];
     ws['!cols'] = wscols;
 
-    XLSX.utils.book_append_sheet(wb, ws, "Reporte Finalizados");
-    XLSX.writeFile(wb, `Reporte_Rutas_Finalizadas_${new Date().toISOString().split('T')[0]}.xlsx`);
+    XLSX.utils.book_append_sheet(wb, ws, "Reporte_Logistica");
+    XLSX.writeFile(wb, `Reporte_Logistica_${new Date().toISOString().split('T')[0]}.xlsx`);
   };
 
   const handleViewDetails = (ruta) => {
@@ -135,7 +168,7 @@ export default function Historial() {
       <div className="flex justify-between items-center mb-6">
           <div>
               <h2 className="text-3xl font-black text-slate-800 tracking-tight">Historial y Reportes</h2>
-              <p className="text-slate-500 text-sm">Análisis de rutas completadas, canceladas y exportación de datos.</p>
+              <p className="text-slate-500 text-sm">Auditoría de rutas, bitácoras y exportación de kilometrajes.</p>
           </div>
       </div>
 
@@ -149,7 +182,7 @@ export default function Historial() {
               <div className="min-w-[200px]"><label className="block text-xs font-bold text-slate-400 mb-1">Cliente</label><select className="bg-slate-50 border border-slate-300 text-slate-700 text-sm rounded-lg block w-full p-2.5 outline-none" value={filterClient} onChange={(e) => setFilterClient(e.target.value)}><option value="">Todos</option>{uniqueClients.map((c, i) => <option key={i} value={c}>{c}</option>)}</select></div>
               <div className="flex-1 flex justify-end gap-2">
                   {(filterDateStart || filterDateEnd || filterDriver || filterClient) && (<button onClick={() => {setFilterDateStart(''); setFilterDateEnd(''); setFilterDriver(''); setFilterClient('');}} className="text-red-500 hover:bg-red-50 px-3 py-2.5 rounded-lg text-sm font-bold transition flex items-center gap-1"><X className="w-4 h-4"/> Limpiar</button>)}
-                  <button onClick={handleExport} className="bg-green-600 hover:bg-green-700 text-white font-black rounded-lg text-sm px-6 py-2.5 flex items-center gap-2 transition shadow-lg shadow-green-900/20"><FileSpreadsheet className="w-4 h-4"/> Exportar Excel</button>
+                  <button onClick={handleExport} className="bg-green-600 hover:bg-green-700 text-white font-black rounded-lg text-sm px-6 py-2.5 flex items-center gap-2 transition shadow-lg shadow-green-900/20"><FileSpreadsheet className="w-4 h-4"/> Exportar a Excel</button>
               </div>
           </div>
       </div>
@@ -174,24 +207,27 @@ export default function Historial() {
               <table className="min-w-full text-left text-sm text-slate-600">
                   <thead className="bg-slate-50 border-b border-slate-200 font-bold text-slate-700 uppercase text-xs">
                       <tr>
-                          <th className="px-6 py-4">Fecha</th>
+                          <th className="px-6 py-4">Día / Fecha</th>
                           <th className="px-6 py-4">Cliente</th>
-                          <th className="px-6 py-4">Conductor</th>
+                          <th className="px-6 py-4">Operador (Nombre Completo)</th>
                           <th className="px-6 py-4">Resumen de Ruta</th>
-                          <th className="px-6 py-4">Tiempo / Dist.</th>
-                          <th className="px-6 py-4 text-right">Detalles</th>
+                          <th className="px-6 py-4">Kilómetros</th>
+                          <th className="px-6 py-4 text-right">Auditoría</th>
                       </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                       {filteredRoutes.map((fila) => (
                           <tr key={fila.id} className={`transition ${fila.status === 'Cancelado' ? 'bg-red-50/30' : 'hover:bg-slate-50'}`}>
-                              <td className="px-6 py-4 font-bold text-slate-800">{getSafeDate(fila)}</td>
+                              <td className="px-6 py-4">
+                                  <div className="font-black text-slate-800 uppercase text-[10px]">{getDiaSemana(getSafeDate(fila))}</div>
+                                  <div className="font-bold text-slate-600">{getSafeDate(fila)}</div>
+                              </td>
                               <td className="px-6 py-4">
                                   <div className="font-bold text-slate-700">{fila.client}</div>
                                   <div className="text-[10px] text-slate-400 font-bold uppercase">{fila.serviceType}</div>
                               </td>
                               <td className="px-6 py-4 font-medium">
-                                  {fila.driver ? fila.driver : <span className="text-slate-400 italic">Sin asignar</span>}
+                                  {fila.driver ? <span className="font-bold text-slate-800">{fila.driver}</span> : <span className="text-slate-400 italic">Sin asignar</span>}
                               </td>
                               <td className="px-6 py-4">
                                   <div className="text-xs max-w-[200px]">
@@ -201,10 +237,8 @@ export default function Historial() {
                                   </div>
                               </td>
                               <td className="px-6 py-4">
-                                  <div className="font-bold text-slate-800">{fila.technicalData?.totalDuration || '--'} min</div>
-                                  {/* MUESTRA ODÓMETRO SI EXISTE */}
-                                  <div className="text-xs text-blue-600 font-bold">
-                                      Real: {fila.realDistanceDriven ? parseFloat(fila.realDistanceDriven).toFixed(1) : (fila.technicalData?.totalDistance || '--')} km
+                                  <div className="text-sm text-blue-600 font-black">
+                                      {fila.realDistanceDriven ? parseFloat(fila.realDistanceDriven).toFixed(1) : (fila.technicalData?.totalDistance || '--')} km
                                   </div>
                               </td>
                               <td className="px-6 py-4 text-right">
@@ -212,7 +246,7 @@ export default function Historial() {
                                       <span className={`text-[9px] px-2 py-0.5 rounded font-bold uppercase tracking-widest ${fila.status === 'Cancelado' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}`}>
                                           {fila.status}
                                       </span>
-                                      <button onClick={() => handleViewDetails(fila)} className="bg-slate-800 hover:bg-black text-white px-3 py-1.5 rounded transition text-xs font-bold shadow mt-1">Ver Reporte</button>
+                                      <button onClick={() => handleViewDetails(fila)} className="bg-slate-800 hover:bg-black text-white px-3 py-1.5 rounded transition text-[10px] font-bold shadow uppercase tracking-widest mt-1">Ver Reporte</button>
                                   </div>
                               </td>
                           </tr>
@@ -222,33 +256,33 @@ export default function Historial() {
           )}
       </div>
 
-      {/* === MODAL DE DETALLES MEJORADO === */}
+      {/* === MODAL DE DETALLES MEJORADO (CON BITÁCORA) === */}
       {showModal && selectedRoute && (
         <div className="fixed inset-0 bg-slate-900/60 flex items-center justify-center z-[9999] backdrop-blur-sm p-4 animate-[fadeIn_0.2s_ease-out]">
             <div className="bg-white w-full max-w-5xl rounded-2xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
                 
                 <div className="flex justify-between items-center px-8 py-5 border-b border-slate-100 bg-slate-50 shrink-0">
                     <div>
-                        <h3 className="text-xl font-black text-slate-800">Reporte de Servicio</h3>
+                        <h3 className="text-xl font-black text-slate-800">Reporte de Auditoría de Servicio</h3>
                         <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Ruta ID: {selectedRoute.id}</p>
                     </div>
                     <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-red-500 bg-white p-2 rounded-full shadow-sm"><X className="w-5 h-5" /></button>
                 </div>
 
                 <div className="flex-1 overflow-y-auto flex">
-                    {/* Panel Izquierdo: Info */}
+                    {/* Panel Izquierdo: Info y Bitácora */}
                     <div className="w-1/2 p-8 border-r border-slate-100 space-y-6 bg-white overflow-y-auto">
                         
                         <div className="grid grid-cols-2 gap-4">
-                            <div><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Cliente</p><p className="font-black text-slate-800">{selectedRoute.client}</p></div>
-                            <div><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Conductor</p><p className="font-black text-blue-600">{selectedRoute.driver || 'No asignado'}</p></div>
+                            <div><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Cliente Corporativo</p><p className="font-black text-slate-800">{selectedRoute.client}</p></div>
+                            <div><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Operador Asignado</p><p className="font-black text-blue-600">{selectedRoute.driver || 'No asignado'}</p></div>
                         </div>
 
                         {selectedRoute.status !== 'Cancelado' ? (
                             <div className="flex justify-between items-center bg-slate-50 border border-slate-200 rounded-xl p-4">
-                                <div className="text-center"><p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Inicio Real</p><p className="font-black text-slate-800 text-lg">{selectedRoute.startTime || '--:--'}</p></div>
+                                <div className="text-center"><p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Hora Entrada</p><p className="font-black text-slate-800 text-lg">{selectedRoute.startTime || '--:--'}</p></div>
                                 <div className="flex-1 px-4"><div className="w-full h-1 bg-green-500 rounded-full"></div></div>
-                                <div className="text-center"><p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Fin Real</p><p className="font-black text-slate-800 text-lg">{selectedRoute.endTime || '--:--'}</p></div>
+                                <div className="text-center"><p className="text-[10px] text-slate-500 uppercase font-bold mb-1">Hora Salida</p><p className="font-black text-slate-800 text-lg">{selectedRoute.endTime || '--:--'}</p></div>
                             </div>
                         ) : (
                             <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-center">
@@ -261,28 +295,48 @@ export default function Historial() {
                             <div className="relative pl-4 border-l-2 border-slate-200 space-y-5">
                                 <div className="relative">
                                     <div className="absolute -left-[21px] top-1 w-3 h-3 rounded-full bg-green-500 ring-4 ring-green-50"></div>
-                                    <p className="text-[10px] text-green-600 font-black uppercase">Origen</p>
+                                    <p className="text-[10px] text-green-600 font-black uppercase">Punto de Recogida</p>
                                     <p className="text-xs font-medium text-slate-800">{selectedRoute.start}</p>
                                 </div>
                                 {selectedRoute.waypoints && selectedRoute.waypoints.map((wp, i) => (
                                     <div key={i} className="relative">
                                         <div className="absolute -left-[21px] top-1 w-3 h-3 rounded-full bg-blue-500 ring-4 ring-blue-50"></div>
-                                        <p className="text-[10px] text-blue-600 font-black uppercase">Parada {i + 1}</p>
+                                        <p className="text-[10px] text-blue-600 font-black uppercase">Parada Intermedia {i + 1}</p>
                                         <p className="text-xs font-medium text-slate-800">{wp}</p>
                                     </div>
                                 ))}
                                 <div className="relative">
                                     <div className="absolute -left-[21px] top-1 w-3 h-3 rounded-full bg-red-500 ring-4 ring-red-50"></div>
-                                    <p className="text-[10px] text-red-600 font-black uppercase">Destino Final</p>
+                                    <p className="text-[10px] text-red-600 font-black uppercase">Punto de Descargue</p>
                                     <p className="text-xs font-medium text-slate-800">{selectedRoute.end}</p>
                                 </div>
                             </div>
                         </div>
 
-                        {/* --- NUEVO: EVIDENCIAS FOTOGRÁFICAS --- */}
+                        {/* --- NUEVO: BITÁCORA DE DESVÍOS --- */}
+                        {selectedRoute.bitacora?.length > 0 && (
+                            <div className="mt-6 pt-6 border-t border-slate-100">
+                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><AlertOctagon className="w-4 h-4 text-orange-500"/> Bitácora de Desvíos Registrados</h4>
+                                <div className="space-y-3">
+                                    {selectedRoute.bitacora.map((b, i) => (
+                                        <div key={i} className="bg-orange-50 border border-orange-200 rounded-xl p-3 relative overflow-hidden">
+                                            <div className="absolute left-0 top-0 bottom-0 w-1.5 bg-orange-500"></div>
+                                            <div className="flex justify-between items-center mb-1">
+                                                <p className="text-[10px] font-black uppercase text-orange-600 pl-2">{b.evento}</p>
+                                                <p className="text-[10px] font-bold text-slate-500">{b.time}</p>
+                                            </div>
+                                            <p className="text-xs text-slate-700 font-medium pl-2 mb-1">"{b.motivo}"</p>
+                                            <p className="text-[9px] text-slate-400 font-bold pl-2 uppercase tracking-widest">Distancia auditada: {b.distanciaMts} mts del punto</p>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* --- EVIDENCIAS FOTOGRÁFICAS --- */}
                         {(selectedRoute.evidencias?.length > 0 || selectedRoute.evidenciasLlegada?.length > 0) && (
                             <div className="mt-8 pt-6 border-t border-slate-100">
-                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><Camera className="w-4 h-4"/> Evidencias Fotográficas</h4>
+                                <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-4 flex items-center gap-2"><Camera className="w-4 h-4"/> Sellos de Evidencia Fotográfica</h4>
                                 <div className="grid grid-cols-2 gap-4">
                                     {selectedRoute.evidenciasLlegada?.map((ev, i) => (
                                         <div key={`llegada-${i}`} className="bg-green-50 rounded-xl p-2 border border-green-100">
@@ -290,7 +344,7 @@ export default function Historial() {
                                             <a href={ev.photo} target="_blank" rel="noreferrer">
                                                 <img src={ev.photo} className="w-full h-24 object-cover rounded-lg shadow-sm border border-green-200 hover:opacity-80 transition"/>
                                             </a>
-                                            <p className="text-[9px] text-slate-500 mt-1 text-right">{ev.time}</p>
+                                            <p className="text-[9px] text-slate-500 mt-1 font-bold text-right">Hora: {ev.time}</p>
                                         </div>
                                     ))}
                                     {selectedRoute.evidencias?.map((ev, i) => (
@@ -299,7 +353,7 @@ export default function Historial() {
                                             <a href={ev.photo} target="_blank" rel="noreferrer">
                                                 <img src={ev.photo} className="w-full h-24 object-cover rounded-lg shadow-sm border border-red-200 hover:opacity-80 transition"/>
                                             </a>
-                                            <p className="text-[9px] text-slate-500 mt-1 text-right">{ev.time}</p>
+                                            <p className="text-[9px] text-slate-500 mt-1 font-bold text-right">Hora: {ev.time}</p>
                                         </div>
                                     ))}
                                 </div>
@@ -325,7 +379,7 @@ export default function Historial() {
                         {selectedRoute.technicalData && (
                             <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-white px-6 py-3 rounded-full shadow-xl border border-slate-200 flex gap-6 z-10">
                                 <div className="text-center">
-                                    <p className="text-[10px] font-black uppercase text-slate-400">Total Real Recorrido</p>
+                                    <p className="text-[10px] font-black uppercase text-slate-400">Total KM Facturables</p>
                                     <p className="font-black text-slate-800">{selectedRoute.realDistanceDriven ? parseFloat(selectedRoute.realDistanceDriven).toFixed(1) : (selectedRoute.technicalData?.totalDistance || '--')} km</p>
                                 </div>
                                 <div className="w-px bg-slate-200"></div>

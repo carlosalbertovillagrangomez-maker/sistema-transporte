@@ -76,7 +76,8 @@ export default function Clientes() {
       locations: [] 
   });
 
-  const [tempUser, setTempUser] = useState({ name: '', email: '', role: 'Encargado' });
+  // CAMBIO: Cambiamos 'email' por 'phone' en el estado temporal del usuario
+  const [tempUser, setTempUser] = useState({ name: '', phone: '', role: 'Encargado' });
   const [tempLoc, setTempLoc] = useState({ alias: '', address: '', lat: null, lon: null, assignedTo: 'General' });
 
   // === 1. LEER CLIENTES ===
@@ -135,7 +136,7 @@ export default function Clientes() {
 
   const resetForm = () => {
       setNewClient({ name: '', type: 'Empresa', phone: '', email: '', users: [], locations: [] });
-      setTempUser({ name: '', email: '', role: 'Encargado' });
+      setTempUser({ name: '', phone: '', role: 'Encargado' }); // CAMBIO: Resetear a phone
       setTempLoc({ alias: '', address: '', lat: null, lon: null, assignedTo: 'General' });
       setEditingId(null);
   };
@@ -147,9 +148,9 @@ export default function Clientes() {
   };
 
   const addUser = () => {
-      if(!tempUser.name) return;
+      if(!tempUser.name || !tempUser.phone) return alert("Ingresa el nombre y el teléfono del usuario");
       setNewClient({...newClient, users: [...newClient.users, tempUser]});
-      setTempUser({ name: '', email: '', role: 'Encargado' });
+      setTempUser({ name: '', phone: '', role: 'Encargado' }); // CAMBIO: Resetear a phone
   };
 
   const addLocation = () => {
@@ -256,15 +257,22 @@ export default function Clientes() {
                                 <h4 className="text-xs font-bold text-slate-500 uppercase mb-3 flex items-center gap-2"><Users className="w-4 h-4"/> Usuarios Autorizados</h4>
                                 <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 mb-3">
                                     <div className="grid grid-cols-3 gap-2 mb-2">
-                                        <input placeholder="Nombre" className="text-xs p-2 rounded border" value={tempUser.name} onChange={e => setTempUser({...tempUser, name: e.target.value})} />
-                                        <input placeholder="Email" className="text-xs p-2 rounded border" value={tempUser.email} onChange={e => setTempUser({...tempUser, email: e.target.value})} />
-                                        <button onClick={addUser} className="bg-slate-800 text-white text-xs rounded font-bold hover:bg-slate-700">Agregar</button>
+                                        <input placeholder="Nombre" className="text-xs p-2 rounded border outline-none focus:border-blue-500" value={tempUser.name} onChange={e => setTempUser({...tempUser, name: e.target.value})} />
+                                        
+                                        {/* CAMBIO: Input de Teléfono */}
+                                        <input type="tel" placeholder="Teléfono/WhatsApp" className="text-xs p-2 rounded border outline-none focus:border-blue-500" value={tempUser.phone} onChange={e => setTempUser({...tempUser, phone: e.target.value})} />
+                                        
+                                        <button onClick={addUser} className="bg-slate-800 text-white text-xs rounded font-bold hover:bg-slate-700 transition">Agregar</button>
                                     </div>
-                                    <div className="space-y-2">
+                                    <div className="space-y-2 mt-4">
                                         {newClient.users.map((u, i) => (
-                                            <div key={i} className="flex justify-between items-center text-xs bg-white p-2 rounded border border-slate-100">
-                                                <span>{u.name} <span className="text-slate-400">({u.email})</span></span>
-                                                <button onClick={() => setNewClient({...newClient, users: newClient.users.filter((_, idx) => idx !== i)})} className="text-red-400"><Trash2 className="w-3 h-3"/></button>
+                                            <div key={i} className="flex justify-between items-center text-xs bg-white p-2 rounded border border-slate-100 shadow-sm">
+                                                {/* CAMBIO: Mostrar Teléfono. Agregué un fallback a email por si tienes datos antiguos */}
+                                                <span>
+                                                    <span className="font-bold text-slate-700">{u.name}</span> 
+                                                    <span className="text-slate-400 ml-2">({u.phone || u.email || 'Sin contacto'})</span>
+                                                </span>
+                                                <button onClick={() => setNewClient({...newClient, users: newClient.users.filter((_, idx) => idx !== i)})} className="text-red-400 hover:bg-red-50 p-1 rounded transition"><Trash2 className="w-3 h-3"/></button>
                                             </div>
                                         ))}
                                     </div>
@@ -278,17 +286,15 @@ export default function Clientes() {
                             <div className="bg-blue-50 p-4 rounded-lg border border-blue-100 mb-3">
                                 <div className="space-y-2 mb-2">
                                     <div className="flex gap-2">
-                                        <input placeholder="Alias (Ej. Bodega Norte)" className="text-xs p-2 rounded border flex-1" value={tempLoc.alias} onChange={e => setTempLoc({...tempLoc, alias: e.target.value})} />
+                                        <input placeholder="Alias (Ej. Bodega Norte)" className="text-xs p-2 rounded border flex-1 outline-none focus:border-blue-500" value={tempLoc.alias} onChange={e => setTempLoc({...tempLoc, alias: e.target.value})} />
                                         
-                                        {/* === AQUÍ ESTÁ LA CORRECCIÓN: SELECTOR DE USUARIOS === */}
                                         {newClient.type === 'Empresa' && (
                                             <select 
-                                                className="text-xs p-2 rounded border w-1/3 text-slate-600 outline-none bg-white" 
+                                                className="text-xs p-2 rounded border w-1/3 text-slate-600 outline-none bg-white focus:border-blue-500" 
                                                 value={tempLoc.assignedTo} 
                                                 onChange={e => setTempLoc({...tempLoc, assignedTo: e.target.value})}
                                             >
                                                 <option value="General">🏢 General (Empresa)</option>
-                                                {/* Iteramos sobre los usuarios ACTUALES que estás agregando */}
                                                 {newClient.users.map((u, i) => (
                                                     <option key={i} value={u.name}>👤 {u.name}</option>
                                                 ))}
@@ -303,23 +309,23 @@ export default function Clientes() {
                                         onSelect={(item) => setTempLoc({...tempLoc, address: item.address, lat: item.lat, lon: item.lon})} 
                                     />
                                 </div>
-                                <button onClick={addLocation} className="w-full py-1.5 bg-blue-600 text-white text-xs rounded font-bold hover:bg-blue-700">Guardar Ubicación</button>
+                                <button onClick={addLocation} className="w-full py-2 bg-blue-600 text-white text-xs rounded font-bold hover:bg-blue-700 transition shadow-sm">Guardar Ubicación</button>
                                 
-                                <div className="space-y-2 mt-3">
+                                <div className="space-y-2 mt-4">
                                     {newClient.locations.map((l, i) => (
-                                        <div key={i} className="flex justify-between items-center text-xs bg-white p-2 rounded border border-blue-100">
-                                            <div>
-                                                <p className="font-bold text-slate-800 flex items-center gap-2">
+                                        <div key={i} className="flex justify-between items-center text-xs bg-white p-2 rounded border border-blue-100 shadow-sm">
+                                            <div className="flex-1 mr-4">
+                                                <p className="font-bold text-slate-800 flex items-center gap-2 mb-1">
                                                     {l.alias} 
                                                     {l.assignedTo && l.assignedTo !== 'General' ? 
-                                                        <span className="text-[9px] bg-purple-100 text-purple-700 px-1.5 rounded-full">👤 {l.assignedTo}</span> 
+                                                        <span className="text-[9px] bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full font-bold">👤 {l.assignedTo}</span> 
                                                         : 
-                                                        <span className="text-[9px] bg-blue-100 text-blue-700 px-1.5 rounded-full">🏢 General</span>
+                                                        <span className="text-[9px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">🏢 General</span>
                                                     }
                                                 </p>
-                                                <p className="text-slate-500 truncate w-64">{l.address}</p>
+                                                <p className="text-slate-500 truncate">{l.address}</p>
                                             </div>
-                                            <button onClick={() => setNewClient({...newClient, locations: newClient.locations.filter((_, idx) => idx !== i)})} className="text-red-400"><Trash2 className="w-3 h-3"/></button>
+                                            <button onClick={() => setNewClient({...newClient, locations: newClient.locations.filter((_, idx) => idx !== i)})} className="text-red-400 hover:bg-red-50 p-1 rounded transition shrink-0"><Trash2 className="w-3 h-3"/></button>
                                         </div>
                                     ))}
                                 </div>
@@ -328,7 +334,12 @@ export default function Clientes() {
 
                     </div>
                 </div>
-                <div className="p-4 border-t border-slate-100 flex justify-end gap-3"><button onClick={() => setShowModal(false)} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-100 rounded">Cancelar</button><button onClick={handleSaveClient} className="px-5 py-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded flex items-center gap-2"><Save className="w-4 h-4"/> {editingId ? 'Actualizar' : 'Guardar'}</button></div>
+                <div className="p-4 border-t border-slate-100 bg-white flex justify-end gap-3 shrink-0">
+                    <button onClick={() => setShowModal(false)} className="px-5 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded transition">Cancelar</button>
+                    <button onClick={handleSaveClient} className="px-6 py-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded flex items-center gap-2 shadow-lg shadow-blue-500/30 transition">
+                        <Save className="w-4 h-4"/> {editingId ? 'Actualizar Cliente' : 'Guardar Cliente'}
+                    </button>
+                </div>
             </div>
         </div>
       )}

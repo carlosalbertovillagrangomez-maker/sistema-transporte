@@ -43,8 +43,8 @@ const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor
     return (
         <div className="relative" style={{ zIndex: zIndex }}> 
             <div className="flex items-center gap-3">
-                <div className={`w-10 h-10 rounded-full ${iconColor === 'green' ? 'bg-green-100 border-green-200' : iconColor === 'red' ? 'bg-red-100 border-red-200' : 'bg-blue-50 border-blue-200'} border flex items-center justify-center shrink-0 shadow-sm relative z-10 bg-white`}>
-                    <MapPin className={`w-4 h-4 ${iconColor === 'green' ? 'text-green-700' : iconColor === 'red' ? 'text-red-600' : 'text-blue-600'}`} />
+                <div className={`w-10 h-10 rounded-full ${iconColor === 'green' ? 'bg-green-100 border-green-200' : iconColor === 'red' ? 'bg-red-100 border-red-200' : iconColor === 'purple' ? 'bg-purple-100 border-purple-200' : 'bg-blue-50 border-blue-200'} border flex items-center justify-center shrink-0 shadow-sm relative z-10 bg-white`}>
+                    <MapPin className={`w-4 h-4 ${iconColor === 'green' ? 'text-green-700' : iconColor === 'red' ? 'text-red-600' : iconColor === 'purple' ? 'text-purple-600' : 'text-blue-600'}`} />
                 </div>
                 <div className="flex-1 relative">
                     {isLoaded ? (
@@ -315,7 +315,9 @@ export default function Planificacion() {
                   createReturn: globalCarpool.createReturn,
                   returnTime: globalCarpool.returnTime,
                   driverId: '',
-                  driverName: ''
+                  driverName: '',
+                  // --- NUEVO: Estado para el Punto de Reunión Compartido ---
+                  sharedMeetingPoint: { active: false, address: '', lat: null, lng: null } 
               });
           }
           setCarpoolGroups(grupos);
@@ -366,14 +368,39 @@ export default function Planificacion() {
           if(!g.driverId) return alert("⚠️ Todos los grupos generados deben tener un conductor asignado.");
           if(!g.pickupTime || !g.arrivalTime) return alert("⚠️ Todos los grupos deben tener Hora de Inicio (Recogida) y Llegada a la Oficina.");
           if(g.createReturn && !g.returnTime) return alert("⚠️ Activaste el viaje de Regreso en algún grupo, debes indicar su hora de salida.");
+          if(g.sharedMeetingPoint.active && !g.sharedMeetingPoint.lat) return alert("⚠️ Activaste el Punto de Reunión Compartido pero no seleccionaste una dirección válida para uno de los vehículos.");
       }
 
       try {
           for (let g of validGroups) {
-              const inicio = g.employees[0];
-              const intermedias = g.employees.slice(1);
+              
+              const isShared = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat;
+              const allPassengersString = g.employees.map(e => e.assignedTo).join(', '); // Unimos los nombres
 
-              // 1. CREAR VIAJE DE IDA (Hogar -> Oficina)
+              // VARIABLES PARA IDA
+              let startAddress, startLat, startLng, startContact;
+              let waypointsData = [], waypoints = [];
+
+              if (isShared) {
+                  // Si hay punto de reunión, todos abordan en el punto A (Sin intermedias)
+                  startAddress = g.sharedMeetingPoint.address;
+                  startLat = parseFloat(g.sharedMeetingPoint.lat);
+                  startLng = parseFloat(g.sharedMeetingPoint.lng);
+                  startContact = allPassengersString; 
+              } else {
+                  // Lógica normal casa por casa
+                  const inicio = g.employees[0];
+                  const intermedias = g.employees.slice(1);
+                  startAddress = inicio.address;
+                  startLat = parseFloat(inicio.lat);
+                  startLng = parseFloat(inicio.lon || inicio.lng);
+                  startContact = inicio.assignedTo;
+
+                  waypointsData = intermedias.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo }));
+                  waypoints = intermedias.map(w => w.address);
+              }
+
+              // 1. CREAR VIAJE DE IDA 
               const rutaIda = {
                   client: newRoute.client,
                   driver: g.driverName, 
@@ -381,24 +408,42 @@ export default function Planificacion() {
                   status: 'Aceptada',
                   serviceType: 'Programado',
                   scheduledDate: newRoute.scheduledDate,
-                  scheduledTime: g.arrivalTime, // Meta de llegada
-                  startTime: g.pickupTime, // Indicador interno de a qué hora iniciar recolección
-                  start: inicio.address,
-                  startCoords: { lat: parseFloat(inicio.lat), lng: parseFloat(inicio.lon || inicio.lng), contact: inicio.assignedTo },
+                  scheduledTime: g.arrivalTime, 
+                  startTime: g.pickupTime, 
+                  start: startAddress,
+                  startCoords: { lat: startLat, lng: startLng, contact: startContact },
                   end: oficina.address,
                   endCoords: { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng), contact: 'Oficina Central' },
-                  waypointsData: intermedias.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo })),
-                  waypoints: intermedias.map(w => w.address),
+                  waypointsData: waypointsData,
+                  waypoints: waypoints,
                   finalDate: newRoute.scheduledDate,
                   createdDate: new Date().toISOString()
               };
               await addDoc(collection(db, "rutas"), rutaIda);
 
-              // 2. CREAR VIAJE DE REGRESO (Oficina -> Hogar) SI ESTÁ ACTIVADO
+              // 2. CREAR VIAJE DE REGRESO SI ESTÁ ACTIVADO
               if (g.createReturn) {
-                  const revEmployees = [...g.employees].reverse(); // Dejamos al último más lejano
-                  const finRegreso = revEmployees[revEmployees.length - 1];
-                  const intermediasRegreso = revEmployees.slice(0, -1);
+                  let endAddress, endLat, endLng, endContact;
+                  let waypointsDataRegreso = [], waypointsRegreso = [];
+
+                  if (isShared) {
+                      // El destino final de regreso es el punto compartido
+                      endAddress = g.sharedMeetingPoint.address;
+                      endLat = parseFloat(g.sharedMeetingPoint.lat);
+                      endLng = parseFloat(g.sharedMeetingPoint.lng);
+                      endContact = allPassengersString;
+                  } else {
+                      const revEmployees = [...g.employees].reverse();
+                      const finRegreso = revEmployees[revEmployees.length - 1];
+                      const intermediasRegreso = revEmployees.slice(0, -1);
+                      endAddress = finRegreso.address;
+                      endLat = parseFloat(finRegreso.lat);
+                      endLng = parseFloat(finRegreso.lon || finRegreso.lng);
+                      endContact = finRegreso.assignedTo;
+
+                      waypointsDataRegreso = intermediasRegreso.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo }));
+                      waypointsRegreso = intermediasRegreso.map(w => w.address);
+                  }
 
                   const rutaRegreso = {
                       client: newRoute.client,
@@ -407,13 +452,13 @@ export default function Planificacion() {
                       status: 'Aceptada',
                       serviceType: 'Programado',
                       scheduledDate: newRoute.scheduledDate,
-                      scheduledTime: g.returnTime, // Hora a la que salen de la oficina
+                      scheduledTime: g.returnTime, 
                       start: oficina.address,
                       startCoords: { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng), contact: 'Oficina Central' },
-                      end: finRegreso.address,
-                      endCoords: { lat: parseFloat(finRegreso.lat), lng: parseFloat(finRegreso.lon || finRegreso.lng), contact: finRegreso.assignedTo },
-                      waypointsData: intermediasRegreso.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo })),
-                      waypoints: intermediasRegreso.map(w => w.address),
+                      end: endAddress,
+                      endCoords: { lat: endLat, lng: endLng, contact: endContact },
+                      waypointsData: waypointsDataRegreso,
+                      waypoints: waypointsRegreso,
                       finalDate: newRoute.scheduledDate,
                       createdDate: new Date().toISOString()
                   };
@@ -627,18 +672,46 @@ export default function Planificacion() {
                                                   </div>
                                                   
                                                   <div>
-                                                      <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Ruta de Recogida</label>
+                                                      <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Pasajeros a Abordar</label>
                                                       <div className="space-y-2">
                                                           {grupo.employees.map((emp, eIdx) => (
-                                                              <div key={eIdx} className="flex justify-between items-center bg-slate-50 border border-slate-100 p-2 rounded">
+                                                              <div key={eIdx} className={`flex justify-between items-center bg-slate-50 border p-2 rounded ${grupo.sharedMeetingPoint.active ? 'border-purple-200 bg-purple-50/50' : 'border-slate-100'}`}>
                                                                   <div className="flex items-center gap-2 overflow-hidden">
-                                                                      <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 ${eIdx===0 ? 'bg-green-500' : 'bg-blue-500'}`}>{eIdx===0 ? 'A' : String.fromCharCode(65+eIdx)}</div>
+                                                                      {!grupo.sharedMeetingPoint.active && (
+                                                                         <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 ${eIdx===0 ? 'bg-green-500' : 'bg-blue-500'}`}>{eIdx===0 ? 'A' : String.fromCharCode(65+eIdx)}</div>
+                                                                      )}
                                                                       <p className="text-xs font-bold text-slate-700 truncate">{emp.assignedTo}</p>
                                                                   </div>
                                                                   <button onClick={() => removeEmployeeFromGroup(grupo.id, eIdx)} className="text-slate-300 hover:text-red-500 p-1"><X className="w-3.5 h-3.5"/></button>
                                                               </div>
                                                           ))}
                                                       </div>
+                                                  </div>
+
+                                                  {/* --- NUEVA OPCIÓN: PUNTO DE REUNIÓN COMPARTIDO --- */}
+                                                  <div className="pt-3 border-t border-slate-200 mt-2">
+                                                      <div className="flex items-center gap-2 mb-3">
+                                                          <input 
+                                                              type="checkbox" 
+                                                              checked={grupo.sharedMeetingPoint.active} 
+                                                              onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, active: e.target.checked}} : g))} 
+                                                              className="w-4 h-4 text-purple-600 rounded" 
+                                                          />
+                                                          <label className="text-[10px] font-black text-purple-600 uppercase cursor-pointer">Usar Punto de Reunión Compartido</label>
+                                                      </div>
+                                                      
+                                                      {grupo.sharedMeetingPoint.active && (
+                                                          <div className="mb-2">
+                                                              <AddressAutocomplete 
+                                                                  isLoaded={isLoaded} 
+                                                                  placeholder="Buscar punto de reunión (Ej. Metro, Plaza)..." 
+                                                                  value={grupo.sharedMeetingPoint.address} 
+                                                                  onSelect={(loc) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, address: loc.address, lat: loc.lat, lng: loc.lon || loc.lng}} : g))} 
+                                                                  iconColor="purple" 
+                                                                  zIndex={100 - idx} 
+                                                              />
+                                                          </div>
+                                                      )}
                                                   </div>
                                               </div>
 
@@ -843,7 +916,7 @@ export default function Planificacion() {
                 </div>
                 
                 <div className="p-4 border-t border-slate-200 flex justify-end gap-3 shrink-0 bg-white">
-                    <button onClick={() => setShowModal(false)} className="px-6 py-2.5 text-sm font-bold text-slate-600 rounded-lg hover:bg-slate-100 transition">Cancelar</button>
+                    <button onClick={() => setShowModal(false)} className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition">Cancelar</button>
                     <button onClick={handleSaveRoute} className="px-6 py-2.5 text-sm font-black text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-lg shadow-blue-600/30 flex items-center gap-2 transition"><Navigation className="w-4 h-4"/> Confirmar Ruta</button>
                 </div>
             </div>

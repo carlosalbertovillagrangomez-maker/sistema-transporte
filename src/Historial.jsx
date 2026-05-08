@@ -355,30 +355,39 @@ export default function Historial() {
 
                     </div>
 
-                    {/* Panel Derecho: Mapa */}
+                    {/* Panel Derecho: Mapa de Auditoría */}
                     <div className="w-1/2 bg-slate-200 relative">
                         {isLoaded ? (
                             <GoogleMap mapContainerStyle={containerStyle} center={centerMX} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false, mapTypeControl: false }}>
+                                {/* RUTA PLANEADA */}
                                 {selectedRoute.technicalData?.geometry && (
-                                    <>
-                                        <Polyline path={selectedRoute.technicalData.geometry} options={{ strokeColor: selectedRoute.status === 'Cancelado' ? "#94a3b8" : "#3b82f6", strokeOpacity: 0.8, strokeWeight: 5 }} />
-                                        {selectedRoute.startCoords && <Marker position={selectedRoute.startCoords} label={{text: "A", color: "white", fontWeight: "bold"}} />}
-                                        {selectedRoute.endCoords && <Marker position={selectedRoute.endCoords} label={{text: "B", color: "white", fontWeight: "bold"}} />}
-                                    </>
+                                    <Polyline path={selectedRoute.technicalData.geometry} options={{ strokeColor: "#3b82f6", strokeOpacity: 0.4, strokeWeight: 4 }} />
                                 )}
+                                {/* RUTA REAL (GPS CHOFER) */}
+                                {selectedRoute.rutaReal && (
+                                    <Polyline path={selectedRoute.rutaReal} options={{ strokeColor: "#a855f7", strokeOpacity: 1, strokeWeight: 5 }} />
+                                )}
+
+                                {selectedRoute.startCoords && <Marker position={selectedRoute.startCoords} label="A" />}
+                                {selectedRoute.waypointsData && selectedRoute.waypointsData.map((wp, idx) => ( wp.lat && wp.lng && <Marker key={idx} position={{lat: wp.lat, lng: wp.lng}} label={String.fromCharCode(66 + idx)} /> ))}
+                                {selectedRoute.endCoords && <Marker position={selectedRoute.endCoords} label={String.fromCharCode(66 + (selectedRoute.waypointsData?.length || 0))} />}
                             </GoogleMap>
                         ) : <div className="h-full flex items-center justify-center text-slate-500">Cargando Mapa...</div>}
 
                         {selectedRoute.technicalData && (
-                            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-white px-6 py-3 rounded-full shadow-xl border border-slate-200 flex gap-6 z-10">
-                                <div className="text-center">
-                                    <p className="text-[10px] font-black uppercase text-slate-400">Total KM Facturables</p>
-                                    <p className="font-black text-slate-800">{selectedRoute.realDistanceDriven ? parseFloat(selectedRoute.realDistanceDriven).toFixed(1) : (selectedRoute.technicalData?.totalDistance || '--')} km</p>
+                            <div className="absolute bottom-6 left-1/2 -translate-x-1/2 bg-white px-6 py-4 rounded-2xl shadow-2xl border border-slate-200 flex flex-col gap-2 z-10 min-w-[300px]">
+                                <div className="flex justify-between items-center border-b pb-2">
+                                    <p className="text-[10px] font-black uppercase text-slate-400">Ruta Planeada:</p>
+                                    <p className="font-bold text-slate-600">{selectedRoute.technicalData?.totalDistance} km</p>
                                 </div>
-                                <div className="w-px bg-slate-200"></div>
-                                <div className="text-center">
-                                    <p className="text-[10px] font-black uppercase text-slate-400">Tiempo Estimado</p>
-                                    <p className="font-black text-blue-600">{selectedRoute.technicalData.totalDuration} min</p>
+                                <div className="flex justify-between items-center">
+                                    <div className="flex items-center gap-2">
+                                        <div className="w-3 h-3 rounded-full bg-purple-500"></div>
+                                        <p className="text-[10px] font-black uppercase text-purple-600">Auditoría Real (GPS):</p>
+                                    </div>
+                                    <p className="font-black text-xl text-purple-700">
+                                        {selectedRoute.realDistanceDriven ? parseFloat(selectedRoute.realDistanceDriven).toFixed(1) : "0.0"} km
+                                    </p>
                                 </div>
                             </div>
                         )}

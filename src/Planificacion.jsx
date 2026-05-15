@@ -316,7 +316,7 @@ export default function Planificacion() {
               empleados.sort((a, b) => {
                   const distA = Math.pow(parseFloat(a.lat) - parseFloat(oficina.lat), 2) + Math.pow(parseFloat(a.lon || a.lng) - parseFloat(oficina.lon || oficina.lng), 2);
                   const distB = Math.pow(parseFloat(b.lat) - parseFloat(oficina.lat), 2) + Math.pow(parseFloat(b.lon || b.lng) - parseFloat(oficina.lon || oficina.lng), 2);
-                  return distB - distA; // Más lejanos primero, para que la ruta vaya bajando hacia la oficina
+                  return distB - distA; // Más lejanos primero
               });
           }
 
@@ -331,7 +331,8 @@ export default function Planificacion() {
                   returnTime: globalCarpool.returnTime,
                   driverId: '',
                   driverName: '',
-                  sharedMeetingPoint: { active: false, address: '', lat: null, lng: null } 
+                  // --- NUEVO: Tipo de uso para el Punto Compartido ---
+                  sharedMeetingPoint: { active: false, address: '', lat: null, lng: null, type: 'Ambos' } 
               });
           }
           setCarpoolGroups(grupos);
@@ -434,59 +435,64 @@ export default function Planificacion() {
 
       try {
           for (let g of validGroups) {
-              const isShared = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat;
+              // Verificación inteligente del tipo de punto compartido
+              const isSharedIda = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat && ['Ambos', 'Ida'].includes(g.sharedMeetingPoint.type);
+              const isSharedRegreso = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat && ['Ambos', 'Regreso'].includes(g.sharedMeetingPoint.type);
+              
               const allPassengersString = g.employees.map(e => e.assignedTo).join(', ');
 
-              let startAddress, startLat, startLng, startContact;
-              let waypointsData = [], waypoints = [];
+              // --- VARIABLES PARA IDA ---
+              let startAddressIda, startLatIda, startLngIda, startContactIda;
+              let waypointsDataIda = [], waypointsIda = [];
 
-              if (isShared) {
-                  startAddress = g.sharedMeetingPoint.address;
-                  startLat = parseFloat(g.sharedMeetingPoint.lat);
-                  startLng = parseFloat(g.sharedMeetingPoint.lng);
-                  startContact = allPassengersString; 
+              if (isSharedIda) {
+                  startAddressIda = g.sharedMeetingPoint.address;
+                  startLatIda = parseFloat(g.sharedMeetingPoint.lat);
+                  startLngIda = parseFloat(g.sharedMeetingPoint.lng);
+                  startContactIda = allPassengersString; 
               } else {
                   const inicio = g.employees[0];
                   const intermedias = g.employees.slice(1);
-                  startAddress = inicio.address;
-                  startLat = parseFloat(inicio.lat);
-                  startLng = parseFloat(inicio.lon || inicio.lng);
-                  startContact = inicio.assignedTo;
+                  startAddressIda = inicio.address;
+                  startLatIda = parseFloat(inicio.lat);
+                  startLngIda = parseFloat(inicio.lon || inicio.lng);
+                  startContactIda = inicio.assignedTo;
 
-                  waypointsData = intermedias.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo }));
-                  waypoints = intermedias.map(w => w.address);
+                  waypointsDataIda = intermedias.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo }));
+                  waypointsIda = intermedias.map(w => w.address);
               }
 
               const rutaIda = {
                   client: newRoute.client, driver: g.driverName, driverId: g.driverId, status: 'Aceptada', serviceType: 'Programado',
                   scheduledDate: newRoute.scheduledDate, scheduledTime: g.arrivalTime, startTime: g.pickupTime, 
-                  start: startAddress, startCoords: { lat: startLat, lng: startLng, contact: startContact },
+                  start: startAddressIda, startCoords: { lat: startLatIda, lng: startLngIda, contact: startContactIda },
                   end: oficina.address, endCoords: { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng), contact: 'Oficina Central' },
-                  waypointsData: waypointsData, waypoints: waypoints, finalDate: newRoute.scheduledDate, createdDate: new Date().toISOString()
+                  waypointsData: waypointsDataIda, waypoints: waypointsIda, finalDate: newRoute.scheduledDate, createdDate: new Date().toISOString()
               };
               await addDoc(collection(db, "rutas"), rutaIda);
 
+              // --- VARIABLES PARA REGRESO ---
               if (g.createReturn) {
-                  let endAddress, endLat, endLng, endContact;
-                  let waypointsDataRegreso = [], waypointsRegreso = [];
+                  let endAddressReg, endLatReg, endLngReg, endContactReg;
+                  let waypointsDataReg = [], waypointsReg = [];
 
-                  if (isShared) {
-                      endAddress = g.sharedMeetingPoint.address; endLat = parseFloat(g.sharedMeetingPoint.lat); endLng = parseFloat(g.sharedMeetingPoint.lng); endContact = allPassengersString;
+                  if (isSharedRegreso) {
+                      endAddressReg = g.sharedMeetingPoint.address; endLatReg = parseFloat(g.sharedMeetingPoint.lat); endLngReg = parseFloat(g.sharedMeetingPoint.lng); endContactReg = allPassengersString;
                   } else {
                       const revEmployees = [...g.employees].reverse();
                       const finRegreso = revEmployees[revEmployees.length - 1];
                       const intermediasRegreso = revEmployees.slice(0, -1);
-                      endAddress = finRegreso.address; endLat = parseFloat(finRegreso.lat); endLng = parseFloat(finRegreso.lon || finRegreso.lng); endContact = finRegreso.assignedTo;
-                      waypointsDataRegreso = intermediasRegreso.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo }));
-                      waypointsRegreso = intermediasRegreso.map(w => w.address);
+                      endAddressReg = finRegreso.address; endLatReg = parseFloat(finRegreso.lat); endLngReg = parseFloat(finRegreso.lon || finRegreso.lng); endContactReg = finRegreso.assignedTo;
+                      waypointsDataReg = intermediasRegreso.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo }));
+                      waypointsReg = intermediasRegreso.map(w => w.address);
                   }
 
                   const rutaRegreso = {
                       client: newRoute.client, driver: g.driverName, driverId: g.driverId, status: 'Aceptada', serviceType: 'Programado',
                       scheduledDate: newRoute.scheduledDate, scheduledTime: g.returnTime, 
                       start: oficina.address, startCoords: { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng), contact: 'Oficina Central' },
-                      end: endAddress, endCoords: { lat: endLat, lng: endLng, contact: endContact },
-                      waypointsData: waypointsDataRegreso, waypoints: waypointsRegreso, finalDate: newRoute.scheduledDate, createdDate: new Date().toISOString()
+                      end: endAddressReg, endCoords: { lat: endLatReg, lng: endLngReg, contact: endContactReg },
+                      waypointsData: waypointsDataReg, waypoints: waypointsReg, finalDate: newRoute.scheduledDate, createdDate: new Date().toISOString()
                   };
                   await addDoc(collection(db, "rutas"), rutaRegreso);
               }
@@ -720,13 +726,25 @@ export default function Planificacion() {
                                                   </div>
                                               </div>
 
+                                              {/* --- SELECTOR IDA / REGRESO EN PUNTO COMPARTIDO --- */}
                                               <div className="pt-3 border-t border-slate-200 mt-2">
                                                   <div className="flex items-center gap-2 mb-3">
                                                       <input type="checkbox" checked={grupo.sharedMeetingPoint.active} onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, active: e.target.checked}} : g))} className="w-4 h-4 text-purple-600 rounded" />
                                                       <label className="text-[10px] font-black text-purple-600 uppercase cursor-pointer">Punto de Reunión Compartido</label>
                                                   </div>
                                                   {grupo.sharedMeetingPoint.active && (
-                                                      <AddressAutocomplete isLoaded={isLoaded} placeholder="Buscar plaza, metro, etc..." value={grupo.sharedMeetingPoint.address} onSelect={(loc) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, address: loc.address, lat: loc.lat, lng: loc.lon || loc.lng}} : g))} iconColor="purple" zIndex={100 - idx} />
+                                                      <div className="space-y-2 mb-2">
+                                                          <select 
+                                                              className="w-full bg-white border border-purple-200 rounded p-2 text-xs font-bold text-purple-700 outline-none"
+                                                              value={grupo.sharedMeetingPoint.type || 'Ambos'}
+                                                              onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, type: e.target.value}} : g))}
+                                                          >
+                                                              <option value="Ambos">Usar para Ida y Regreso</option>
+                                                              <option value="Ida">Solo para Ruta de Ida (Llevarlos a la oficina)</option>
+                                                              <option value="Regreso">Solo para Ruta de Regreso (Sacarlos de la oficina)</option>
+                                                          </select>
+                                                          <AddressAutocomplete isLoaded={isLoaded} placeholder="Buscar plaza, metro, etc..." value={grupo.sharedMeetingPoint.address} onSelect={(loc) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, address: loc.address, lat: loc.lat, lng: loc.lon || loc.lng}} : g))} iconColor="purple" zIndex={100 - idx} />
+                                                      </div>
                                                   )}
                                               </div>
 
@@ -765,13 +783,13 @@ export default function Planificacion() {
                                   {carpoolGroups.map((g, idx) => {
                                       if (previewGroupId !== 'all' && previewGroupId !== g.id) return null;
                                       
-                                      const isShared = g.sharedMeetingPoint.active && g.sharedMeetingPoint.lat;
+                                      const isSharedIda = g.sharedMeetingPoint.active && g.sharedMeetingPoint.lat && ['Ambos', 'Ida'].includes(g.sharedMeetingPoint.type || 'Ambos');
                                       const gColor = PREVIEW_COLORS[idx % PREVIEW_COLORS.length];
                                       const path = [];
                                       const oficina = selectedClientData?.locations?.find(l => l.assignedTo === 'General');
                                       const endPoint = oficina && oficina.lat ? { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng) } : null;
 
-                                      if (isShared) {
+                                      if (isSharedIda) {
                                           const p = { lat: parseFloat(g.sharedMeetingPoint.lat), lng: parseFloat(g.sharedMeetingPoint.lng) };
                                           path.push(p);
                                           if (endPoint) path.push(endPoint);

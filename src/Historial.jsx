@@ -82,18 +82,35 @@ export default function Historial() {
     setFilteredRoutes(result);
   }, [filterDateStart, filterDateEnd, filterDriver, filterClient, allRoutes]);
 
-  // === CENTRAR MAPA ===
+  // === CENTRAR MAPA (ZOOM INTELIGENTE) ===
   useEffect(() => {
-      if(isLoaded && mapRef.current && showModal && selectedRoute?.technicalData?.geometry?.length > 0) {
+      if(isLoaded && mapRef.current && showModal && selectedRoute) {
           const bounds = new window.google.maps.LatLngBounds();
-          selectedRoute.technicalData.geometry.forEach(coord => bounds.extend(coord));
-          mapRef.current.fitBounds(bounds);
+          let hasPoints = false;
+
+          // 1. Añadir la ruta planeada a los límites
+          if (selectedRoute.technicalData?.geometry?.length > 0) {
+              selectedRoute.technicalData.geometry.forEach(coord => bounds.extend(coord));
+              hasPoints = true;
+          }
+          
+          // 2. Añadir la ruta REAL a los límites (para que si se desvió mucho, el mapa lo cubra)
+          if (selectedRoute.rutaReal?.length > 0) {
+              selectedRoute.rutaReal.forEach(coord => bounds.extend(coord));
+              hasPoints = true;
+          }
+
+          if (hasPoints) {
+              mapRef.current.fitBounds(bounds);
+              // Opcional: Agregar un pequeño padding visual
+              mapRef.current.panToBounds(bounds, 50); 
+          }
       }
   }, [showModal, selectedRoute, isLoaded]);
 
   const handleMapLoad = useCallback((map) => { mapRef.current = map; }, []);
 
-  // === KPIs (USANDO ODÓMETRO REAL SI EXISTE) ===
+  // === KPIs ===
   const totalViajes = filteredRoutes.filter(r => r.status !== 'Cancelado').length;
   const totalKm = filteredRoutes.filter(r => r.status !== 'Cancelado').reduce((acc, curr) => acc + parseFloat(curr.realDistanceDriven || curr.technicalData?.totalDistance || 0), 0).toFixed(1);
 
@@ -294,7 +311,7 @@ export default function Historial() {
                                 {selectedRoute.waypoints && selectedRoute.waypoints.map((wp, i) => (
                                     <div key={i} className="relative">
                                         <div className="absolute -left-[21px] top-1 w-3 h-3 rounded-full bg-blue-500 ring-4 ring-blue-50"></div>
-                                        <p className="text-[10px] text-blue-600 font-black uppercase">Parada Intermedia {i + 1}</p>
+                                        <p className="text-[10px] text-blue-600 font-black uppercase">Parada Intermedia {String.fromCharCode(66 + i)}</p>
                                         <p className="text-xs font-medium text-slate-800">{wp}</p>
                                     </div>
                                 ))}
@@ -389,6 +406,9 @@ export default function Historial() {
                                         {selectedRoute.realDistanceDriven ? parseFloat(selectedRoute.realDistanceDriven).toFixed(1) : "0.0"} km
                                     </p>
                                 </div>
+                                <p className="text-[8px] text-center text-slate-400 font-bold uppercase mt-1">
+                                    *Kilometraje contado desde el primer abordaje.
+                                </p>
                             </div>
                         )}
                     </div>

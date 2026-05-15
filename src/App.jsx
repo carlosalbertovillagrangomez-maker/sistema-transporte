@@ -19,7 +19,7 @@ const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0";
 const containerStyle = { width: '100%', height: '100%' };
 const centerMX = { lat: 19.4326, lng: -99.1332 }; 
 
-// CAMBIO 1: Agregamos 'geometry' para calcular la rotación del coche en vivo
+// Agregamos 'geometry' para calcular la rotación del coche en vivo
 const libraries = ['places', 'geometry']; 
 
 const ICON_START = "http://maps.google.com/mapfiles/ms/icons/green-dot.png";
@@ -56,7 +56,7 @@ function App() {
   const [chatInput, setChatInput] = useState('');
   const chatScrollRef = useRef(null);
 
-  // CAMBIO 2: Estados para estabilizar la brújula del coche en el Despachador
+  // Estados para estabilizar la brújula del coche en el Despachador
   const prevLocRef = useRef(null);
   const [carHeading, setCarHeading] = useState(0);
 
@@ -124,7 +124,7 @@ function App() {
   // RESTO DEL DESPACHADOR...
   useEffect(() => { if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight; }, [chatModalRoute?.chat]);
 
-  // CAMBIO 3: Lógica para calcular la rotación del coche con filtro estabilizador
+  // Lógica para calcular la rotación del coche con filtro estabilizador
   useEffect(() => {
       if (selectedRoute?.status === 'En Ruta' && selectedRoute?.currentLocation && window.google?.maps?.geometry) {
           const loc = selectedRoute.currentLocation;
@@ -236,7 +236,6 @@ function App() {
                             center={centerMX} 
                             zoom={12} 
                             onLoad={handleMapLoad} 
-                            // CAMBIO 4: Añadido tu ID Vectorial de 3D para que pinte todo correctamente
                             options={{ mapId: "73f56298887c80075f6fc648", streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy" }}
                         >
                             {onlineDrivers.map(d => d.currentLocation && <Marker key={d.id} position={d.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: "#22c55e", fillOpacity: 0.8, strokeWeight: 2, strokeColor: "white" }} title={`Operador: ${d.name}`} />)}
@@ -247,7 +246,7 @@ function App() {
                                     {Array.isArray(selectedRoute.waypointsData) && selectedRoute.waypointsData.map((wp, idx) => ( wp?.lat && wp?.lng ? <Marker key={idx} position={{lat: wp.lat, lng: wp.lng}} icon={ICON_WAYPOINT} /> : null ))}
                                     {selectedRoute.endCoords && <Marker position={selectedRoute.endCoords} icon={ICON_END} />}
                                     
-                                    {/* CAMBIO 5: El coche dinámico que gira en el Despachador */}
+                                    {/* El coche dinámico que gira en el Despachador */}
                                     {selectedRoute.currentLocation && selectedRoute.status === 'En Ruta' && ( 
                                         <Marker 
                                             position={selectedRoute.currentLocation} 
@@ -316,6 +315,15 @@ function App() {
                                             </button>
                                         )}
                                     </div>
+
+                                    {/* --- NUEVO: MOSTRAR ETA EN EL MONITOR EN VIVO --- */}
+                                    {ruta.status === 'En Ruta' && ruta.proximityAlert?.etaMins && (
+                                        <div className="mb-3 px-2 py-1 bg-green-50 border border-green-200 rounded text-center">
+                                            <p className="text-[10px] font-black text-green-700 uppercase tracking-widest flex items-center justify-center gap-1">
+                                                <Clock className="w-3 h-3"/> ETA: {ruta.proximityAlert.etaMins} MIN A {ruta.proximityAlert.passenger.split(' ')[0].toUpperCase()}
+                                            </p>
+                                        </div>
+                                    )}
 
                                     <div className="flex gap-2">
                                         {ruta.status !== 'En Ruta' && ruta.status !== 'Finalizado' && (<button onClick={(e) => { e.stopPropagation(); handleStartTrip(ruta.id); }} className="flex-1 bg-green-600 hover:bg-green-700 text-white py-1.5 rounded text-xs font-bold flex items-center justify-center gap-1 transition shadow-sm"><Play className="w-3 h-3 fill-current" /> INICIAR</button>)}

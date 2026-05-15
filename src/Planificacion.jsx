@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2 } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2, ArrowRightLeft, Eye } from 'lucide-react';
 // GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline, Autocomplete } from '@react-google-maps/api';
 
@@ -85,6 +85,7 @@ const InlineSummaryBox = ({ distance, duration, eta, color = "blue", showEta }) 
 };
 
 const getMarkerLabel = (index) => String.fromCharCode(65 + index);
+const PREVIEW_COLORS = ['#3b82f6', '#a855f7', '#22c55e', '#f97316', '#ef4444', '#06b6d4', '#eab308', '#ec4899'];
 
 export default function Planificacion() {
   const [showModal, setShowModal] = useState(false);
@@ -93,6 +94,7 @@ export default function Planificacion() {
 
   const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries });
   const mapRef = useRef(null);
+  const previewMapRef = useRef(null);
 
   const [availableDrivers, setAvailableDrivers] = useState([]);
   const [availableClients, setAvailableClients] = useState([]);
@@ -114,6 +116,7 @@ export default function Planificacion() {
   // === ESTADOS PARA EL NUEVO MÓDULO DE CARPOOLING INTELIGENTE ===
   const [showCarpoolModal, setShowCarpoolModal] = useState(false);
   const [carpoolGroups, setCarpoolGroups] = useState([]);
+  const [previewGroupId, setPreviewGroupId] = useState('all'); 
   const [globalCarpool, setGlobalCarpool] = useState({
       syncAll: true,
       pickupTime: '',
@@ -286,13 +289,14 @@ export default function Planificacion() {
   };
 
   // =================================================================================
-  // === LÓGICA DEL NUEVO MÓDULO DE CARPOOLING INTELIGENTE (AGRUPACIÓN Y HORARIOS) ===
+  // === LÓGICA DEL NUEVO MÓDULO DE CARPOOLING INTELIGENTE ===
   // =================================================================================
 
   const openCarpoolModal = () => {
       setShowCarpoolModal(true);
       setNewRoute({...newRoute, client: '', serviceType: 'Programado', scheduledDate: ''});
       setCarpoolGroups([]);
+      setPreviewGroupId('all');
       setGlobalCarpool({ syncAll: true, pickupTime: '', arrivalTime: '', createReturn: false, returnTime: '' });
       setSelectedClientData(null);
   };
@@ -304,11 +308,22 @@ export default function Planificacion() {
       setSelectedClientData(clientObj || null);
 
       if (clientObj) {
-          const empleados = clientObj.locations.filter(loc => loc.assignedTo && loc.assignedTo !== 'General');
+          let empleados = clientObj.locations.filter(loc => loc.assignedTo && loc.assignedTo !== 'General');
+          const oficina = clientObj.locations.find(loc => loc.assignedTo === 'General');
+          
+          // AGRUPACIÓN INTELIGENTE: Ordenar a los empleados por cercanía a la oficina
+          if (oficina && oficina.lat) {
+              empleados.sort((a, b) => {
+                  const distA = Math.pow(parseFloat(a.lat) - parseFloat(oficina.lat), 2) + Math.pow(parseFloat(a.lon || a.lng) - parseFloat(oficina.lon || oficina.lng), 2);
+                  const distB = Math.pow(parseFloat(b.lat) - parseFloat(oficina.lat), 2) + Math.pow(parseFloat(b.lon || b.lng) - parseFloat(oficina.lon || oficina.lng), 2);
+                  return distB - distA; // Más lejanos primero, para que la ruta vaya bajando hacia la oficina
+              });
+          }
+
           const grupos = [];
           for (let i = 0; i < empleados.length; i += 4) {
               grupos.push({
-                  id: i,
+                  id: `group_${i}`,
                   employees: empleados.slice(i, i + 4),
                   pickupTime: globalCarpool.pickupTime,
                   arrivalTime: globalCarpool.arrivalTime,
@@ -316,7 +331,6 @@ export default function Planificacion() {
                   returnTime: globalCarpool.returnTime,
                   driverId: '',
                   driverName: '',
-                  // --- NUEVO: Estado para el Punto de Reunión Compartido ---
                   sharedMeetingPoint: { active: false, address: '', lat: null, lng: null } 
               });
           }
@@ -326,7 +340,6 @@ export default function Planificacion() {
       }
   };
 
-  // Sincronizar horarios de grupos si la casilla maestra está activada
   useEffect(() => {
       if (globalCarpool.syncAll && carpoolGroups.length > 0) {
           setCarpoolGroups(prev => prev.map(g => ({
@@ -350,16 +363,64 @@ export default function Planificacion() {
       }));
   };
 
+  const moveEmployee = (sourceGroupId, targetGroupId, empIndex) => {
+      if (sourceGroupId === targetGroupId) return;
+      setCarpoolGroups(prev => {
+          const newGroups = [...prev];
+          const sIdx = newGroups.findIndex(g => g.id === sourceGroupId);
+          const tIdx = newGroups.findIndex(g => g.id === targetGroupId);
+          if (sIdx === -1 || tIdx === -1) return prev;
+
+          const empToMove = newGroups[sIdx].employees[empIndex];
+          
+          const newSourceEmps = [...newGroups[sIdx].employees];
+          newSourceEmps.splice(empIndex, 1);
+          
+          const newTargetEmps = [...newGroups[tIdx].employees];
+          newTargetEmps.push(empToMove);
+
+          newGroups[sIdx] = { ...newGroups[sIdx], employees: newSourceEmps };
+          newGroups[tIdx] = { ...newGroups[tIdx], employees: newTargetEmps };
+          
+          return newGroups;
+      });
+  };
+
   const setGroupDriver = (groupId, driverId) => {
       const driver = availableDrivers.find(d => d.id === driverId);
       setCarpoolGroups(prev => prev.map(g => g.id === groupId ? { ...g, driverId, driverName: driver?.name || '' } : g));
   };
 
+  // === DIBUJAR EL PREVIEW EN EL MAPA ===
+  useEffect(() => {
+      if(isLoaded && previewMapRef.current && carpoolGroups.length > 0 && selectedClientData) {
+          const bounds = new window.google.maps.LatLngBounds();
+          const oficina = selectedClientData.locations.find(loc => loc.assignedTo === 'General');
+          if (oficina && oficina.lat) {
+              bounds.extend({ lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng) });
+          }
+
+          carpoolGroups.forEach(g => {
+              if (previewGroupId === 'all' || previewGroupId === g.id) {
+                  if (g.sharedMeetingPoint.active && g.sharedMeetingPoint.lat) {
+                      bounds.extend({ lat: parseFloat(g.sharedMeetingPoint.lat), lng: parseFloat(g.sharedMeetingPoint.lng) });
+                  } else {
+                      g.employees.forEach(emp => {
+                          if (emp.lat) bounds.extend({ lat: parseFloat(emp.lat), lng: parseFloat(emp.lon || emp.lng) });
+                      });
+                  }
+              }
+          });
+          previewMapRef.current.fitBounds(bounds);
+          previewMapRef.current.panToBounds(bounds, 50);
+      }
+  }, [previewGroupId, carpoolGroups, selectedClientData, isLoaded]);
+
   const handleGenerateCarpoolGroups = async () => {
       if(!newRoute.client || !newRoute.scheduledDate) return alert("Falta configurar Empresa y Fecha.");
       
       const oficina = selectedClientData?.locations.find(loc => loc.assignedTo === 'General');
-      if(!oficina) return alert("Esta empresa no tiene configurada la Sede 'General' (oficina central). Ve a la pestaña Clientes para agregarla.");
+      if(!oficina) return alert("Esta empresa no tiene configurada la Sede 'General' (oficina central).");
 
       const validGroups = carpoolGroups.filter(g => g.employees.length > 0);
       if(validGroups.length === 0) return alert("No hay grupos con empleados para programar.");
@@ -373,22 +434,18 @@ export default function Planificacion() {
 
       try {
           for (let g of validGroups) {
-              
               const isShared = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat;
-              const allPassengersString = g.employees.map(e => e.assignedTo).join(', '); // Unimos los nombres
+              const allPassengersString = g.employees.map(e => e.assignedTo).join(', ');
 
-              // VARIABLES PARA IDA
               let startAddress, startLat, startLng, startContact;
               let waypointsData = [], waypoints = [];
 
               if (isShared) {
-                  // Si hay punto de reunión, todos abordan en el punto A (Sin intermedias)
                   startAddress = g.sharedMeetingPoint.address;
                   startLat = parseFloat(g.sharedMeetingPoint.lat);
                   startLng = parseFloat(g.sharedMeetingPoint.lng);
                   startContact = allPassengersString; 
               } else {
-                  // Lógica normal casa por casa
                   const inicio = g.employees[0];
                   const intermedias = g.employees.slice(1);
                   startAddress = inicio.address;
@@ -400,90 +457,49 @@ export default function Planificacion() {
                   waypoints = intermedias.map(w => w.address);
               }
 
-              // 1. CREAR VIAJE DE IDA 
               const rutaIda = {
-                  client: newRoute.client,
-                  driver: g.driverName, 
-                  driverId: g.driverId, 
-                  status: 'Aceptada',
-                  serviceType: 'Programado',
-                  scheduledDate: newRoute.scheduledDate,
-                  scheduledTime: g.arrivalTime, 
-                  startTime: g.pickupTime, 
-                  start: startAddress,
-                  startCoords: { lat: startLat, lng: startLng, contact: startContact },
-                  end: oficina.address,
-                  endCoords: { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng), contact: 'Oficina Central' },
-                  waypointsData: waypointsData,
-                  waypoints: waypoints,
-                  finalDate: newRoute.scheduledDate,
-                  createdDate: new Date().toISOString()
+                  client: newRoute.client, driver: g.driverName, driverId: g.driverId, status: 'Aceptada', serviceType: 'Programado',
+                  scheduledDate: newRoute.scheduledDate, scheduledTime: g.arrivalTime, startTime: g.pickupTime, 
+                  start: startAddress, startCoords: { lat: startLat, lng: startLng, contact: startContact },
+                  end: oficina.address, endCoords: { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng), contact: 'Oficina Central' },
+                  waypointsData: waypointsData, waypoints: waypoints, finalDate: newRoute.scheduledDate, createdDate: new Date().toISOString()
               };
               await addDoc(collection(db, "rutas"), rutaIda);
 
-              // 2. CREAR VIAJE DE REGRESO SI ESTÁ ACTIVADO
               if (g.createReturn) {
                   let endAddress, endLat, endLng, endContact;
                   let waypointsDataRegreso = [], waypointsRegreso = [];
 
                   if (isShared) {
-                      // El destino final de regreso es el punto compartido
-                      endAddress = g.sharedMeetingPoint.address;
-                      endLat = parseFloat(g.sharedMeetingPoint.lat);
-                      endLng = parseFloat(g.sharedMeetingPoint.lng);
-                      endContact = allPassengersString;
+                      endAddress = g.sharedMeetingPoint.address; endLat = parseFloat(g.sharedMeetingPoint.lat); endLng = parseFloat(g.sharedMeetingPoint.lng); endContact = allPassengersString;
                   } else {
                       const revEmployees = [...g.employees].reverse();
                       const finRegreso = revEmployees[revEmployees.length - 1];
                       const intermediasRegreso = revEmployees.slice(0, -1);
-                      endAddress = finRegreso.address;
-                      endLat = parseFloat(finRegreso.lat);
-                      endLng = parseFloat(finRegreso.lon || finRegreso.lng);
-                      endContact = finRegreso.assignedTo;
-
+                      endAddress = finRegreso.address; endLat = parseFloat(finRegreso.lat); endLng = parseFloat(finRegreso.lon || finRegreso.lng); endContact = finRegreso.assignedTo;
                       waypointsDataRegreso = intermediasRegreso.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo }));
                       waypointsRegreso = intermediasRegreso.map(w => w.address);
                   }
 
                   const rutaRegreso = {
-                      client: newRoute.client,
-                      driver: g.driverName, 
-                      driverId: g.driverId, 
-                      status: 'Aceptada',
-                      serviceType: 'Programado',
-                      scheduledDate: newRoute.scheduledDate,
-                      scheduledTime: g.returnTime, 
-                      start: oficina.address,
-                      startCoords: { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng), contact: 'Oficina Central' },
-                      end: endAddress,
-                      endCoords: { lat: endLat, lng: endLng, contact: endContact },
-                      waypointsData: waypointsDataRegreso,
-                      waypoints: waypointsRegreso,
-                      finalDate: newRoute.scheduledDate,
-                      createdDate: new Date().toISOString()
+                      client: newRoute.client, driver: g.driverName, driverId: g.driverId, status: 'Aceptada', serviceType: 'Programado',
+                      scheduledDate: newRoute.scheduledDate, scheduledTime: g.returnTime, 
+                      start: oficina.address, startCoords: { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng), contact: 'Oficina Central' },
+                      end: endAddress, endCoords: { lat: endLat, lng: endLng, contact: endContact },
+                      waypointsData: waypointsDataRegreso, waypoints: waypointsRegreso, finalDate: newRoute.scheduledDate, createdDate: new Date().toISOString()
                   };
                   await addDoc(collection(db, "rutas"), rutaRegreso);
               }
           }
-          alert(`✅ ¡Logística completada! Rutas corporativas (Idas y Regresos) creadas y asignadas a sus respectivos conductores con éxito.`);
+          alert(`✅ ¡Logística completada! Rutas corporativas (Idas y Regresos) creadas con éxito.`);
           setShowCarpoolModal(false);
-      } catch(e) { 
-          alert("Ocurrió un error técnico al generar las rutas corporativas."); 
-      }
+      } catch(e) { alert("Ocurrió un error técnico al generar las rutas corporativas."); }
   };
 
   const handleDeleteRoute = async (id, e) => { e.stopPropagation(); if(confirm("¿Eliminar ruta permanentemente?")) { await deleteDoc(doc(db, "rutas", id)); if(viewRoute?.id === id) setViewRoute(null); } };
-
-  // --- FUNCIÓN DEL MODAL DE ASIGNACIÓN RÁPIDA ---
-  const confirmAssignDriver = async () => {
-      if (!newRoute.driver) return alert("Selecciona un conductor primero.");
-      try {
-          await updateDoc(doc(db, "rutas", routeToAssign.id), { driver: newRoute.driver, driverId: newRoute.driverId, status: 'Aceptada' });
-          setShowAssignModal(false); setRouteToAssign(null); setNewRoute({ ...newRoute, driver: '', driverId: '' });
-      } catch (e) {}
-  };
-
+  const confirmAssignDriver = async () => { if (!newRoute.driver) return alert("Selecciona un conductor primero."); try { await updateDoc(doc(db, "rutas", routeToAssign.id), { driver: newRoute.driver, driverId: newRoute.driverId, status: 'Aceptada' }); setShowAssignModal(false); setRouteToAssign(null); setNewRoute({ ...newRoute, driver: '', driverId: '' }); } catch (e) {} };
   const handleMapLoad = useCallback((map) => { mapRef.current = map; }, []);
+  const handlePreviewMapLoad = useCallback((map) => { previewMapRef.current = map; }, []);
   const routeToDisplay = viewRoute?.technicalData?.geometry ? viewRoute.technicalData.geometry : [];
   let mapCenter = centerMX; if(routeToDisplay.length > 0) mapCenter = routeToDisplay[0];
   const activePlanRoutes = routesList.filter(r => r.status === 'Pendiente' || r.status === 'Aceptada' || r.status === 'En Ruta');
@@ -512,7 +528,6 @@ export default function Planificacion() {
                     </div>
                     <h4 className="font-bold text-slate-800 text-sm mb-0.5 truncate">{ruta.client}</h4>
                     
-                    {/* PASAJEROS */}
                     {(() => {
                         const passengers = [ ruta.startCoords?.contact, ...(ruta.waypointsData?.map(w => w.contact) || []), ruta.endCoords?.contact ].filter(Boolean);
                         if (passengers.length === 0) return null;
@@ -533,7 +548,6 @@ export default function Planificacion() {
                         <div className="flex items-center gap-2 text-slate-600 text-xs"><MapPin className="w-3 h-3 text-red-600 shrink-0" /> <span className="truncate">{ruta.end?.split(',')[0]}</span></div>
                     </div>
                     
-                    {/* BOTÓN DE ASIGNACIÓN MANUAL PARA RUTAS PENDIENTES */}
                     {ruta.status === 'Pendiente' && (
                         <button onClick={(e) => { e.stopPropagation(); setRouteToAssign(ruta); setShowAssignModal(true); }} className="w-full mt-3 bg-orange-100 hover:bg-orange-200 text-orange-700 border border-orange-200 font-black p-2 rounded-lg text-[10px] flex items-center justify-center gap-1.5 transition-colors shadow-sm animate-pulse">
                             <User className="w-3.5 h-3.5"/> ASIGNAR UNIDAD MANUALMENTE
@@ -548,7 +562,6 @@ export default function Planificacion() {
               ))}
           </div>
 
-          {/* MAPA PRINCIPAL */}
           <div className="flex-1 bg-slate-200 rounded-xl border border-slate-300 relative overflow-hidden flex items-center justify-center shadow-inner">
              <GoogleMap mapContainerStyle={containerStyle} center={mapCenter} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false, mapTypeControl: false }}>
                  {routeToDisplay.length > 0 && (
@@ -563,7 +576,6 @@ export default function Planificacion() {
           </div>
       </div>
 
-      {/* --- MODAL 1: ASIGNACIÓN MANUAL RÁPIDA DE CHOFER --- */}
       {showAssignModal && routeToAssign && (
           <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
               <div className="bg-white w-full max-w-md rounded-2xl shadow-2xl flex flex-col overflow-hidden">
@@ -571,10 +583,8 @@ export default function Planificacion() {
                       <div><h3 className="text-lg font-bold text-slate-800">Asignar Operador</h3></div>
                       <button onClick={() => { setShowAssignModal(false); setRouteToAssign(null); }}><X className="w-5 h-5 text-slate-400 hover:text-red-500 transition" /></button>
                   </div>
-                  
                   <div className="p-6">
                       <p className="text-xs text-slate-500 mb-4">Selecciona el conductor disponible para el viaje de <strong>{routeToAssign.client}</strong>.</p>
-                      
                       <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                           <label className="text-xs font-bold text-slate-500 uppercase">Unidad / Conductor</label>
                           <select className="w-full mt-1.5 bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-400 font-bold text-slate-700" value={newRoute.driver} onChange={handleDriverChange}>
@@ -583,7 +593,6 @@ export default function Planificacion() {
                           </select>
                       </div>
                   </div>
-
                   <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 shrink-0">
                       <button onClick={() => { setShowAssignModal(false); setRouteToAssign(null); }} className="px-4 py-2 text-sm text-slate-600 hover:bg-slate-200 rounded-lg transition">Cancelar</button>
                       <button onClick={confirmAssignDriver} className="px-6 py-2 text-sm font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg shadow-md transition">Confirmar Asignación</button>
@@ -592,19 +601,19 @@ export default function Planificacion() {
           </div>
       )}
 
-      {/* --- MODAL 2: CARPOOLING INTELIGENTE --- */}
+      {/* --- MODAL 2: CARPOOLING INTELIGENTE MEJORADO (3 COLUMNAS) --- */}
       {showCarpoolModal && (
           <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-              <div className="bg-white w-full max-w-5xl h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+              <div className="bg-white w-full max-w-[95vw] h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
                   <div className="px-6 py-4 border-b border-purple-300 flex justify-between items-center bg-purple-700 text-white shrink-0">
-                      <div><h3 className="text-lg font-bold flex items-center gap-2"><Network className="w-5 h-5"/> Optimizador de Carpooling</h3></div>
+                      <div><h3 className="text-lg font-bold flex items-center gap-2"><Network className="w-5 h-5"/> Optimizador Geográfico de Carpooling</h3></div>
                       <button onClick={() => setShowCarpoolModal(false)}><X className="w-6 h-6 text-purple-200 hover:text-white transition" /></button>
                   </div>
                   
                   <div className="flex-1 flex overflow-hidden">
-                      {/* PANEL IZQUIERDO: CONFIGURACIÓN MAESTRA */}
-                      <div className="w-[35%] bg-slate-50 border-r border-slate-200 p-6 overflow-y-auto">
-                          <p className="text-xs text-slate-500 mb-6">Genera múltiples rutas automáticamente agrupando empleados. Configura las horas globales aquí.</p>
+                      {/* COLUMNA 1: CONFIGURACIÓN MAESTRA (25%) */}
+                      <div className="w-1/4 bg-slate-50 border-r border-slate-200 p-6 overflow-y-auto min-w-[280px]">
+                          <p className="text-xs text-slate-500 mb-6">El sistema agrupa automáticamente a los empleados por proximidad a la oficina.</p>
                           
                           <div className="space-y-5">
                               <div>
@@ -623,20 +632,20 @@ export default function Planificacion() {
                               <div className="bg-white p-4 rounded-xl border-2 border-purple-100 shadow-sm">
                                   <div className="flex items-center gap-2 mb-4">
                                       <input type="checkbox" id="syncAll" className="w-4 h-4 text-purple-600 rounded" checked={globalCarpool.syncAll} onChange={(e) => setGlobalCarpool({...globalCarpool, syncAll: e.target.checked})} />
-                                      <label htmlFor="syncAll" className="text-xs font-black text-purple-700 uppercase cursor-pointer">Sincronizar horarios para todos</label>
+                                      <label htmlFor="syncAll" className="text-xs font-black text-purple-700 uppercase cursor-pointer">Sincronizar todos</label>
                                   </div>
 
                                   <div className={`space-y-3 ${!globalCarpool.syncAll ? 'opacity-50 pointer-events-none' : ''}`}>
-                                      <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Hora inicio de Ruta (Ida)</label><input type="time" className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-sm outline-none" value={globalCarpool.pickupTime} onChange={(e) => setGlobalCarpool({...globalCarpool, pickupTime: e.target.value})} /></div>
-                                      <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Llegada a Oficina (Ida)</label><input type="time" className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-sm outline-none" value={globalCarpool.arrivalTime} onChange={(e) => setGlobalCarpool({...globalCarpool, arrivalTime: e.target.value})} /></div>
+                                      <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Hora Inicio de Ruta</label><input type="time" className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-sm outline-none" value={globalCarpool.pickupTime} onChange={(e) => setGlobalCarpool({...globalCarpool, pickupTime: e.target.value})} /></div>
+                                      <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Llegada a Oficina</label><input type="time" className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-sm outline-none" value={globalCarpool.arrivalTime} onChange={(e) => setGlobalCarpool({...globalCarpool, arrivalTime: e.target.value})} /></div>
                                       
                                       <div className="pt-3 mt-3 border-t border-slate-100">
                                           <div className="flex items-center gap-2 mb-3">
                                               <input type="checkbox" id="createReturn" className="w-4 h-4 text-purple-600 rounded" checked={globalCarpool.createReturn} onChange={(e) => setGlobalCarpool({...globalCarpool, createReturn: e.target.checked})} />
-                                              <label htmlFor="createReturn" className="text-xs font-bold text-slate-600 cursor-pointer">Programar también ruta de Regreso</label>
+                                              <label htmlFor="createReturn" className="text-xs font-bold text-slate-600 cursor-pointer">Viaje de Regreso</label>
                                           </div>
                                           {globalCarpool.createReturn && (
-                                              <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Salida de Oficina (Regreso)</label><input type="time" className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-sm outline-none" value={globalCarpool.returnTime} onChange={(e) => setGlobalCarpool({...globalCarpool, returnTime: e.target.value})} /></div>
+                                              <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Salida de Oficina</label><input type="time" className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-sm outline-none" value={globalCarpool.returnTime} onChange={(e) => setGlobalCarpool({...globalCarpool, returnTime: e.target.value})} /></div>
                                           )}
                                       </div>
                                   </div>
@@ -644,106 +653,158 @@ export default function Planificacion() {
                           </div>
                       </div>
 
-                      {/* PANEL DERECHO: GRUPOS GENERADOS */}
-                      <div className="w-[65%] bg-slate-200 p-6 overflow-y-auto">
+                      {/* COLUMNA 2: GESTIÓN DE CUADRILLAS (40%) */}
+                      <div className="w-[40%] bg-slate-100 p-6 overflow-y-auto border-r border-slate-200 shadow-inner">
                           {carpoolGroups.length === 0 ? (
                               <div className="h-full flex flex-col items-center justify-center text-slate-400">
                                   <Users className="w-16 h-16 mb-4 opacity-50"/>
-                                  <p className="font-bold text-sm">Selecciona una empresa para agrupar a su personal.</p>
+                                  <p className="font-bold text-sm">Selecciona una empresa para agrupar.</p>
                               </div>
                           ) : (
                               <div className="space-y-6">
-                                  {carpoolGroups.filter(g => g.employees.length > 0).map((grupo, idx) => (
-                                      <div key={grupo.id} className="bg-white rounded-2xl shadow-md border border-slate-200 overflow-hidden">
+                                  <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm sticky top-0 z-10">
+                                      <h4 className="text-sm font-black text-slate-700">Cuadrillas ({carpoolGroups.length})</h4>
+                                      <button onClick={() => setPreviewGroupId('all')} className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${previewGroupId === 'all' ? 'bg-blue-600 text-white shadow' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
+                                          <Eye className="w-3 h-3"/> Ver Todas
+                                      </button>
+                                  </div>
+
+                                  {carpoolGroups.filter(g => g.employees.length > 0).map((grupo, idx) => {
+                                      const isPreviewing = previewGroupId === grupo.id;
+                                      const groupColor = PREVIEW_COLORS[idx % PREVIEW_COLORS.length];
+                                      
+                                      return (
+                                      <div key={grupo.id} className={`bg-white rounded-2xl shadow-sm border overflow-hidden transition-all ${isPreviewing ? 'border-blue-500 ring-2 ring-blue-500/20' : 'border-slate-200'}`}>
                                           <div className="bg-slate-800 text-white px-4 py-3 flex justify-between items-center">
-                                              <h4 className="font-black text-sm flex items-center gap-2"><Car className="w-4 h-4 text-blue-400"/> Vehículo {idx + 1}</h4>
-                                              <span className="text-xs bg-slate-700 px-2 py-1 rounded font-bold">{grupo.employees.length} pasajeros</span>
+                                              <div className="flex items-center gap-2">
+                                                  <div className="w-3 h-3 rounded-full" style={{ backgroundColor: groupColor }}></div>
+                                                  <h4 className="font-black text-sm">Vehículo {idx + 1}</h4>
+                                              </div>
+                                              <div className="flex gap-2">
+                                                  <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold">{grupo.employees.length}/4 pax</span>
+                                                  <button onClick={() => setPreviewGroupId(grupo.id)} className={`text-[10px] font-black uppercase px-2 py-1 rounded transition ${isPreviewing ? 'bg-blue-500 text-white' : 'bg-slate-600 text-slate-300 hover:bg-slate-500'}`}>Ver Ruta</button>
+                                              </div>
                                           </div>
                                           
-                                          <div className="p-4 grid grid-cols-2 gap-4">
-                                              {/* Lado A: Pasajeros y Chofer */}
-                                              <div className="space-y-4">
-                                                  <div>
-                                                      <label className="block text-[10px] font-black text-blue-600 uppercase mb-1.5">Conductor Asignado</label>
-                                                      <select className="w-full bg-blue-50 border border-blue-200 rounded p-2 text-xs font-bold text-slate-700 outline-none" value={grupo.driverId} onChange={(e) => setGroupDriver(grupo.id, e.target.value)}>
-                                                          <option value="">👤 Seleccionar chofer...</option>
-                                                          {availableDrivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
-                                                      </select>
-                                                  </div>
-                                                  
-                                                  <div>
-                                                      <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Pasajeros a Abordar</label>
-                                                      <div className="space-y-2">
-                                                          {grupo.employees.map((emp, eIdx) => (
-                                                              <div key={eIdx} className={`flex justify-between items-center bg-slate-50 border p-2 rounded ${grupo.sharedMeetingPoint.active ? 'border-purple-200 bg-purple-50/50' : 'border-slate-100'}`}>
-                                                                  <div className="flex items-center gap-2 overflow-hidden">
-                                                                      {!grupo.sharedMeetingPoint.active && (
-                                                                         <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 ${eIdx===0 ? 'bg-green-500' : 'bg-blue-500'}`}>{eIdx===0 ? 'A' : String.fromCharCode(65+eIdx)}</div>
-                                                                      )}
-                                                                      <p className="text-xs font-bold text-slate-700 truncate">{emp.assignedTo}</p>
-                                                                  </div>
-                                                                  <button onClick={() => removeEmployeeFromGroup(grupo.id, eIdx)} className="text-slate-300 hover:text-red-500 p-1"><X className="w-3.5 h-3.5"/></button>
+                                          <div className="p-4 space-y-4">
+                                              <div>
+                                                  <label className="block text-[10px] font-black text-blue-600 uppercase mb-1.5">Conductor Asignado</label>
+                                                  <select className="w-full bg-blue-50 border border-blue-200 rounded p-2 text-xs font-bold text-slate-700 outline-none" value={grupo.driverId} onChange={(e) => setGroupDriver(grupo.id, e.target.value)}>
+                                                      <option value="">👤 Seleccionar chofer...</option>
+                                                      {availableDrivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                                  </select>
+                                              </div>
+                                              
+                                              <div>
+                                                  <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Pasajeros</label>
+                                                  <div className="space-y-2">
+                                                      {grupo.employees.map((emp, eIdx) => (
+                                                          <div key={eIdx} className={`flex items-center gap-2 bg-slate-50 border p-2 rounded ${grupo.sharedMeetingPoint.active ? 'border-purple-200 bg-purple-50/50' : 'border-slate-100'}`}>
+                                                              {!grupo.sharedMeetingPoint.active && (
+                                                                 <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 bg-slate-400" style={{ backgroundColor: groupColor }}>{eIdx===0 ? 'A' : String.fromCharCode(65+eIdx)}</div>
+                                                              )}
+                                                              <div className="flex-1 overflow-hidden">
+                                                                  <p className="text-xs font-bold text-slate-700 truncate">{emp.assignedTo}</p>
                                                               </div>
-                                                          ))}
-                                                      </div>
-                                                  </div>
-
-                                                  {/* --- NUEVA OPCIÓN: PUNTO DE REUNIÓN COMPARTIDO --- */}
-                                                  <div className="pt-3 border-t border-slate-200 mt-2">
-                                                      <div className="flex items-center gap-2 mb-3">
-                                                          <input 
-                                                              type="checkbox" 
-                                                              checked={grupo.sharedMeetingPoint.active} 
-                                                              onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, active: e.target.checked}} : g))} 
-                                                              className="w-4 h-4 text-purple-600 rounded" 
-                                                          />
-                                                          <label className="text-[10px] font-black text-purple-600 uppercase cursor-pointer">Usar Punto de Reunión Compartido</label>
-                                                      </div>
-                                                      
-                                                      {grupo.sharedMeetingPoint.active && (
-                                                          <div className="mb-2">
-                                                              <AddressAutocomplete 
-                                                                  isLoaded={isLoaded} 
-                                                                  placeholder="Buscar punto de reunión (Ej. Metro, Plaza)..." 
-                                                                  value={grupo.sharedMeetingPoint.address} 
-                                                                  onSelect={(loc) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, address: loc.address, lat: loc.lat, lng: loc.lon || loc.lng}} : g))} 
-                                                                  iconColor="purple" 
-                                                                  zIndex={100 - idx} 
-                                                              />
+                                                              <div className="flex items-center gap-1 shrink-0">
+                                                                  <select className="text-[10px] font-bold bg-white border border-slate-200 rounded p-1 text-slate-600 outline-none" onChange={(e) => { if(e.target.value) moveEmployee(grupo.id, e.target.value, eIdx); e.target.value=''; }}>
+                                                                      <option value="">Mover a...</option>
+                                                                      {carpoolGroups.filter(g => g.id !== grupo.id && g.employees.length < 4).map((g, i) => (
+                                                                          <option key={g.id} value={g.id}>Vehículo {i + 1}</option>
+                                                                      ))}
+                                                                  </select>
+                                                                  <button onClick={() => removeEmployeeFromGroup(grupo.id, eIdx)} className="text-slate-300 hover:text-red-500 p-1 bg-white rounded border border-slate-100"><X className="w-3.5 h-3.5"/></button>
+                                                              </div>
                                                           </div>
-                                                      )}
+                                                      ))}
                                                   </div>
                                               </div>
 
-                                              {/* Lado B: Horarios Individuales (Si no hay syncGlobal) */}
+                                              <div className="pt-3 border-t border-slate-200 mt-2">
+                                                  <div className="flex items-center gap-2 mb-3">
+                                                      <input type="checkbox" checked={grupo.sharedMeetingPoint.active} onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, active: e.target.checked}} : g))} className="w-4 h-4 text-purple-600 rounded" />
+                                                      <label className="text-[10px] font-black text-purple-600 uppercase cursor-pointer">Punto de Reunión Compartido</label>
+                                                  </div>
+                                                  {grupo.sharedMeetingPoint.active && (
+                                                      <AddressAutocomplete isLoaded={isLoaded} placeholder="Buscar plaza, metro, etc..." value={grupo.sharedMeetingPoint.address} onSelect={(loc) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, address: loc.address, lat: loc.lat, lng: loc.lon || loc.lng}} : g))} iconColor="purple" zIndex={100 - idx} />
+                                                  )}
+                                              </div>
+
                                               {!globalCarpool.syncAll && (
                                                   <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-3">
-                                                      <label className="block text-[10px] font-black text-purple-600 uppercase mb-1">Ajuste Manual de Horarios</label>
                                                       <div className="grid grid-cols-2 gap-2">
                                                           <div><label className="block text-[9px] font-bold text-slate-500 uppercase">Inicio Ruta</label><input type="time" className="w-full border rounded p-1.5 text-xs" value={grupo.pickupTime} onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, pickupTime: e.target.value} : g))} /></div>
                                                           <div><label className="block text-[9px] font-bold text-slate-500 uppercase">Llegada Ofic.</label><input type="time" className="w-full border rounded p-1.5 text-xs" value={grupo.arrivalTime} onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, arrivalTime: e.target.value} : g))} /></div>
                                                       </div>
-                                                      <div className="pt-2 mt-2 border-t border-slate-200">
-                                                          <div className="flex items-center gap-2 mb-2">
-                                                              <input type="checkbox" checked={grupo.createReturn} onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, createReturn: e.target.checked} : g))} />
-                                                              <label className="text-[10px] font-bold text-slate-600">Viaje Regreso</label>
-                                                          </div>
-                                                          {grupo.createReturn && (
-                                                              <div><label className="block text-[9px] font-bold text-slate-500 uppercase">Salida de Oficina</label><input type="time" className="w-full border rounded p-1.5 text-xs" value={grupo.returnTime} onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, returnTime: e.target.value} : g))} /></div>
-                                                          )}
-                                                      </div>
-                                                  </div>
-                                              )}
-                                              {globalCarpool.syncAll && (
-                                                  <div className="flex items-center justify-center bg-slate-50 border border-dashed border-slate-300 rounded-xl p-4 text-center">
-                                                      <p className="text-xs text-slate-400 font-bold">Horarios sincronizados<br/>por configuración global.</p>
                                                   </div>
                                               )}
                                           </div>
                                       </div>
-                                  ))}
+                                  )})}
                               </div>
                           )}
+                      </div>
+
+                      {/* COLUMNA 3: MAPA DE PREVISUALIZACIÓN (35%) */}
+                      <div className="flex-1 bg-slate-300 relative">
+                          {!isLoaded ? (
+                              <div className="h-full flex items-center justify-center text-slate-500 font-bold"><Loader2 className="animate-spin mr-2"/> Cargando Radar...</div>
+                          ) : (
+                              <GoogleMap mapContainerStyle={containerStyle} center={centerMX} zoom={11} onLoad={handlePreviewMapLoad} options={{ streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy" }}>
+                                  {selectedClientData && (
+                                      <Marker 
+                                          position={{ 
+                                              lat: parseFloat(selectedClientData.locations.find(l => l.assignedTo === 'General')?.lat || centerMX.lat), 
+                                              lng: parseFloat(selectedClientData.locations.find(l => l.assignedTo === 'General')?.lon || selectedClientData.locations.find(l => l.assignedTo === 'General')?.lng || centerMX.lng) 
+                                          }} 
+                                          icon="http://maps.google.com/mapfiles/kml/pal3/icon21.png"
+                                          title="Oficina Central"
+                                      />
+                                  )}
+                                  
+                                  {carpoolGroups.map((g, idx) => {
+                                      if (previewGroupId !== 'all' && previewGroupId !== g.id) return null;
+                                      
+                                      const isShared = g.sharedMeetingPoint.active && g.sharedMeetingPoint.lat;
+                                      const gColor = PREVIEW_COLORS[idx % PREVIEW_COLORS.length];
+                                      const path = [];
+                                      const oficina = selectedClientData?.locations?.find(l => l.assignedTo === 'General');
+                                      const endPoint = oficina && oficina.lat ? { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng) } : null;
+
+                                      if (isShared) {
+                                          const p = { lat: parseFloat(g.sharedMeetingPoint.lat), lng: parseFloat(g.sharedMeetingPoint.lng) };
+                                          path.push(p);
+                                          if (endPoint) path.push(endPoint);
+                                          return (
+                                              <React.Fragment key={`prev-${g.id}`}>
+                                                  <Marker position={p} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: gColor, fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} />
+                                                  <Polyline path={path} options={{ strokeColor: gColor, strokeOpacity: 0.8, strokeWeight: 4 }} />
+                                              </React.Fragment>
+                                          );
+                                      } else {
+                                          g.employees.forEach(emp => {
+                                              if (emp.lat) {
+                                                  const p = { lat: parseFloat(emp.lat), lng: parseFloat(emp.lon || emp.lng) };
+                                                  path.push(p);
+                                                  <Marker position={p} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: gColor, fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} />
+                                              }
+                                          });
+                                          if (endPoint) path.push(endPoint);
+                                          return (
+                                              <React.Fragment key={`prev-${g.id}`}>
+                                                  {path.map((p, i) => (
+                                                      <Marker key={`m-${i}`} position={p} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 5, fillColor: gColor, fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} label={{ text: String.fromCharCode(65 + i), color: 'white', fontSize: '10px' }} />
+                                                  ))}
+                                                  <Polyline path={path} options={{ strokeColor: gColor, strokeOpacity: 0.6, strokeWeight: 3 }} />
+                                              </React.Fragment>
+                                          );
+                                      }
+                                  })}
+                              </GoogleMap>
+                          )}
+                          <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-3 py-2 rounded-lg shadow font-bold text-[10px] uppercase tracking-widest text-slate-700">
+                              {previewGroupId === 'all' ? '🗺️ Mostrando todas las cuadrillas' : '🔍 Modo Individual'}
+                          </div>
                       </div>
                   </div>
 
@@ -764,15 +825,12 @@ export default function Planificacion() {
                     <button onClick={() => setShowModal(false)}><X className="w-6 h-6 text-slate-400 hover:text-red-500 transition" /></button>
                 </div>
                 <div className="flex-1 flex overflow-hidden">
-                    
                     <div className="w-[45%] p-6 overflow-y-auto border-r border-slate-100 bg-white z-10 shadow-[5px_0_15px_-5px_rgba(0,0,0,0.1)] relative scrollbar-thin">
                         <div className="space-y-6">
-                            
                             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                                 <label className="block text-xs font-bold text-slate-500 uppercase mb-3">Configuración de Viaje</label>
                                 <div className="flex gap-3 mb-3"><button onClick={() => setNewRoute({...newRoute, serviceType: 'Prioritario'})} className={`flex-1 py-2.5 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-2 transition ${newRoute.serviceType === 'Prioritario' ? 'bg-orange-50 border-orange-300 text-orange-700 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}><Zap className="w-4 h-4" /> INMEDIATO</button><button onClick={() => setNewRoute({...newRoute, serviceType: 'Programado'})} className={`flex-1 py-2.5 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-2 transition ${newRoute.serviceType === 'Programado' ? 'bg-blue-50 border-blue-300 text-blue-700 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}><Calendar className="w-4 h-4" /> PROGRAMADO</button></div>
                                 {isProgramado && (<div className="grid grid-cols-2 gap-3 mt-3"><input type="date" className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-400" value={newRoute.scheduledDate} onChange={(e) => setNewRoute({...newRoute, scheduledDate: e.target.value})} /><input type="time" className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-400" value={newRoute.scheduledTime} onChange={(e) => setNewRoute({...newRoute, scheduledTime: e.target.value})} /></div>)}
-                                
                                 <div className="mt-4">
                                     <label className="text-xs font-bold text-slate-500 uppercase">Empresa / Cuenta Responsable</label>
                                     <select className="w-full mt-1.5 bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-400" value={newRoute.client} onChange={handleClientChange}><option value="">Selecciona la empresa...</option>{availableClients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</select>
@@ -788,7 +846,6 @@ export default function Planificacion() {
                                         </button>
                                     )}
                                 </div>
-                                
                                 <div className="absolute left-[39px] top-[70px] bottom-[30px] w-0.5 bg-slate-200 -z-10"></div>
 
                                 <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-200 mb-0 relative shadow-sm">
@@ -796,7 +853,6 @@ export default function Planificacion() {
                                         <h5 className="text-xs font-black text-slate-800 flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-green-600"/> Punto de Inicio</h5>
                                         {isProgramado && startTimeDisplay && <span className="text-[10px] font-bold bg-green-100 text-green-800 px-2 py-1 rounded border border-green-200 flex items-center gap-1"><Clock className="w-3 h-3"/> SALIDA: {startTimeDisplay}</span>}
                                     </div>
-                                    
                                     {selectedClientData?.locations?.some(loc => loc.assignedTo && loc.assignedTo !== 'General') && (
                                         <div className="mb-3">
                                             <select className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-bold text-blue-800 outline-none focus:border-blue-400 shadow-sm" value={startPoint?.passengerName || ''} onChange={(e) => handlePassengerSelectForPoint('start', null, e.target.value)}>
@@ -818,11 +874,9 @@ export default function Planificacion() {
                                     <div key={index} className="relative" style={{zIndex: 40-index}}>
                                         <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-200 mb-0 mt-3 relative shadow-sm">
                                             <button type="button" onClick={() => removeWaypoint(index)} className="absolute right-2 top-2 text-slate-300 hover:text-red-500 transition bg-white p-1 rounded-full shadow-sm border border-slate-100"><Trash2 className="w-4 h-4"/></button>
-                                            
                                             <div className="flex justify-between items-center mb-3 pr-8">
                                                 <h5 className="text-xs font-black text-slate-800 flex items-center gap-1.5"><MoreVertical className="w-3.5 h-3.5 text-blue-600"/> Parada Intermedia {getMarkerLabel(index + 1)}</h5>
                                             </div>
-                                            
                                             {selectedClientData?.locations?.some(loc => loc.assignedTo && loc.assignedTo !== 'General') && (
                                                 <div className="mb-3">
                                                     <select className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-bold text-blue-800 outline-none focus:border-blue-400 shadow-sm" value={wp.passengerName || ''} onChange={(e) => handlePassengerSelectForPoint('waypoint', index, e.target.value)}>
@@ -833,13 +887,11 @@ export default function Planificacion() {
                                                     </select>
                                                 </div>
                                             )}
-
                                             <AddressAutocomplete isLoaded={isLoaded} placeholder={`Dirección de Parada ${getMarkerLabel(index + 1)}...`} value={wp.address} onSelect={(loc) => updateWaypoint(index, {...wp, ...loc, passengerName: wp.passengerName || ''})} iconColor="blue" zIndex={40-index} favorites={getFilteredFavorites()} />
                                             <div className="pl-[52px] mt-2 mb-1 relative">
                                                 <User className="w-3 h-3 text-slate-400 absolute left-[62px] top-[11px]" />
                                                 <input type="text" placeholder="Pasajero a abordar (Ej. María López)" className="w-full pl-8 text-xs p-2.5 border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:border-blue-400 shadow-sm font-medium" value={wp.contact || ''} onChange={e => updateWaypoint(index, {...wp, contact: e.target.value})} />
                                             </div>
-
                                             <InlineSummaryBox distance={routeInfo.segments[index]?.distance} duration={routeInfo.segments[index]?.duration} eta={calculatedEtas[index]} color="blue" showEta={isProgramado} />
                                         </div>
                                     </div>
@@ -851,7 +903,6 @@ export default function Planificacion() {
                                     <div className="flex justify-between items-center mb-3">
                                         <h5 className="text-xs font-black text-slate-800 flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-red-600"/> Punto de Destino Final</h5>
                                     </div>
-                                    
                                     {selectedClientData?.locations?.some(loc => loc.assignedTo && loc.assignedTo !== 'General') && (
                                         <div className="mb-3">
                                             <select className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-bold text-blue-800 outline-none focus:border-blue-400 shadow-sm" value={endPoint?.passengerName || ''} onChange={(e) => handlePassengerSelectForPoint('end', null, e.target.value)}>
@@ -862,13 +913,11 @@ export default function Planificacion() {
                                             </select>
                                         </div>
                                     )}
-
                                     <AddressAutocomplete isLoaded={isLoaded} placeholder="Dirección Destino Final (Ej. Oficina Central)" value={endPoint?.address} onSelect={(loc) => setEndPoint(prev => ({...(prev || {}), ...loc, passengerName: prev?.passengerName || ''}))} iconColor="red" zIndex={10} favorites={getFilteredFavorites()} />
                                     <div className="pl-[52px] mt-2 mb-1 relative">
                                         <User className="w-3 h-3 text-slate-400 absolute left-[62px] top-[11px]" />
                                         <input type="text" placeholder="Referencia Destino (Ej. Corporativo o Juan Pérez)" className="w-full pl-8 text-xs p-2.5 border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:border-red-400 shadow-sm font-medium" value={endPoint?.contact || ''} onChange={e => setEndPoint(prev => ({...(prev || {}), contact: e.target.value}))} />
                                     </div>
-
                                     <InlineSummaryBox distance={routeInfo.segments[waypoints.length]?.distance} duration={routeInfo.segments[waypoints.length]?.duration} eta={calculatedEtas[waypoints.length]} color="red" showEta={isProgramado} />
                                 </div>
 
@@ -881,18 +930,10 @@ export default function Planificacion() {
                                                 <span className="flex items-center gap-1.5"><Clock className="w-4 h-4 text-green-400"/> {routeInfo.totalDuration} min</span>
                                             </div>
                                         </div>
-                                        {isProgramado && calculatedEtas[calculatedEtas.length - 1] && (
-                                            <div className="text-right">
-                                                <p className="text-[10px] text-slate-400 uppercase font-bold tracking-wider mb-1">Hora Estimada Fin</p>
-                                                <p className="text-xl font-black text-green-400 flex items-center gap-1"><Zap className="w-5 h-5"/> {calculatedEtas[calculatedEtas.length - 1]}</p>
-                                            </div>
-                                        )}
                                     </div>
                                 )}
                             </div>
-
                             <hr className="border-slate-100" />
-                            
                             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                                 <label className="text-xs font-bold text-slate-500 uppercase">Unidad / Conductor Asignado</label>
                                 <select className="w-full mt-1.5 bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-blue-400" value={newRoute.driver} onChange={handleDriverChange}>
@@ -902,7 +943,6 @@ export default function Planificacion() {
                             </div>
                         </div>
                     </div>
-
                     <div className="flex-1 bg-slate-200 relative">
                         <GoogleMap mapContainerStyle={containerStyle} center={centerMX} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false }}>
                             {startPoint?.lat && <Marker position={startPoint} label="A" />}
@@ -914,7 +954,6 @@ export default function Planificacion() {
                         </GoogleMap>
                     </div>
                 </div>
-                
                 <div className="p-4 border-t border-slate-200 flex justify-end gap-3 shrink-0 bg-white">
                     <button onClick={() => setShowModal(false)} className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition">Cancelar</button>
                     <button onClick={handleSaveRoute} className="px-6 py-2.5 text-sm font-black text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-lg shadow-blue-600/30 flex items-center gap-2 transition"><Navigation className="w-4 h-4"/> Confirmar Ruta</button>
@@ -943,7 +982,6 @@ export default function Planificacion() {
         }
         .pac-item:hover { background-color: #f8fafc; }
         .pac-item-query { font-size: 13px; color: #1e293b; font-weight: 600; }
-        
         .scrollbar-thin::-webkit-scrollbar { width: 6px; }
         .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
         .scrollbar-thin::-webkit-scrollbar-thumb { background-color: #cbd5e1; border-radius: 20px; }

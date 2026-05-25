@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Phone, Truck, Plus, X, User, FileText, MapPin, Save, Mail, 
-  Trash2, Loader2, ShieldCheck, Clock, Eye, Lock, Heart, ShieldAlert, Wifi
+  Trash2, Loader2, ShieldCheck, Clock, Eye, Lock, Heart, ShieldAlert, Wifi, CheckCircle2, XCircle
 } from 'lucide-react';
 
 // FIREBASE
@@ -36,6 +36,7 @@ export default function Conductores() {
   const handleUpdateStatus = async (id, newStatus) => {
     try {
       await updateDoc(doc(db, "conductores", id), { status: newStatus });
+      setSelectedDriver(null); // Cerramos el modal tras tomar la decisión
     } catch (error) { alert("Error: " + error.message); }
   };
 
@@ -53,7 +54,7 @@ export default function Conductores() {
         email: newDriver.email.trim().toLowerCase(),
         initials: newDriver.name.substring(0, 2).toUpperCase(),
         status: 'Pendiente',
-        isOnline: false, // <-- NUEVO: Por defecto inician desconectados
+        isOnline: false, 
         vehicle: vehiculoFinal,
         rating: 5, trips: 0,
         joined: new Date().toLocaleDateString(),
@@ -108,9 +109,9 @@ export default function Conductores() {
       {!loading && (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredList.map((driver) => (
-            <div key={driver.id} className={`bg-white rounded-2xl p-6 border-2 transition-all group relative ${driver.status === 'Pendiente' ? 'border-orange-100' : 'border-transparent shadow-sm hover:shadow-md'}`}>
+            <div key={driver.id} className={`bg-white rounded-2xl p-6 border-2 transition-all group relative ${driver.status === 'Pendiente' ? 'border-orange-100 shadow-orange-100/50 shadow-lg' : 'border-transparent shadow-sm hover:shadow-md'}`}>
                 
-                {/* --- NUEVO: INDICADOR DE ESTADO EN LÍNEA --- */}
+                {/* INDICADOR DE ESTADO EN LÍNEA */}
                 {driver.status === 'Aprobado' && (
                     <div className={`absolute top-4 right-4 px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 border shadow-sm transition-colors ${driver.isOnline ? 'bg-green-50 text-green-700 border-green-200' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
                         <div className={`w-1.5 h-1.5 rounded-full ${driver.isOnline ? 'bg-green-500 animate-pulse shadow-[0_0_5px_#22c55e]' : 'bg-slate-300'}`}></div>
@@ -144,9 +145,13 @@ export default function Conductores() {
                         <div className="flex items-center gap-2"><Mail className="w-3.5 h-3.5" /> <span>{driver.email}</span></div>
                     </div>
                 </div>
+                
+                {/* --- CAMBIO: BOTÓN UNIFICADO PARA VER EXPEDIENTE --- */}
                 <div className="pt-4 border-t border-slate-50 flex gap-2">
                     {driver.status === 'Pendiente' ? (
-                        <button onClick={() => handleUpdateStatus(driver.id, 'Aprobado')} className="w-full py-2.5 bg-green-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-green-600 transition">Aprobar Acceso</button>
+                        <button onClick={() => setSelectedDriver(driver)} className="w-full py-2.5 bg-orange-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-600 transition shadow-lg shadow-orange-500/20 flex justify-center items-center gap-2">
+                            <ShieldAlert className="w-3 h-3"/> Revisar Expediente
+                        </button>
                     ) : (
                         <button onClick={() => setSelectedDriver(driver)} className="flex-1 py-2.5 bg-slate-800 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-900 transition shadow-lg shadow-slate-200">Ver Expediente</button>
                     )}
@@ -383,10 +388,22 @@ export default function Conductores() {
                     </div>
                 </div>
 
-                {/* Footer Footer */}
-                <div className="p-10 bg-slate-50 border-t border-slate-100 flex justify-between items-center">
-                    <button onClick={() => handleDelete(selectedDriver.id)} className="px-6 py-3 text-red-400 font-bold text-xs uppercase hover:text-red-600 transition">Borrar del Sistema</button>
-                    <button onClick={() => setSelectedDriver(null)} className="px-10 py-4 bg-slate-900 text-white font-black text-xs uppercase rounded-2xl shadow-2xl hover:bg-black transition tracking-[0.2em]">Cerrar Expediente</button>
+                {/* --- NUEVO: FOOTER CON BOTONES DE DECISIÓN DE APROBACIÓN --- */}
+                <div className="p-8 bg-slate-50 border-t border-slate-100 flex justify-between items-center">
+                    <button onClick={() => handleDelete(selectedDriver.id)} className="px-4 py-2 text-slate-400 font-bold text-xs uppercase hover:text-red-600 transition flex items-center gap-1.5"><Trash2 className="w-4 h-4"/> Borrar Expediente</button>
+                    
+                    {selectedDriver.status === 'Pendiente' ? (
+                        <div className="flex gap-3">
+                            <button onClick={() => handleUpdateStatus(selectedDriver.id, 'Rechazado')} className="px-6 py-4 bg-red-50 text-red-600 font-black text-xs uppercase rounded-2xl hover:bg-red-100 border border-red-200 transition tracking-[0.1em] flex items-center gap-2">
+                                <XCircle className="w-5 h-5"/> Rechazar
+                            </button>
+                            <button onClick={() => handleUpdateStatus(selectedDriver.id, 'Aprobado')} className="px-8 py-4 bg-green-500 text-white font-black text-xs uppercase rounded-2xl shadow-xl shadow-green-500/30 hover:bg-green-600 transition tracking-[0.1em] flex items-center gap-2">
+                                <CheckCircle2 className="w-5 h-5"/> Aprobar Operador
+                            </button>
+                        </div>
+                    ) : (
+                        <button onClick={() => setSelectedDriver(null)} className="px-10 py-4 bg-slate-900 text-white font-black text-xs uppercase rounded-2xl shadow-2xl hover:bg-black transition tracking-[0.2em]">Cerrar Expediente</button>
+                    )}
                 </div>
             </div>
         </div>

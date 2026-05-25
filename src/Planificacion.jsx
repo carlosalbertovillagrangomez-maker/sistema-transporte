@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2, ArrowRightLeft, Eye } from 'lucide-react';
+import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2, ArrowRightLeft, Eye, RefreshCw } from 'lucide-react';
 // GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline, Autocomplete } from '@react-google-maps/api';
 
@@ -13,7 +13,7 @@ const containerStyle = { width: '100%', height: '100%' };
 const centerMX = { lat: 19.4326, lng: -99.1332 }; 
 const libraries = ['places', 'geometry'];
 
-// --- COMPONENTE AUTOCOMPLETE MEJORADO ---
+// --- COMPONENTE AUTOCOMPLETE PARA DIRECCIONES GOOGLE ---
 const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor = "text-slate-400", zIndex = 50, favorites = [] }) => {
     const [inputValue, setInputValue] = useState(value || '');
     const autocompleteRef = useRef(null);
@@ -67,6 +67,42 @@ const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor
     );
 };
 
+// --- NUEVO: BUSCADOR INTELIGENTE DE EMPLEADOS ---
+const EmployeeSearch = ({ employees, value, onSelect, placeholder }) => {
+    const [query, setQuery] = useState('');
+    const [open, setOpen] = useState(false);
+
+    useEffect(() => { setQuery(value || ''); }, [value]);
+
+    const filtered = employees.filter(e => e.assignedTo?.toLowerCase().includes(query.toLowerCase()) || e.address?.toLowerCase().includes(query.toLowerCase()));
+
+    return (
+        <div className="relative w-full">
+            <div className="flex items-center absolute left-3 top-2.5 text-blue-500"><SearchIcon className="w-4 h-4"/></div>
+            <input 
+                type="text"
+                className="w-full bg-white border border-slate-300 rounded-lg p-2 pl-9 text-xs font-bold text-blue-800 outline-none focus:border-blue-400 shadow-sm"
+                placeholder={placeholder}
+                value={query}
+                onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+                onFocus={() => setOpen(true)}
+                onBlur={() => setTimeout(() => setOpen(false), 200)}
+            />
+            {open && query && (
+                <div className="absolute z-[100] w-full mt-1 bg-white border border-slate-200 shadow-xl max-h-40 overflow-y-auto rounded-lg">
+                    {filtered.length === 0 ? <p className="p-2 text-xs text-slate-400">Sin resultados</p> : filtered.map((emp, i) => (
+                        <div key={i} className="p-2 border-b border-slate-50 hover:bg-blue-50 cursor-pointer transition" onClick={() => { setQuery(emp.assignedTo); onSelect(emp.assignedTo); setOpen(false); }}>
+                            <p className="text-xs font-black text-slate-700">{emp.assignedTo}</p>
+                            <p className="text-[9px] text-slate-400 truncate">{emp.address}</p>
+                        </div>
+                    ))}
+                </div>
+            )}
+        </div>
+    )
+}
+const SearchIcon = ({ className }) => <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>;
+
 const InlineSummaryBox = ({ distance, duration, eta, color = "blue", showEta }) => {
     if (!distance) return null;
     const bgClass = color === 'red' ? 'bg-red-50/80 border-red-200 text-red-800' : 'bg-blue-50/80 border-blue-200 text-blue-800';
@@ -113,7 +149,7 @@ export default function Planificacion() {
   const [startTimeDisplay, setStartTimeDisplay] = useState('');
   const [isLoadingRoute, setIsLoadingRoute] = useState(false);
 
-  // === ESTADOS PARA EL NUEVO MÓDULO DE CARPOOLING INTELIGENTE ===
+  // === ESTADOS PARA EL MÓDULO DE CARPOOLING INTELIGENTE ===
   const [showCarpoolModal, setShowCarpoolModal] = useState(false);
   const [carpoolGroups, setCarpoolGroups] = useState([]);
   const [previewGroupId, setPreviewGroupId] = useState('all'); 
@@ -309,17 +345,6 @@ export default function Planificacion() {
 
       if (clientObj) {
           let empleados = clientObj.locations.filter(loc => loc.assignedTo && loc.assignedTo !== 'General');
-          const oficina = clientObj.locations.find(loc => loc.assignedTo === 'General');
-          
-          // AGRUPACIÓN INTELIGENTE: Ordenar a los empleados por cercanía a la oficina
-          if (oficina && oficina.lat) {
-              empleados.sort((a, b) => {
-                  const distA = Math.pow(parseFloat(a.lat) - parseFloat(oficina.lat), 2) + Math.pow(parseFloat(a.lon || a.lng) - parseFloat(oficina.lon || oficina.lng), 2);
-                  const distB = Math.pow(parseFloat(b.lat) - parseFloat(oficina.lat), 2) + Math.pow(parseFloat(b.lon || b.lng) - parseFloat(oficina.lon || oficina.lng), 2);
-                  return distB - distA; // Más lejanos primero
-              });
-          }
-
           const grupos = [];
           for (let i = 0; i < empleados.length; i += 4) {
               grupos.push({
@@ -331,7 +356,6 @@ export default function Planificacion() {
                   returnTime: globalCarpool.returnTime,
                   driverId: '',
                   driverName: '',
-                  // --- NUEVO: Tipo de uso para el Punto Compartido ---
                   sharedMeetingPoint: { active: false, address: '', lat: null, lng: null, type: 'Ambos' } 
               });
           }
@@ -353,6 +377,73 @@ export default function Planificacion() {
       }
   }, [globalCarpool]);
 
+  // --- NUEVO: FUNCIÓN DE AGRUPACIÓN GEOGRÁFICA INTELIGENTE CON REGLA DE TIEMPO ---
+  const handleReclusterGroups = () => {
+      let allEmps = [];
+      carpoolGroups.forEach(g => { allEmps.push(...g.employees); });
+      if(allEmps.length === 0) return alert("No hay pasajeros para agrupar.");
+
+      // Regla de Horario: Antes de las 07:00 a casa (active=false), 07:00 en adelante (active=true)
+      let isSharedDefault = false;
+      if (globalCarpool.pickupTime) {
+          const hour = parseInt(globalCarpool.pickupTime.split(':')[0], 10);
+          if (hour >= 7) isSharedDefault = true;
+      }
+
+      const validEmps = allEmps.filter(e => e.lat);
+      const invalidEmps = allEmps.filter(e => !e.lat);
+
+      let newGroups = [];
+      let unassigned = [...validEmps];
+      let groupIdx = 0;
+
+      while(unassigned.length > 0) {
+          let currentGrp = [];
+          // Tomar una semilla (el primero sin asignar)
+          let seed = unassigned.shift();
+          currentGrp.push(seed);
+
+          // Buscar a los 3 más cercanos a esa semilla
+          while(currentGrp.length < 4 && unassigned.length > 0) {
+              unassigned.sort((a,b) => {
+                  const distA = Math.pow(parseFloat(a.lat) - parseFloat(seed.lat), 2) + Math.pow(parseFloat(a.lon||a.lng) - parseFloat(seed.lon||seed.lng), 2);
+                  const distB = Math.pow(parseFloat(b.lat) - parseFloat(seed.lat), 2) + Math.pow(parseFloat(b.lon||b.lng) - parseFloat(seed.lon||seed.lng), 2);
+                  return distA - distB;
+              });
+              currentGrp.push(unassigned.shift());
+          }
+
+          newGroups.push({
+              id: `group_${groupIdx++}`,
+              employees: currentGrp,
+              pickupTime: globalCarpool.pickupTime,
+              arrivalTime: globalCarpool.arrivalTime,
+              createReturn: globalCarpool.createReturn,
+              returnTime: globalCarpool.returnTime,
+              driverId: '',
+              driverName: '',
+              sharedMeetingPoint: { active: isSharedDefault, address: '', lat: null, lng: null, type: 'Ambos' } 
+          });
+      }
+
+      // Los que no tienen coordenadas válidas se agrupan al final
+      while(invalidEmps.length > 0) {
+          newGroups.push({
+              id: `group_${groupIdx++}`,
+              employees: invalidEmps.splice(0, 4),
+              pickupTime: globalCarpool.pickupTime,
+              arrivalTime: globalCarpool.arrivalTime,
+              createReturn: globalCarpool.createReturn,
+              returnTime: globalCarpool.returnTime,
+              driverId: '',
+              driverName: '',
+              sharedMeetingPoint: { active: isSharedDefault, address: '', lat: null, lng: null, type: 'Ambos' } 
+          });
+      }
+
+      setCarpoolGroups(newGroups);
+  };
+
   const removeEmployeeFromGroup = (groupId, empIndex) => {
       setCarpoolGroups(prev => prev.map(g => {
           if (g.id === groupId) {
@@ -373,10 +464,8 @@ export default function Planificacion() {
           if (sIdx === -1 || tIdx === -1) return prev;
 
           const empToMove = newGroups[sIdx].employees[empIndex];
-          
           const newSourceEmps = [...newGroups[sIdx].employees];
           newSourceEmps.splice(empIndex, 1);
-          
           const newTargetEmps = [...newGroups[tIdx].employees];
           newTargetEmps.push(empToMove);
 
@@ -435,9 +524,8 @@ export default function Planificacion() {
 
       try {
           for (let g of validGroups) {
-              // Verificación inteligente del tipo de punto compartido
-              const isSharedIda = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat && ['Ambos', 'Ida'].includes(g.sharedMeetingPoint.type);
-              const isSharedRegreso = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat && ['Ambos', 'Regreso'].includes(g.sharedMeetingPoint.type);
+              const isSharedIda = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat && ['Ambos', 'Ida'].includes(g.sharedMeetingPoint.type || 'Ambos');
+              const isSharedRegreso = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat && ['Ambos', 'Regreso'].includes(g.sharedMeetingPoint.type || 'Ambos');
               
               const allPassengersString = g.employees.map(e => e.assignedTo).join(', ');
 
@@ -607,7 +695,7 @@ export default function Planificacion() {
           </div>
       )}
 
-      {/* --- MODAL 2: CARPOOLING INTELIGENTE MEJORADO (3 COLUMNAS) --- */}
+      {/* --- MODAL 2: CARPOOLING INTELIGENTE MEJORADO --- */}
       {showCarpoolModal && (
           <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
               <div className="bg-white w-full max-w-[95vw] h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
@@ -669,7 +757,12 @@ export default function Planificacion() {
                           ) : (
                               <div className="space-y-6">
                                   <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm sticky top-0 z-10">
-                                      <h4 className="text-sm font-black text-slate-700">Cuadrillas ({carpoolGroups.length})</h4>
+                                      <div className="flex items-center gap-3">
+                                          <h4 className="text-sm font-black text-slate-700">Cuadrillas ({carpoolGroups.length})</h4>
+                                          <button onClick={handleReclusterGroups} className="text-[10px] font-black uppercase px-3 py-1.5 rounded-lg bg-orange-100 text-orange-600 hover:bg-orange-200 flex items-center gap-1.5 transition shadow-sm border border-orange-200">
+                                              <RefreshCw className="w-3 h-3"/> Recalcular por Zona
+                                          </button>
+                                      </div>
                                       <button onClick={() => setPreviewGroupId('all')} className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${previewGroupId === 'all' ? 'bg-blue-600 text-white shadow' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>
                                           <Eye className="w-3 h-3"/> Ver Todas
                                       </button>
@@ -873,12 +966,7 @@ export default function Planificacion() {
                                     </div>
                                     {selectedClientData?.locations?.some(loc => loc.assignedTo && loc.assignedTo !== 'General') && (
                                         <div className="mb-3">
-                                            <select className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-bold text-blue-800 outline-none focus:border-blue-400 shadow-sm" value={startPoint?.passengerName || ''} onChange={(e) => handlePassengerSelectForPoint('start', null, e.target.value)}>
-                                                <option value="">👤 Seleccionar pasajero para Inicio (Opcional)</option>
-                                                {selectedClientData.locations.filter(loc => loc.assignedTo && loc.assignedTo !== 'General').map((loc, i) => (
-                                                    <option key={i} value={loc.assignedTo}>{loc.assignedTo}</option>
-                                                ))}
-                                            </select>
+                                            <EmployeeSearch employees={selectedClientData.locations.filter(l => l.assignedTo !== 'General')} placeholder="🔍 Buscar empleado por nombre..." onSelect={(val) => handlePassengerSelectForPoint('start', null, val)} />
                                         </div>
                                     )}
                                     <AddressAutocomplete isLoaded={isLoaded} placeholder="Dirección exacta de Inicio..." value={startPoint?.address} onSelect={(loc) => setStartPoint(prev => ({...(prev || {}), ...loc, passengerName: prev?.passengerName || ''}))} iconColor="green" zIndex={50} favorites={getFilteredFavorites()} />
@@ -897,12 +985,7 @@ export default function Planificacion() {
                                             </div>
                                             {selectedClientData?.locations?.some(loc => loc.assignedTo && loc.assignedTo !== 'General') && (
                                                 <div className="mb-3">
-                                                    <select className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-bold text-blue-800 outline-none focus:border-blue-400 shadow-sm" value={wp.passengerName || ''} onChange={(e) => handlePassengerSelectForPoint('waypoint', index, e.target.value)}>
-                                                        <option value="">👤 Seleccionar pasajero (Opcional)</option>
-                                                        {selectedClientData.locations.filter(loc => loc.assignedTo && loc.assignedTo !== 'General').map((loc, i) => (
-                                                            <option key={i} value={loc.assignedTo}>{loc.assignedTo}</option>
-                                                        ))}
-                                                    </select>
+                                                    <EmployeeSearch employees={selectedClientData.locations.filter(l => l.assignedTo !== 'General')} placeholder="🔍 Buscar empleado por nombre..." onSelect={(val) => handlePassengerSelectForPoint('waypoint', index, val)} />
                                                 </div>
                                             )}
                                             <AddressAutocomplete isLoaded={isLoaded} placeholder={`Dirección de Parada ${getMarkerLabel(index + 1)}...`} value={wp.address} onSelect={(loc) => updateWaypoint(index, {...wp, ...loc, passengerName: wp.passengerName || ''})} iconColor="blue" zIndex={40-index} favorites={getFilteredFavorites()} />
@@ -923,12 +1006,7 @@ export default function Planificacion() {
                                     </div>
                                     {selectedClientData?.locations?.some(loc => loc.assignedTo && loc.assignedTo !== 'General') && (
                                         <div className="mb-3">
-                                            <select className="w-full bg-white border border-slate-300 rounded-lg p-2 text-xs font-bold text-blue-800 outline-none focus:border-blue-400 shadow-sm" value={endPoint?.passengerName || ''} onChange={(e) => handlePassengerSelectForPoint('end', null, e.target.value)}>
-                                                <option value="">👤 Seleccionar pasajero para Destino (Opcional)</option>
-                                                {selectedClientData.locations.filter(loc => loc.assignedTo && loc.assignedTo !== 'General').map((loc, i) => (
-                                                    <option key={i} value={loc.assignedTo}>{loc.assignedTo}</option>
-                                                ))}
-                                            </select>
+                                            <EmployeeSearch employees={selectedClientData.locations.filter(l => l.assignedTo !== 'General')} placeholder="🔍 Buscar empleado por nombre..." onSelect={(val) => handlePassengerSelectForPoint('end', null, val)} />
                                         </div>
                                     )}
                                     <AddressAutocomplete isLoaded={isLoaded} placeholder="Dirección Destino Final (Ej. Oficina Central)" value={endPoint?.address} onSelect={(loc) => setEndPoint(prev => ({...(prev || {}), ...loc, passengerName: prev?.passengerName || ''}))} iconColor="red" zIndex={10} favorites={getFilteredFavorites()} />

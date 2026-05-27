@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2, ArrowRightLeft, Eye, RefreshCw } from 'lucide-react';
+import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2, Eye, RefreshCw, GripVertical, Search } from 'lucide-react';
 // GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline, Autocomplete } from '@react-google-maps/api';
 
@@ -67,7 +67,7 @@ const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor
     );
 };
 
-// --- NUEVO: BUSCADOR INTELIGENTE DE EMPLEADOS ---
+// --- BUSCADOR INTELIGENTE DE EMPLEADOS ---
 const EmployeeSearch = ({ employees, value, onSelect, placeholder }) => {
     const [query, setQuery] = useState('');
     const [open, setOpen] = useState(false);
@@ -78,7 +78,7 @@ const EmployeeSearch = ({ employees, value, onSelect, placeholder }) => {
 
     return (
         <div className="relative w-full">
-            <div className="flex items-center absolute left-3 top-2.5 text-blue-500"><SearchIcon className="w-4 h-4"/></div>
+            <div className="flex items-center absolute left-3 top-2.5 text-blue-500"><Search className="w-4 h-4"/></div>
             <input 
                 type="text"
                 className="w-full bg-white border border-slate-300 rounded-lg p-2 pl-9 text-xs font-bold text-blue-800 outline-none focus:border-blue-400 shadow-sm"
@@ -91,7 +91,7 @@ const EmployeeSearch = ({ employees, value, onSelect, placeholder }) => {
             {open && query && (
                 <div className="absolute z-[100] w-full mt-1 bg-white border border-slate-200 shadow-xl max-h-40 overflow-y-auto rounded-lg">
                     {filtered.length === 0 ? <p className="p-2 text-xs text-slate-400">Sin resultados</p> : filtered.map((emp, i) => (
-                        <div key={i} className="p-2 border-b border-slate-50 hover:bg-blue-50 cursor-pointer transition" onClick={() => { setQuery(emp.assignedTo); onSelect(emp.assignedTo); setOpen(false); }}>
+                        <div key={i} className="p-2 border-b border-slate-50 hover:bg-blue-50 cursor-pointer transition" onClick={() => { setQuery(''); onSelect(emp); setOpen(false); }}>
                             <p className="text-xs font-black text-slate-700">{emp.assignedTo}</p>
                             <p className="text-[9px] text-slate-400 truncate">{emp.address}</p>
                         </div>
@@ -101,7 +101,6 @@ const EmployeeSearch = ({ employees, value, onSelect, placeholder }) => {
         </div>
     )
 }
-const SearchIcon = ({ className }) => <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>;
 
 const InlineSummaryBox = ({ distance, duration, eta, color = "blue", showEta }) => {
     if (!distance) return null;
@@ -154,11 +153,7 @@ export default function Planificacion() {
   const [carpoolGroups, setCarpoolGroups] = useState([]);
   const [previewGroupId, setPreviewGroupId] = useState('all'); 
   const [globalCarpool, setGlobalCarpool] = useState({
-      syncAll: true,
-      pickupTime: '',
-      arrivalTime: '',
-      createReturn: false,
-      returnTime: ''
+      mode: 'Ida', // NUEVO: 'Ida' o 'Regreso'
   });
 
   const isProgramado = newRoute.serviceType === 'Programado';
@@ -209,16 +204,14 @@ export default function Planificacion() {
       });
   };
 
-  const handlePassengerSelectForPoint = (pointType, waypointIndex, selectedPassengerName) => {
-    if (!selectedPassengerName) {
+  const handlePassengerSelectForPoint = (pointType, waypointIndex, empObj) => {
+    if (!empObj) {
         if (pointType === 'start') setStartPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '' });
         if (pointType === 'end') setEndPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '' });
         if (pointType === 'waypoint') { const w = [...waypoints]; w[waypointIndex] = { address: '', lat: null, lng: null, contact: '', passengerName: '' }; setWaypoints(w); }
         return;
     }
-    const personLocation = selectedClientData.locations.find(loc => loc.assignedTo === selectedPassengerName);
-    if (!personLocation) return;
-    const newPointData = { address: personLocation.address, lat: parseFloat(personLocation.lat), lng: parseFloat(personLocation.lon || personLocation.lng), contact: selectedPassengerName, passengerName: selectedPassengerName };
+    const newPointData = { address: empObj.address, lat: parseFloat(empObj.lat), lng: parseFloat(empObj.lon || empObj.lng), contact: empObj.assignedTo, passengerName: empObj.assignedTo };
 
     if (pointType === 'start') setStartPoint(newPointData);
     else if (pointType === 'end') setEndPoint(newPointData);
@@ -333,7 +326,7 @@ export default function Planificacion() {
       setNewRoute({...newRoute, client: '', serviceType: 'Programado', scheduledDate: ''});
       setCarpoolGroups([]);
       setPreviewGroupId('all');
-      setGlobalCarpool({ syncAll: true, pickupTime: '', arrivalTime: '', createReturn: false, returnTime: '' });
+      setGlobalCarpool({ mode: 'Ida' });
       setSelectedClientData(null);
   };
 
@@ -342,104 +335,95 @@ export default function Planificacion() {
       setNewRoute({ ...newRoute, client: clientName });
       const clientObj = availableClients.find(c => c.name === clientName);
       setSelectedClientData(clientObj || null);
-
-      if (clientObj) {
-          let empleados = clientObj.locations.filter(loc => loc.assignedTo && loc.assignedTo !== 'General');
-          const grupos = [];
-          for (let i = 0; i < empleados.length; i += 4) {
-              grupos.push({
-                  id: `group_${i}`,
-                  employees: empleados.slice(i, i + 4),
-                  pickupTime: globalCarpool.pickupTime,
-                  arrivalTime: globalCarpool.arrivalTime,
-                  createReturn: globalCarpool.createReturn,
-                  returnTime: globalCarpool.returnTime,
-                  driverId: '',
-                  driverName: '',
-                  sharedMeetingPoint: { active: false, address: '', lat: null, lng: null, type: 'Ambos' } 
-              });
-          }
-          setCarpoolGroups(grupos);
-      } else {
-          setCarpoolGroups([]);
-      }
+      setCarpoolGroups([]); // Limpiamos para forzar el recálculo
   };
 
-  useEffect(() => {
-      if (globalCarpool.syncAll && carpoolGroups.length > 0) {
-          setCarpoolGroups(prev => prev.map(g => ({
-              ...g,
-              pickupTime: globalCarpool.pickupTime,
-              arrivalTime: globalCarpool.arrivalTime,
-              createReturn: globalCarpool.createReturn,
-              returnTime: globalCarpool.returnTime
-          })));
-      }
-  }, [globalCarpool]);
+  const isEmpInAnyGroup = (name) => {
+      return carpoolGroups.some(g => g.employees.some(e => e.assignedTo === name));
+  };
 
-  // --- NUEVO: FUNCIÓN DE AGRUPACIÓN GEOGRÁFICA INTELIGENTE CON REGLA DE TIEMPO ---
+  const addEmployeeToGroup = (groupId, empObj) => {
+      if(!empObj) return;
+      setCarpoolGroups(prev => prev.map(g => {
+          if (g.id === groupId) {
+              if (g.employees.length >= 4) { alert("El vehículo ya está lleno."); return g; }
+              return { ...g, employees: [...g.employees, empObj] };
+          }
+          return g;
+      }));
+  };
+
+  // --- FUNCIÓN DE AGRUPACIÓN GEOGRÁFICA INTELIGENTE POR HORARIO ---
   const handleReclusterGroups = () => {
-      let allEmps = [];
-      carpoolGroups.forEach(g => { allEmps.push(...g.employees); });
-      if(allEmps.length === 0) return alert("No hay pasajeros para agrupar.");
+      if(!selectedClientData) return alert("Selecciona una empresa primero.");
+      
+      const allEmps = selectedClientData.locations.filter(loc => loc.assignedTo && loc.assignedTo !== 'General');
+      if(allEmps.length === 0) return alert("Esta empresa no tiene empleados registrados.");
 
-      // Regla de Horario: Antes de las 07:00 a casa (active=false), 07:00 en adelante (active=true)
-      let isSharedDefault = false;
-      if (globalCarpool.pickupTime) {
-          const hour = parseInt(globalCarpool.pickupTime.split(':')[0], 10);
-          if (hour >= 7) isSharedDefault = true;
-      }
+      const mode = globalCarpool.mode; // 'Ida' o 'Regreso'
+      const timeBuckets = {};
 
-      const validEmps = allEmps.filter(e => e.lat);
-      const invalidEmps = allEmps.filter(e => !e.lat);
+      // Separamos a los empleados según su horario
+      allEmps.forEach(emp => {
+          const uData = selectedClientData.users?.find(u => u.name === emp.assignedTo) || {};
+          const tKey = mode === 'Ida' ? (uData.entrada || '08:00') : (uData.salida || '17:00');
+          if(!timeBuckets[tKey]) timeBuckets[tKey] = [];
+          timeBuckets[tKey].push(emp);
+      });
 
       let newGroups = [];
-      let unassigned = [...validEmps];
       let groupIdx = 0;
 
-      while(unassigned.length > 0) {
-          let currentGrp = [];
-          // Tomar una semilla (el primero sin asignar)
-          let seed = unassigned.shift();
-          currentGrp.push(seed);
+      // Agrupar geográficamente DENTRO de cada horario
+      Object.keys(timeBuckets).forEach(tKey => {
+          let unassigned = [...timeBuckets[tKey]];
+          const validEmps = unassigned.filter(e => e.lat);
+          const invalidEmps = unassigned.filter(e => !e.lat);
 
-          // Buscar a los 3 más cercanos a esa semilla
-          while(currentGrp.length < 4 && unassigned.length > 0) {
-              unassigned.sort((a,b) => {
-                  const distA = Math.pow(parseFloat(a.lat) - parseFloat(seed.lat), 2) + Math.pow(parseFloat(a.lon||a.lng) - parseFloat(seed.lon||seed.lng), 2);
-                  const distB = Math.pow(parseFloat(b.lat) - parseFloat(seed.lat), 2) + Math.pow(parseFloat(b.lon||b.lng) - parseFloat(seed.lon||seed.lng), 2);
-                  return distA - distB;
+          let unassignedValid = [...validEmps];
+          
+          while(unassignedValid.length > 0) {
+              let currentGrp = [];
+              let seed = unassignedValid.shift();
+              currentGrp.push(seed);
+
+              while(currentGrp.length < 4 && unassignedValid.length > 0) {
+                  unassignedValid.sort((a,b) => {
+                      const distA = Math.pow(parseFloat(a.lat) - parseFloat(seed.lat), 2) + Math.pow(parseFloat(a.lon||a.lng) - parseFloat(seed.lon||seed.lng), 2);
+                      const distB = Math.pow(parseFloat(b.lat) - parseFloat(seed.lat), 2) + Math.pow(parseFloat(b.lon||b.lng) - parseFloat(seed.lon||seed.lng), 2);
+                      return distA - distB;
+                  });
+                  currentGrp.push(unassignedValid.shift());
+              }
+
+              // Regla de las 7:00 AM (Si es antes de 7am, NO es compartido. Pasa a sus casas)
+              let isShared = false;
+              const hour = parseInt(tKey.split(':')[0], 10);
+              if (mode === 'Ida' && hour >= 7) isShared = true;
+              if (mode === 'Regreso' && hour < 20) isShared = true; // Ej: Si salen muy noche a casa
+
+              newGroups.push({
+                  id: `group_${groupIdx++}`,
+                  employees: currentGrp,
+                  timeKey: tKey, // Horario de este coche
+                  driverId: '',
+                  driverName: '',
+                  sharedMeetingPoint: { active: isShared, address: '', lat: null, lng: null } 
               });
-              currentGrp.push(unassigned.shift());
           }
 
-          newGroups.push({
-              id: `group_${groupIdx++}`,
-              employees: currentGrp,
-              pickupTime: globalCarpool.pickupTime,
-              arrivalTime: globalCarpool.arrivalTime,
-              createReturn: globalCarpool.createReturn,
-              returnTime: globalCarpool.returnTime,
-              driverId: '',
-              driverName: '',
-              sharedMeetingPoint: { active: isSharedDefault, address: '', lat: null, lng: null, type: 'Ambos' } 
-          });
-      }
-
-      // Los que no tienen coordenadas válidas se agrupan al final
-      while(invalidEmps.length > 0) {
-          newGroups.push({
-              id: `group_${groupIdx++}`,
-              employees: invalidEmps.splice(0, 4),
-              pickupTime: globalCarpool.pickupTime,
-              arrivalTime: globalCarpool.arrivalTime,
-              createReturn: globalCarpool.createReturn,
-              returnTime: globalCarpool.returnTime,
-              driverId: '',
-              driverName: '',
-              sharedMeetingPoint: { active: isSharedDefault, address: '', lat: null, lng: null, type: 'Ambos' } 
-          });
-      }
+          // Agrupar los que no tienen GPS
+          while(invalidEmps.length > 0) {
+              newGroups.push({
+                  id: `group_${groupIdx++}`,
+                  employees: invalidEmps.splice(0, 4),
+                  timeKey: tKey,
+                  driverId: '',
+                  driverName: '',
+                  sharedMeetingPoint: { active: false, address: '', lat: null, lng: null } 
+              });
+          }
+      });
 
       setCarpoolGroups(newGroups);
   };
@@ -455,25 +439,48 @@ export default function Planificacion() {
       }));
   };
 
-  const moveEmployee = (sourceGroupId, targetGroupId, empIndex) => {
-      if (sourceGroupId === targetGroupId) return;
-      setCarpoolGroups(prev => {
-          const newGroups = [...prev];
-          const sIdx = newGroups.findIndex(g => g.id === sourceGroupId);
-          const tIdx = newGroups.findIndex(g => g.id === targetGroupId);
-          if (sIdx === -1 || tIdx === -1) return prev;
+  // --- LÓGICA DE DRAG AND DROP (ARRASTRAR Y ORDENAR) ---
+  const handleDragStart = (e, groupId, empIndex) => {
+      e.dataTransfer.setData('sourceGroupId', groupId);
+      e.dataTransfer.setData('sourceEmpIndex', empIndex.toString());
+  };
 
-          const empToMove = newGroups[sIdx].employees[empIndex];
-          const newSourceEmps = [...newGroups[sIdx].employees];
-          newSourceEmps.splice(empIndex, 1);
-          const newTargetEmps = [...newGroups[tIdx].employees];
-          newTargetEmps.push(empToMove);
+  const handleDrop = (e, targetGroupId, targetEmpIndex) => {
+      e.preventDefault();
+      const sourceGroupId = e.dataTransfer.getData('sourceGroupId');
+      const sourceEmpIndex = parseInt(e.dataTransfer.getData('sourceEmpIndex'), 10);
 
-          newGroups[sIdx] = { ...newGroups[sIdx], employees: newSourceEmps };
-          newGroups[tIdx] = { ...newGroups[tIdx], employees: newTargetEmps };
-          
-          return newGroups;
-      });
+      if (sourceGroupId === targetGroupId) {
+          // Reordenar dentro del mismo grupo
+          setCarpoolGroups(prev => {
+              const newGroups = [...prev];
+              const gIdx = newGroups.findIndex(g => g.id === targetGroupId);
+              const emps = [...newGroups[gIdx].employees];
+              const [moved] = emps.splice(sourceEmpIndex, 1);
+              emps.splice(targetEmpIndex, 0, moved);
+              newGroups[gIdx] = { ...newGroups[gIdx], employees: emps };
+              return newGroups;
+          });
+      } else {
+          // Mover a otro grupo
+          setCarpoolGroups(prev => {
+              const newGroups = [...prev];
+              const sIdx = newGroups.findIndex(g => g.id === sourceGroupId);
+              const tIdx = newGroups.findIndex(g => g.id === targetGroupId);
+              
+              if (newGroups[tIdx].employees.length >= 4) { alert("Este grupo ya está lleno"); return prev; }
+
+              const sEmps = [...newGroups[sIdx].employees];
+              const [moved] = sEmps.splice(sourceEmpIndex, 1);
+              
+              const tEmps = [...newGroups[tIdx].employees];
+              tEmps.splice(targetEmpIndex, 0, moved);
+              
+              newGroups[sIdx] = { ...newGroups[sIdx], employees: sEmps };
+              newGroups[tIdx] = { ...newGroups[tIdx], employees: tEmps };
+              return newGroups;
+          });
+      }
   };
 
   const setGroupDriver = (groupId, driverId) => {
@@ -517,75 +524,58 @@ export default function Planificacion() {
 
       for(let g of validGroups) {
           if(!g.driverId) return alert("⚠️ Todos los grupos generados deben tener un conductor asignado.");
-          if(!g.pickupTime || !g.arrivalTime) return alert("⚠️ Todos los grupos deben tener Hora de Inicio (Recogida) y Llegada a la Oficina.");
-          if(g.createReturn && !g.returnTime) return alert("⚠️ Activaste el viaje de Regreso en algún grupo, debes indicar su hora de salida.");
-          if(g.sharedMeetingPoint.active && !g.sharedMeetingPoint.lat) return alert("⚠️ Activaste el Punto de Reunión Compartido pero no seleccionaste una dirección válida para uno de los vehículos.");
+          if(g.sharedMeetingPoint.active && !g.sharedMeetingPoint.lat) return alert("⚠️ Activaste un Punto de Reunión Compartido pero no seleccionaste la ubicación en el mapa.");
       }
 
       try {
           for (let g of validGroups) {
-              const isSharedIda = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat && ['Ambos', 'Ida'].includes(g.sharedMeetingPoint.type || 'Ambos');
-              const isSharedRegreso = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat && ['Ambos', 'Regreso'].includes(g.sharedMeetingPoint.type || 'Ambos');
-              
+              const isShared = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat;
               const allPassengersString = g.employees.map(e => e.assignedTo).join(', ');
 
-              // --- VARIABLES PARA IDA ---
-              let startAddressIda, startLatIda, startLngIda, startContactIda;
-              let waypointsDataIda = [], waypointsIda = [];
+              let startAddress, startLat, startLng, startContact;
+              let endAddress, endLat, endLng, endContact;
+              let waypointsData = [], waypoints = [];
 
-              if (isSharedIda) {
-                  startAddressIda = g.sharedMeetingPoint.address;
-                  startLatIda = parseFloat(g.sharedMeetingPoint.lat);
-                  startLngIda = parseFloat(g.sharedMeetingPoint.lng);
-                  startContactIda = allPassengersString; 
-              } else {
-                  const inicio = g.employees[0];
-                  const intermedias = g.employees.slice(1);
-                  startAddressIda = inicio.address;
-                  startLatIda = parseFloat(inicio.lat);
-                  startLngIda = parseFloat(inicio.lon || inicio.lng);
-                  startContactIda = inicio.assignedTo;
-
-                  waypointsDataIda = intermedias.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo }));
-                  waypointsIda = intermedias.map(w => w.address);
-              }
-
-              const rutaIda = {
-                  client: newRoute.client, driver: g.driverName, driverId: g.driverId, status: 'Aceptada', serviceType: 'Programado',
-                  scheduledDate: newRoute.scheduledDate, scheduledTime: g.arrivalTime, startTime: g.pickupTime, 
-                  start: startAddressIda, startCoords: { lat: startLatIda, lng: startLngIda, contact: startContactIda },
-                  end: oficina.address, endCoords: { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng), contact: 'Oficina Central' },
-                  waypointsData: waypointsDataIda, waypoints: waypointsIda, finalDate: newRoute.scheduledDate, createdDate: new Date().toISOString()
-              };
-              await addDoc(collection(db, "rutas"), rutaIda);
-
-              // --- VARIABLES PARA REGRESO ---
-              if (g.createReturn) {
-                  let endAddressReg, endLatReg, endLngReg, endContactReg;
-                  let waypointsDataReg = [], waypointsReg = [];
-
-                  if (isSharedRegreso) {
-                      endAddressReg = g.sharedMeetingPoint.address; endLatReg = parseFloat(g.sharedMeetingPoint.lat); endLngReg = parseFloat(g.sharedMeetingPoint.lng); endContactReg = allPassengersString;
+              if (globalCarpool.mode === 'Ida') {
+                  // IDA: Empleados -> Oficina
+                  if (isShared) {
+                      startAddress = g.sharedMeetingPoint.address;
+                      startLat = parseFloat(g.sharedMeetingPoint.lat);
+                      startLng = parseFloat(g.sharedMeetingPoint.lng);
+                      startContact = allPassengersString; 
                   } else {
-                      const revEmployees = [...g.employees].reverse();
-                      const finRegreso = revEmployees[revEmployees.length - 1];
-                      const intermediasRegreso = revEmployees.slice(0, -1);
-                      endAddressReg = finRegreso.address; endLatReg = parseFloat(finRegreso.lat); endLngReg = parseFloat(finRegreso.lon || finRegreso.lng); endContactReg = finRegreso.assignedTo;
-                      waypointsDataReg = intermediasRegreso.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo }));
-                      waypointsReg = intermediasRegreso.map(w => w.address);
+                      const inicio = g.employees[0];
+                      const intermedias = g.employees.slice(1);
+                      startAddress = inicio.address; startLat = parseFloat(inicio.lat); startLng = parseFloat(inicio.lon || inicio.lng); startContact = inicio.assignedTo;
+                      waypointsData = intermedias.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo }));
+                      waypoints = intermedias.map(w => w.address);
                   }
-
-                  const rutaRegreso = {
-                      client: newRoute.client, driver: g.driverName, driverId: g.driverId, status: 'Aceptada', serviceType: 'Programado',
-                      scheduledDate: newRoute.scheduledDate, scheduledTime: g.returnTime, 
-                      start: oficina.address, startCoords: { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng), contact: 'Oficina Central' },
-                      end: endAddressReg, endCoords: { lat: endLatReg, lng: endLngReg, contact: endContactReg },
-                      waypointsData: waypointsDataReg, waypoints: waypointsReg, finalDate: newRoute.scheduledDate, createdDate: new Date().toISOString()
-                  };
-                  await addDoc(collection(db, "rutas"), rutaRegreso);
+                  endAddress = oficina.address; endLat = parseFloat(oficina.lat); endLng = parseFloat(oficina.lon || oficina.lng); endContact = 'Oficina Central';
+              } else {
+                  // REGRESO: Oficina -> Empleados
+                  startAddress = oficina.address; startLat = parseFloat(oficina.lat); startLng = parseFloat(oficina.lon || oficina.lng); startContact = 'Oficina Central';
+                  if (isShared) {
+                      endAddress = g.sharedMeetingPoint.address; endLat = parseFloat(g.sharedMeetingPoint.lat); endLng = parseFloat(g.sharedMeetingPoint.lng); endContact = allPassengersString;
+                  } else {
+                      const finRegreso = g.employees[g.employees.length - 1];
+                      const intermediasRegreso = g.employees.slice(0, -1);
+                      endAddress = finRegreso.address; endLat = parseFloat(finRegreso.lat); endLng = parseFloat(finRegreso.lon || finRegreso.lng); endContact = finRegreso.assignedTo;
+                      waypointsData = intermediasRegreso.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo }));
+                      waypoints = intermediasRegreso.map(w => w.address);
+                  }
               }
+
+              const newTrip = {
+                  client: newRoute.client, driver: g.driverName, driverId: g.driverId, status: 'Aceptada', serviceType: 'Programado',
+                  scheduledDate: newRoute.scheduledDate, 
+                  scheduledTime: g.timeKey, // La hora de entrada o salida programada
+                  start: startAddress, startCoords: { lat: startLat, lng: startLng, contact: startContact },
+                  end: endAddress, endCoords: { lat: endLat, lng: endLng, contact: endContact },
+                  waypointsData: waypointsData, waypoints: waypoints, finalDate: newRoute.scheduledDate, createdDate: new Date().toISOString()
+              };
+              await addDoc(collection(db, "rutas"), newTrip);
           }
-          alert(`✅ ¡Logística completada! Rutas corporativas (Idas y Regresos) creadas con éxito.`);
+          alert(`✅ ¡Logística completada! Rutas de ${globalCarpool.mode} creadas con éxito.`);
           setShowCarpoolModal(false);
       } catch(e) { alert("Ocurrió un error técnico al generar las rutas corporativas."); }
   };
@@ -695,19 +685,19 @@ export default function Planificacion() {
           </div>
       )}
 
-      {/* --- MODAL 2: CARPOOLING INTELIGENTE MEJORADO --- */}
+      {/* --- MODAL 2: CARPOOLING INTELIGENTE MEJORADO POR TURNOS --- */}
       {showCarpoolModal && (
           <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
               <div className="bg-white w-full max-w-[95vw] h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
                   <div className="px-6 py-4 border-b border-purple-300 flex justify-between items-center bg-purple-700 text-white shrink-0">
-                      <div><h3 className="text-lg font-bold flex items-center gap-2"><Network className="w-5 h-5"/> Optimizador Geográfico de Carpooling</h3></div>
+                      <div><h3 className="text-lg font-bold flex items-center gap-2"><Network className="w-5 h-5"/> Optimizador Logístico por Turnos</h3></div>
                       <button onClick={() => setShowCarpoolModal(false)}><X className="w-6 h-6 text-purple-200 hover:text-white transition" /></button>
                   </div>
                   
                   <div className="flex-1 flex overflow-hidden">
                       {/* COLUMNA 1: CONFIGURACIÓN MAESTRA (25%) */}
                       <div className="w-1/4 bg-slate-50 border-r border-slate-200 p-6 overflow-y-auto min-w-[280px]">
-                          <p className="text-xs text-slate-500 mb-6">El sistema agrupa automáticamente a los empleados por proximidad a la oficina.</p>
+                          <p className="text-xs text-slate-500 mb-6">El sistema leerá los horarios de los empleados y armará las rutas de Ida o Salida automáticamente.</p>
                           
                           <div className="space-y-5">
                               <div>
@@ -724,25 +714,24 @@ export default function Planificacion() {
                               </div>
 
                               <div className="bg-white p-4 rounded-xl border-2 border-purple-100 shadow-sm">
-                                  <div className="flex items-center gap-2 mb-4">
-                                      <input type="checkbox" id="syncAll" className="w-4 h-4 text-purple-600 rounded" checked={globalCarpool.syncAll} onChange={(e) => setGlobalCarpool({...globalCarpool, syncAll: e.target.checked})} />
-                                      <label htmlFor="syncAll" className="text-xs font-black text-purple-700 uppercase cursor-pointer">Sincronizar todos</label>
+                                  <label className="text-xs font-black text-purple-700 uppercase mb-3 block">Modo de Planificación</label>
+                                  <div className="flex gap-2 mb-4">
+                                      <button 
+                                          onClick={() => { setGlobalCarpool({...globalCarpool, mode: 'Ida'}); setCarpoolGroups([]); }} 
+                                          className={`flex-1 py-3 px-2 rounded-lg text-xs font-bold border transition ${globalCarpool.mode === 'Ida' ? 'bg-purple-600 text-white border-purple-600 shadow-md' : 'bg-slate-50 text-slate-500 border-slate-200'}`}
+                                      >
+                                          🌅 ENTRADAS (Ida)
+                                      </button>
+                                      <button 
+                                          onClick={() => { setGlobalCarpool({...globalCarpool, mode: 'Regreso'}); setCarpoolGroups([]); }} 
+                                          className={`flex-1 py-3 px-2 rounded-lg text-xs font-bold border transition ${globalCarpool.mode === 'Regreso' ? 'bg-slate-800 text-white border-slate-800 shadow-md' : 'bg-slate-50 text-slate-500 border-slate-200'}`}
+                                      >
+                                          🌃 SALIDAS (Regreso)
+                                      </button>
                                   </div>
-
-                                  <div className={`space-y-3 ${!globalCarpool.syncAll ? 'opacity-50 pointer-events-none' : ''}`}>
-                                      <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Hora Inicio de Ruta</label><input type="time" className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-sm outline-none" value={globalCarpool.pickupTime} onChange={(e) => setGlobalCarpool({...globalCarpool, pickupTime: e.target.value})} /></div>
-                                      <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Llegada a Oficina</label><input type="time" className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-sm outline-none" value={globalCarpool.arrivalTime} onChange={(e) => setGlobalCarpool({...globalCarpool, arrivalTime: e.target.value})} /></div>
-                                      
-                                      <div className="pt-3 mt-3 border-t border-slate-100">
-                                          <div className="flex items-center gap-2 mb-3">
-                                              <input type="checkbox" id="createReturn" className="w-4 h-4 text-purple-600 rounded" checked={globalCarpool.createReturn} onChange={(e) => setGlobalCarpool({...globalCarpool, createReturn: e.target.checked})} />
-                                              <label htmlFor="createReturn" className="text-xs font-bold text-slate-600 cursor-pointer">Viaje de Regreso</label>
-                                          </div>
-                                          {globalCarpool.createReturn && (
-                                              <div><label className="block text-[10px] font-bold text-slate-500 uppercase mb-1">Salida de Oficina</label><input type="time" className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-sm outline-none" value={globalCarpool.returnTime} onChange={(e) => setGlobalCarpool({...globalCarpool, returnTime: e.target.value})} /></div>
-                                          )}
-                                      </div>
-                                  </div>
+                                  <p className="text-[10px] text-slate-500 text-center leading-tight">
+                                      {globalCarpool.mode === 'Ida' ? 'Se agrupará a los empleados por su horario de ENTRADA para llevarlos a la oficina.' : 'Se agrupará a los empleados por su horario de SALIDA para llevarlos a casa.'}
+                                  </p>
                               </div>
                           </div>
                       </div>
@@ -752,7 +741,8 @@ export default function Planificacion() {
                           {carpoolGroups.length === 0 ? (
                               <div className="h-full flex flex-col items-center justify-center text-slate-400">
                                   <Users className="w-16 h-16 mb-4 opacity-50"/>
-                                  <p className="font-bold text-sm">Selecciona una empresa para agrupar.</p>
+                                  <p className="font-bold text-sm mb-4">Listo para armar rutas de {globalCarpool.mode}.</p>
+                                  <button onClick={handleReclusterGroups} className="px-6 py-3 rounded-xl bg-purple-600 text-white font-black uppercase tracking-widest hover:bg-purple-700 shadow-lg transition">Generar Cuadrillas</button>
                               </div>
                           ) : (
                               <div className="space-y-6">
@@ -778,6 +768,7 @@ export default function Planificacion() {
                                               <div className="flex items-center gap-2">
                                                   <div className="w-3 h-3 rounded-full" style={{ backgroundColor: groupColor }}></div>
                                                   <h4 className="font-black text-sm">Vehículo {idx + 1}</h4>
+                                                  <span className="ml-2 text-[10px] bg-slate-600 px-2 py-1 rounded font-bold border border-slate-500"><Clock className="w-3 h-3 inline mr-1"/>{globalCarpool.mode === 'Ida' ? 'Llega a' : 'Sale a'} las {grupo.timeKey}</span>
                                               </div>
                                               <div className="flex gap-2">
                                                   <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold">{grupo.employees.length}/4 pax</span>
@@ -795,31 +786,41 @@ export default function Planificacion() {
                                               </div>
                                               
                                               <div>
-                                                  <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Pasajeros</label>
-                                                  <div className="space-y-2">
+                                                  <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Orden de Recolección (Drag & Drop)</label>
+                                                  <div className="space-y-2 min-h-[50px]">
                                                       {grupo.employees.map((emp, eIdx) => (
-                                                          <div key={eIdx} className={`flex items-center gap-2 bg-slate-50 border p-2 rounded ${grupo.sharedMeetingPoint.active ? 'border-purple-200 bg-purple-50/50' : 'border-slate-100'}`}>
+                                                          <div 
+                                                              key={`${grupo.id}-${eIdx}`} 
+                                                              draggable
+                                                              onDragStart={(e) => handleDragStart(e, grupo.id, eIdx)}
+                                                              onDragOver={(e) => e.preventDefault()}
+                                                              onDrop={(e) => handleDrop(e, grupo.id, eIdx)}
+                                                              className={`flex items-center gap-2 bg-slate-50 border p-2 rounded cursor-grab active:cursor-grabbing hover:border-blue-300 transition ${grupo.sharedMeetingPoint.active ? 'border-purple-200 bg-purple-50/50' : 'border-slate-100'}`}
+                                                          >
+                                                              <GripVertical className="w-4 h-4 text-slate-300 shrink-0"/>
                                                               {!grupo.sharedMeetingPoint.active && (
-                                                                 <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 bg-slate-400" style={{ backgroundColor: groupColor }}>{eIdx===0 ? 'A' : String.fromCharCode(65+eIdx)}</div>
+                                                                 <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 bg-slate-400" style={{ backgroundColor: groupColor }}>{eIdx===0 ? (globalCarpool.mode === 'Ida' ? 'A' : 'B') : String.fromCharCode(65+eIdx)}</div>
                                                               )}
                                                               <div className="flex-1 overflow-hidden">
                                                                   <p className="text-xs font-bold text-slate-700 truncate">{emp.assignedTo}</p>
                                                               </div>
-                                                              <div className="flex items-center gap-1 shrink-0">
-                                                                  <select className="text-[10px] font-bold bg-white border border-slate-200 rounded p-1 text-slate-600 outline-none" onChange={(e) => { if(e.target.value) moveEmployee(grupo.id, e.target.value, eIdx); e.target.value=''; }}>
-                                                                      <option value="">Mover a...</option>
-                                                                      {carpoolGroups.filter(g => g.id !== grupo.id && g.employees.length < 4).map((g, i) => (
-                                                                          <option key={g.id} value={g.id}>Vehículo {i + 1}</option>
-                                                                      ))}
-                                                                  </select>
-                                                                  <button onClick={() => removeEmployeeFromGroup(grupo.id, eIdx)} className="text-slate-300 hover:text-red-500 p-1 bg-white rounded border border-slate-100"><X className="w-3.5 h-3.5"/></button>
-                                                              </div>
+                                                              <button onClick={() => removeEmployeeFromGroup(grupo.id, eIdx)} className="text-slate-300 hover:text-red-500 p-1 bg-white rounded border border-slate-100 shadow-sm"><X className="w-3 h-3"/></button>
                                                           </div>
                                                       ))}
                                                   </div>
+                                                  
+                                                  {/* BUSCADOR AUTOCOMPLETE PARA AÑADIR A ESTE COCHE */}
+                                                  {grupo.employees.length < 4 && (
+                                                      <div className="mt-2 pt-2 border-t border-slate-100">
+                                                          <EmployeeSearch 
+                                                              employees={selectedClientData?.locations?.filter(l => l.assignedTo !== 'General' && !isEmpInAnyGroup(l.assignedTo)) || []} 
+                                                              placeholder="➕ Añadir pasajero extra..." 
+                                                              onSelect={(emp) => addEmployeeToGroup(grupo.id, emp)} 
+                                                          />
+                                                      </div>
+                                                  )}
                                               </div>
 
-                                              {/* --- SELECTOR IDA / REGRESO EN PUNTO COMPARTIDO --- */}
                                               <div className="pt-3 border-t border-slate-200 mt-2">
                                                   <div className="flex items-center gap-2 mb-3">
                                                       <input type="checkbox" checked={grupo.sharedMeetingPoint.active} onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, active: e.target.checked}} : g))} className="w-4 h-4 text-purple-600 rounded" />
@@ -827,28 +828,10 @@ export default function Planificacion() {
                                                   </div>
                                                   {grupo.sharedMeetingPoint.active && (
                                                       <div className="space-y-2 mb-2">
-                                                          <select 
-                                                              className="w-full bg-white border border-purple-200 rounded p-2 text-xs font-bold text-purple-700 outline-none"
-                                                              value={grupo.sharedMeetingPoint.type || 'Ambos'}
-                                                              onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, type: e.target.value}} : g))}
-                                                          >
-                                                              <option value="Ambos">Usar para Ida y Regreso</option>
-                                                              <option value="Ida">Solo para Ruta de Ida (Llevarlos a la oficina)</option>
-                                                              <option value="Regreso">Solo para Ruta de Regreso (Sacarlos de la oficina)</option>
-                                                          </select>
                                                           <AddressAutocomplete isLoaded={isLoaded} placeholder="Buscar plaza, metro, etc..." value={grupo.sharedMeetingPoint.address} onSelect={(loc) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, address: loc.address, lat: loc.lat, lng: loc.lon || loc.lng}} : g))} iconColor="purple" zIndex={100 - idx} />
                                                       </div>
                                                   )}
                                               </div>
-
-                                              {!globalCarpool.syncAll && (
-                                                  <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-3">
-                                                      <div className="grid grid-cols-2 gap-2">
-                                                          <div><label className="block text-[9px] font-bold text-slate-500 uppercase">Inicio Ruta</label><input type="time" className="w-full border rounded p-1.5 text-xs" value={grupo.pickupTime} onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, pickupTime: e.target.value} : g))} /></div>
-                                                          <div><label className="block text-[9px] font-bold text-slate-500 uppercase">Llegada Ofic.</label><input type="time" className="w-full border rounded p-1.5 text-xs" value={grupo.arrivalTime} onChange={(e) => setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, arrivalTime: e.target.value} : g))} /></div>
-                                                      </div>
-                                                  </div>
-                                              )}
                                           </div>
                                       </div>
                                   )})}
@@ -876,39 +859,70 @@ export default function Planificacion() {
                                   {carpoolGroups.map((g, idx) => {
                                       if (previewGroupId !== 'all' && previewGroupId !== g.id) return null;
                                       
-                                      const isSharedIda = g.sharedMeetingPoint.active && g.sharedMeetingPoint.lat && ['Ambos', 'Ida'].includes(g.sharedMeetingPoint.type || 'Ambos');
+                                      const isShared = g.sharedMeetingPoint.active && g.sharedMeetingPoint.lat;
                                       const gColor = PREVIEW_COLORS[idx % PREVIEW_COLORS.length];
                                       const path = [];
                                       const oficina = selectedClientData?.locations?.find(l => l.assignedTo === 'General');
                                       const endPoint = oficina && oficina.lat ? { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng) } : null;
 
-                                      if (isSharedIda) {
-                                          const p = { lat: parseFloat(g.sharedMeetingPoint.lat), lng: parseFloat(g.sharedMeetingPoint.lng) };
-                                          path.push(p);
-                                          if (endPoint) path.push(endPoint);
-                                          return (
-                                              <React.Fragment key={`prev-${g.id}`}>
-                                                  <Marker position={p} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: gColor, fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} />
-                                                  <Polyline path={path} options={{ strokeColor: gColor, strokeOpacity: 0.8, strokeWeight: 4 }} />
-                                              </React.Fragment>
-                                          );
+                                      if (globalCarpool.mode === 'Ida') {
+                                          if (isShared) {
+                                              const p = { lat: parseFloat(g.sharedMeetingPoint.lat), lng: parseFloat(g.sharedMeetingPoint.lng) };
+                                              path.push(p);
+                                              if (endPoint) path.push(endPoint);
+                                              return (
+                                                  <React.Fragment key={`prev-${g.id}`}>
+                                                      <Marker position={p} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: gColor, fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} />
+                                                      <Polyline path={path} options={{ strokeColor: gColor, strokeOpacity: 0.8, strokeWeight: 4 }} />
+                                                  </React.Fragment>
+                                              );
+                                          } else {
+                                              g.employees.forEach(emp => {
+                                                  if (emp.lat) {
+                                                      const p = { lat: parseFloat(emp.lat), lng: parseFloat(emp.lon || emp.lng) };
+                                                      path.push(p);
+                                                      <Marker position={p} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: gColor, fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} />
+                                                  }
+                                              });
+                                              if (endPoint) path.push(endPoint);
+                                              return (
+                                                  <React.Fragment key={`prev-${g.id}`}>
+                                                      {path.map((p, i) => (
+                                                          <Marker key={`m-${i}`} position={p} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 5, fillColor: gColor, fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} label={{ text: String.fromCharCode(65 + i), color: 'white', fontSize: '10px' }} />
+                                                      ))}
+                                                      <Polyline path={path} options={{ strokeColor: gColor, strokeOpacity: 0.6, strokeWeight: 3 }} />
+                                                  </React.Fragment>
+                                              );
+                                          }
                                       } else {
-                                          g.employees.forEach(emp => {
-                                              if (emp.lat) {
-                                                  const p = { lat: parseFloat(emp.lat), lng: parseFloat(emp.lon || emp.lng) };
-                                                  path.push(p);
-                                                  <Marker position={p} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: gColor, fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} />
-                                              }
-                                          });
+                                          // MODO REGRESO
                                           if (endPoint) path.push(endPoint);
-                                          return (
-                                              <React.Fragment key={`prev-${g.id}`}>
-                                                  {path.map((p, i) => (
-                                                      <Marker key={`m-${i}`} position={p} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 5, fillColor: gColor, fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} label={{ text: String.fromCharCode(65 + i), color: 'white', fontSize: '10px' }} />
-                                                  ))}
-                                                  <Polyline path={path} options={{ strokeColor: gColor, strokeOpacity: 0.6, strokeWeight: 3 }} />
-                                              </React.Fragment>
-                                          );
+                                          if (isShared) {
+                                              const p = { lat: parseFloat(g.sharedMeetingPoint.lat), lng: parseFloat(g.sharedMeetingPoint.lng) };
+                                              path.push(p);
+                                              return (
+                                                  <React.Fragment key={`prev-${g.id}`}>
+                                                      <Marker position={p} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: gColor, fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} />
+                                                      <Polyline path={path} options={{ strokeColor: gColor, strokeOpacity: 0.8, strokeWeight: 4 }} />
+                                                  </React.Fragment>
+                                              );
+                                          } else {
+                                              g.employees.forEach(emp => {
+                                                  if (emp.lat) {
+                                                      const p = { lat: parseFloat(emp.lat), lng: parseFloat(emp.lon || emp.lng) };
+                                                      path.push(p);
+                                                      <Marker position={p} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: gColor, fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} />
+                                                  }
+                                              });
+                                              return (
+                                                  <React.Fragment key={`prev-${g.id}`}>
+                                                      {path.slice(1).map((p, i) => (
+                                                          <Marker key={`m-${i}`} position={p} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 5, fillColor: gColor, fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} label={{ text: String.fromCharCode(66 + i), color: 'white', fontSize: '10px' }} />
+                                                      ))}
+                                                      <Polyline path={path} options={{ strokeColor: gColor, strokeOpacity: 0.6, strokeWeight: 3 }} />
+                                                  </React.Fragment>
+                                              );
+                                          }
                                       }
                                   })}
                               </GoogleMap>
@@ -921,7 +935,7 @@ export default function Planificacion() {
 
                   <div className="p-4 border-t border-slate-100 bg-white flex justify-end gap-3 shrink-0 shadow-[0_-10px_15px_rgba(0,0,0,0.05)] z-10">
                       <button onClick={() => setShowCarpoolModal(false)} className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition">Cancelar</button>
-                      <button onClick={handleGenerateCarpoolGroups} className="px-8 py-2.5 text-sm font-black text-white bg-purple-600 hover:bg-purple-700 rounded-lg shadow-xl shadow-purple-600/30 transition flex items-center gap-2"><Wand2 className="w-4 h-4"/> Confirmar y Despachar Grupos</button>
+                      <button onClick={handleGenerateCarpoolGroups} className="px-8 py-2.5 text-sm font-black text-white bg-purple-600 hover:bg-purple-700 rounded-lg shadow-xl shadow-purple-600/30 transition flex items-center gap-2"><Wand2 className="w-4 h-4"/> Confirmar y Despachar</button>
                   </div>
               </div>
           </div>

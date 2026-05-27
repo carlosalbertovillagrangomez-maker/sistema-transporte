@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Users, Building, MapPin, Plus, Trash2, Save, X, User, Phone, Mail, Layout, Loader2, Filter, Pencil } from 'lucide-react';
+import { Users, Building, MapPin, Plus, Trash2, Save, X, User, Phone, Mail, Layout, Loader2, Filter, Pencil, Clock } from 'lucide-react';
 
 // FIREBASE
 import { db } from './firebase';
@@ -76,8 +76,8 @@ export default function Clientes() {
       locations: [] 
   });
 
-  // CAMBIO: Cambiamos 'email' por 'phone' en el estado temporal del usuario
-  const [tempUser, setTempUser] = useState({ name: '', phone: '', role: 'Encargado' });
+  // CAMBIO: Añadimos entrada y salida al estado temporal del usuario
+  const [tempUser, setTempUser] = useState({ name: '', phone: '', role: 'Encargado', entrada: '08:00', salida: '17:00' });
   const [tempLoc, setTempLoc] = useState({ alias: '', address: '', lat: null, lon: null, assignedTo: 'General' });
 
   // === 1. LEER CLIENTES ===
@@ -136,7 +136,7 @@ export default function Clientes() {
 
   const resetForm = () => {
       setNewClient({ name: '', type: 'Empresa', phone: '', email: '', users: [], locations: [] });
-      setTempUser({ name: '', phone: '', role: 'Encargado' }); // CAMBIO: Resetear a phone
+      setTempUser({ name: '', phone: '', role: 'Encargado', entrada: '08:00', salida: '17:00' }); 
       setTempLoc({ alias: '', address: '', lat: null, lon: null, assignedTo: 'General' });
       setEditingId(null);
   };
@@ -150,7 +150,7 @@ export default function Clientes() {
   const addUser = () => {
       if(!tempUser.name || !tempUser.phone) return alert("Ingresa el nombre y el teléfono del usuario");
       setNewClient({...newClient, users: [...newClient.users, tempUser]});
-      setTempUser({ name: '', phone: '', role: 'Encargado' }); // CAMBIO: Resetear a phone
+      setTempUser({ name: '', phone: '', role: 'Encargado', entrada: '08:00', salida: '17:00' }); 
   };
 
   const addLocation = () => {
@@ -225,7 +225,7 @@ export default function Clientes() {
       {/* MODAL */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-            <div className="bg-white w-full max-w-4xl h-[85vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+            <div className="bg-white w-full max-w-5xl h-[85vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
                 <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                     <h3 className="font-bold text-slate-800">{editingId ? 'Editar Cliente' : 'Alta de Cliente'}</h3>
                     <button onClick={() => setShowModal(false)}><X className="w-5 h-5 text-slate-400 hover:text-red-500"/></button>
@@ -256,23 +256,34 @@ export default function Clientes() {
                             <div className="mb-8">
                                 <h4 className="text-xs font-bold text-slate-500 uppercase mb-3 flex items-center gap-2"><Users className="w-4 h-4"/> Usuarios Autorizados</h4>
                                 <div className="bg-slate-50 p-4 rounded-lg border border-slate-200 mb-3">
-                                    <div className="grid grid-cols-3 gap-2 mb-2">
-                                        <input placeholder="Nombre" className="text-xs p-2 rounded border outline-none focus:border-blue-500" value={tempUser.name} onChange={e => setTempUser({...tempUser, name: e.target.value})} />
+                                    <div className="grid grid-cols-1 md:grid-cols-6 gap-2 mb-2">
+                                        <input placeholder="Nombre" className="text-xs p-2 rounded border outline-none focus:border-blue-500 md:col-span-2" value={tempUser.name} onChange={e => setTempUser({...tempUser, name: e.target.value})} />
+                                        <input type="tel" placeholder="Teléfono" className="text-xs p-2 rounded border outline-none focus:border-blue-500 md:col-span-1" value={tempUser.phone} onChange={e => setTempUser({...tempUser, phone: e.target.value})} />
                                         
-                                        {/* CAMBIO: Input de Teléfono */}
-                                        <input type="tel" placeholder="Teléfono/WhatsApp" className="text-xs p-2 rounded border outline-none focus:border-blue-500" value={tempUser.phone} onChange={e => setTempUser({...tempUser, phone: e.target.value})} />
-                                        
-                                        <button onClick={addUser} className="bg-slate-800 text-white text-xs rounded font-bold hover:bg-slate-700 transition">Agregar</button>
+                                        <div className="flex items-center gap-1 md:col-span-1" title="Hora de Entrada">
+                                            <span className="text-[9px] font-bold text-slate-400">ENT:</span>
+                                            <input type="time" className="text-xs p-2 rounded border w-full outline-none focus:border-blue-500" value={tempUser.entrada} onChange={e => setTempUser({...tempUser, entrada: e.target.value})} />
+                                        </div>
+                                        <div className="flex items-center gap-1 md:col-span-1" title="Hora de Salida">
+                                            <span className="text-[9px] font-bold text-slate-400">SAL:</span>
+                                            <input type="time" className="text-xs p-2 rounded border w-full outline-none focus:border-blue-500" value={tempUser.salida} onChange={e => setTempUser({...tempUser, salida: e.target.value})} />
+                                        </div>
+
+                                        <button onClick={addUser} className="bg-slate-800 text-white text-xs rounded font-bold hover:bg-slate-700 transition md:col-span-1">Agregar</button>
                                     </div>
                                     <div className="space-y-2 mt-4">
                                         {newClient.users.map((u, i) => (
-                                            <div key={i} className="flex justify-between items-center text-xs bg-white p-2 rounded border border-slate-100 shadow-sm">
-                                                {/* CAMBIO: Mostrar Teléfono. Agregué un fallback a email por si tienes datos antiguos */}
-                                                <span>
+                                            <div key={i} className="flex justify-between items-center text-xs bg-white p-3 rounded border border-slate-100 shadow-sm">
+                                                <span className="flex items-center flex-wrap gap-2">
                                                     <span className="font-bold text-slate-700">{u.name}</span> 
-                                                    <span className="text-slate-400 ml-2">({u.phone || u.email || 'Sin contacto'})</span>
+                                                    <span className="text-slate-400">({u.phone || u.email || 'Sin contacto'})</span>
+                                                    {u.entrada && u.salida && (
+                                                        <span className="text-[9px] bg-slate-100 text-slate-600 px-2 py-1 rounded-full font-bold flex items-center gap-1">
+                                                            <Clock className="w-3 h-3"/> {u.entrada} a {u.salida}
+                                                        </span>
+                                                    )}
                                                 </span>
-                                                <button onClick={() => setNewClient({...newClient, users: newClient.users.filter((_, idx) => idx !== i)})} className="text-red-400 hover:bg-red-50 p-1 rounded transition"><Trash2 className="w-3 h-3"/></button>
+                                                <button onClick={() => setNewClient({...newClient, users: newClient.users.filter((_, idx) => idx !== i)})} className="text-red-400 hover:bg-red-50 p-1.5 rounded transition"><Trash2 className="w-3.5 h-3.5"/></button>
                                             </div>
                                         ))}
                                     </div>

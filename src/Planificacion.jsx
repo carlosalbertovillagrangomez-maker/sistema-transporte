@@ -1,19 +1,3 @@
-¡Hola Carlos! Entiendo perfectamente lo que pasó. Es un detalle clásico de bases de datos relacionales conocido como **"datos huérfanos"**. 👻
-
-Te explico el misterio: En tu vista de `Clientes.jsx`, un empleado tiene dos partes separadas:
-
-1. Su **Identidad y Horario** (en la sección de arriba "Usuarios Autorizados").
-2. Su **Coordenada en el Mapa** (en la sección de abajo "Ubicaciones Frecuentes").
-
-Cuando borraste a los empleados viejos de la lista de arriba, sus direcciones se quedaron guardadas en la lista de abajo. Como el Optimizador de Rutas necesita coordenadas GPS para funcionar, estaba jalando la lista de "Ubicaciones", por eso te seguía mostrando a los que ya habías borrado. Por otro lado, los usuarios nuevos no aparecieron porque los agregaste en la tabla de arriba, pero seguramente faltó registrarles su punto en el mapa en la tabla de abajo.
-
-### La Solución (Cruce Inteligente)
-
-He inyectado un filtro de validación cruzada en el archivo `Planificacion.jsx`. Ahora, el sistema revisará ambas listas: **si una dirección en el mapa pertenece a un usuario que ya fue borrado, el sistema la ocultará automáticamente.** *(Nota operativa para tu equipo: Para que los usuarios nuevos salgan en el planificador, siempre deben darlos de alta en ambas tablas: Arriba su horario, y Abajo su dirección de Google Maps).*
-
-Aquí tienes tu archivo **`Planificacion.jsx`** con la validación cruzada activa para eliminar a los "fantasmas". Reemplaza el código por completo:
-
-```jsx
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2, Eye, RefreshCw, GripVertical, Search } from 'lucide-react';
 // GOOGLE MAPS
@@ -1117,5 +1101,3 @@ export default function Planificacion() {
     </div>
   );
 }
-
-```

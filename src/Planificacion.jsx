@@ -1,3 +1,19 @@
+¡Hola Carlos! Entiendo perfectamente lo que pasó. Es un detalle clásico de bases de datos relacionales conocido como **"datos huérfanos"**. 👻
+
+Te explico el misterio: En tu vista de `Clientes.jsx`, un empleado tiene dos partes separadas:
+
+1. Su **Identidad y Horario** (en la sección de arriba "Usuarios Autorizados").
+2. Su **Coordenada en el Mapa** (en la sección de abajo "Ubicaciones Frecuentes").
+
+Cuando borraste a los empleados viejos de la lista de arriba, sus direcciones se quedaron guardadas en la lista de abajo. Como el Optimizador de Rutas necesita coordenadas GPS para funcionar, estaba jalando la lista de "Ubicaciones", por eso te seguía mostrando a los que ya habías borrado. Por otro lado, los usuarios nuevos no aparecieron porque los agregaste en la tabla de arriba, pero seguramente faltó registrarles su punto en el mapa en la tabla de abajo.
+
+### La Solución (Cruce Inteligente)
+
+He inyectado un filtro de validación cruzada en el archivo `Planificacion.jsx`. Ahora, el sistema revisará ambas listas: **si una dirección en el mapa pertenece a un usuario que ya fue borrado, el sistema la ocultará automáticamente.** *(Nota operativa para tu equipo: Para que los usuarios nuevos salgan en el planificador, siempre deben darlos de alta en ambas tablas: Arriba su horario, y Abajo su dirección de Google Maps).*
+
+Aquí tienes tu archivo **`Planificacion.jsx`** con la validación cruzada activa para eliminar a los "fantasmas". Reemplaza el código por completo:
+
+```jsx
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2, Eye, RefreshCw, GripVertical, Search } from 'lucide-react';
 // GOOGLE MAPS
@@ -153,7 +169,7 @@ export default function Planificacion() {
   const [carpoolGroups, setCarpoolGroups] = useState([]);
   const [previewGroupId, setPreviewGroupId] = useState('all'); 
   const [globalCarpool, setGlobalCarpool] = useState({
-      mode: 'Ida', // NUEVO: 'Ida' o 'Regreso'
+      mode: 'Ida',
   });
 
   const isProgramado = newRoute.serviceType === 'Programado';
@@ -335,7 +351,7 @@ export default function Planificacion() {
       setNewRoute({ ...newRoute, client: clientName });
       const clientObj = availableClients.find(c => c.name === clientName);
       setSelectedClientData(clientObj || null);
-      setCarpoolGroups([]); // Limpiamos para forzar el recálculo
+      setCarpoolGroups([]); 
   };
 
   const isEmpInAnyGroup = (name) => {
@@ -353,17 +369,25 @@ export default function Planificacion() {
       }));
   };
 
-  // --- FUNCIÓN DE AGRUPACIÓN GEOGRÁFICA INTELIGENTE POR HORARIO ---
+  // --- FUNCIÓN DE AGRUPACIÓN GEOGRÁFICA INTELIGENTE CON CRUCE DE USUARIOS ACTIVOS ---
   const handleReclusterGroups = () => {
       if(!selectedClientData) return alert("Selecciona una empresa primero.");
       
-      const allEmps = selectedClientData.locations.filter(loc => loc.assignedTo && loc.assignedTo !== 'General');
-      if(allEmps.length === 0) return alert("Esta empresa no tiene empleados registrados.");
+      // 1. Obtener la lista de usuarios reales autorizados
+      const activeUserNames = selectedClientData.users?.map(u => u.name) || [];
 
-      const mode = globalCarpool.mode; // 'Ida' o 'Regreso'
+      // 2. Filtrar ubicaciones descartando a los fantasmas/borrados
+      const allEmps = selectedClientData.locations.filter(loc => 
+          loc.assignedTo && 
+          loc.assignedTo !== 'General' && 
+          activeUserNames.includes(loc.assignedTo)
+      );
+
+      if(allEmps.length === 0) return alert("Esta empresa no tiene empleados registrados con dirección. Recuerda agregarlos también en 'Ubicaciones Frecuentes'.");
+
+      const mode = globalCarpool.mode; 
       const timeBuckets = {};
 
-      // Separamos a los empleados según su horario
       allEmps.forEach(emp => {
           const uData = selectedClientData.users?.find(u => u.name === emp.assignedTo) || {};
           const tKey = mode === 'Ida' ? (uData.entrada || '08:00') : (uData.salida || '17:00');
@@ -374,13 +398,9 @@ export default function Planificacion() {
       let newGroups = [];
       let groupIdx = 0;
 
-      // Agrupar geográficamente DENTRO de cada horario
       Object.keys(timeBuckets).forEach(tKey => {
-          let unassigned = [...timeBuckets[tKey]];
-          const validEmps = unassigned.filter(e => e.lat);
-          const invalidEmps = unassigned.filter(e => !e.lat);
-
-          let unassignedValid = [...validEmps];
+          let unassignedValid = timeBuckets[tKey].filter(e => e.lat);
+          const invalidEmps = timeBuckets[tKey].filter(e => !e.lat);
           
           while(unassignedValid.length > 0) {
               let currentGrp = [];
@@ -396,23 +416,21 @@ export default function Planificacion() {
                   currentGrp.push(unassignedValid.shift());
               }
 
-              // Regla de las 7:00 AM (Si es antes de 7am, NO es compartido. Pasa a sus casas)
               let isShared = false;
               const hour = parseInt(tKey.split(':')[0], 10);
               if (mode === 'Ida' && hour >= 7) isShared = true;
-              if (mode === 'Regreso' && hour < 20) isShared = true; // Ej: Si salen muy noche a casa
+              if (mode === 'Regreso' && hour < 20) isShared = true;
 
               newGroups.push({
                   id: `group_${groupIdx++}`,
                   employees: currentGrp,
-                  timeKey: tKey, // Horario de este coche
+                  timeKey: tKey, 
                   driverId: '',
                   driverName: '',
                   sharedMeetingPoint: { active: isShared, address: '', lat: null, lng: null } 
               });
           }
 
-          // Agrupar los que no tienen GPS
           while(invalidEmps.length > 0) {
               newGroups.push({
                   id: `group_${groupIdx++}`,
@@ -439,7 +457,6 @@ export default function Planificacion() {
       }));
   };
 
-  // --- LÓGICA DE DRAG AND DROP (ARRASTRAR Y ORDENAR) ---
   const handleDragStart = (e, groupId, empIndex) => {
       e.dataTransfer.setData('sourceGroupId', groupId);
       e.dataTransfer.setData('sourceEmpIndex', empIndex.toString());
@@ -451,7 +468,6 @@ export default function Planificacion() {
       const sourceEmpIndex = parseInt(e.dataTransfer.getData('sourceEmpIndex'), 10);
 
       if (sourceGroupId === targetGroupId) {
-          // Reordenar dentro del mismo grupo
           setCarpoolGroups(prev => {
               const newGroups = [...prev];
               const gIdx = newGroups.findIndex(g => g.id === targetGroupId);
@@ -462,7 +478,6 @@ export default function Planificacion() {
               return newGroups;
           });
       } else {
-          // Mover a otro grupo
           setCarpoolGroups(prev => {
               const newGroups = [...prev];
               const sIdx = newGroups.findIndex(g => g.id === sourceGroupId);
@@ -488,7 +503,6 @@ export default function Planificacion() {
       setCarpoolGroups(prev => prev.map(g => g.id === groupId ? { ...g, driverId, driverName: driver?.name || '' } : g));
   };
 
-  // === DIBUJAR EL PREVIEW EN EL MAPA ===
   useEffect(() => {
       if(isLoaded && previewMapRef.current && carpoolGroups.length > 0 && selectedClientData) {
           const bounds = new window.google.maps.LatLngBounds();
@@ -529,7 +543,9 @@ export default function Planificacion() {
 
       try {
           for (let g of validGroups) {
-              const isShared = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat;
+              const isSharedIda = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat && ['Ambos', 'Ida'].includes(g.sharedMeetingPoint.type || 'Ambos');
+              const isSharedRegreso = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat && ['Ambos', 'Regreso'].includes(g.sharedMeetingPoint.type || 'Ambos');
+              
               const allPassengersString = g.employees.map(e => e.assignedTo).join(', ');
 
               let startAddress, startLat, startLng, startContact;
@@ -537,8 +553,7 @@ export default function Planificacion() {
               let waypointsData = [], waypoints = [];
 
               if (globalCarpool.mode === 'Ida') {
-                  // IDA: Empleados -> Oficina
-                  if (isShared) {
+                  if (isSharedIda) {
                       startAddress = g.sharedMeetingPoint.address;
                       startLat = parseFloat(g.sharedMeetingPoint.lat);
                       startLng = parseFloat(g.sharedMeetingPoint.lng);
@@ -552,9 +567,8 @@ export default function Planificacion() {
                   }
                   endAddress = oficina.address; endLat = parseFloat(oficina.lat); endLng = parseFloat(oficina.lon || oficina.lng); endContact = 'Oficina Central';
               } else {
-                  // REGRESO: Oficina -> Empleados
                   startAddress = oficina.address; startLat = parseFloat(oficina.lat); startLng = parseFloat(oficina.lon || oficina.lng); startContact = 'Oficina Central';
-                  if (isShared) {
+                  if (isSharedRegreso) {
                       endAddress = g.sharedMeetingPoint.address; endLat = parseFloat(g.sharedMeetingPoint.lat); endLng = parseFloat(g.sharedMeetingPoint.lng); endContact = allPassengersString;
                   } else {
                       const finRegreso = g.employees[g.employees.length - 1];
@@ -568,7 +582,7 @@ export default function Planificacion() {
               const newTrip = {
                   client: newRoute.client, driver: g.driverName, driverId: g.driverId, status: 'Aceptada', serviceType: 'Programado',
                   scheduledDate: newRoute.scheduledDate, 
-                  scheduledTime: g.timeKey, // La hora de entrada o salida programada
+                  scheduledTime: g.timeKey, 
                   start: startAddress, startCoords: { lat: startLat, lng: startLng, contact: startContact },
                   end: endAddress, endCoords: { lat: endLat, lng: endLng, contact: endContact },
                   waypointsData: waypointsData, waypoints: waypoints, finalDate: newRoute.scheduledDate, createdDate: new Date().toISOString()
@@ -813,7 +827,11 @@ export default function Planificacion() {
                                                   {grupo.employees.length < 4 && (
                                                       <div className="mt-2 pt-2 border-t border-slate-100">
                                                           <EmployeeSearch 
-                                                              employees={selectedClientData?.locations?.filter(l => l.assignedTo !== 'General' && !isEmpInAnyGroup(l.assignedTo)) || []} 
+                                                              employees={selectedClientData?.locations?.filter(l => 
+                                                                l.assignedTo !== 'General' && 
+                                                                !isEmpInAnyGroup(l.assignedTo) && 
+                                                                (selectedClientData.users?.map(u => u.name) || []).includes(l.assignedTo)
+                                                              ) || []} 
                                                               placeholder="➕ Añadir pasajero extra..." 
                                                               onSelect={(emp) => addEmployeeToGroup(grupo.id, emp)} 
                                                           />
@@ -980,7 +998,7 @@ export default function Planificacion() {
                                     </div>
                                     {selectedClientData?.locations?.some(loc => loc.assignedTo && loc.assignedTo !== 'General') && (
                                         <div className="mb-3">
-                                            <EmployeeSearch employees={selectedClientData.locations.filter(l => l.assignedTo !== 'General')} placeholder="🔍 Buscar empleado por nombre..." onSelect={(val) => handlePassengerSelectForPoint('start', null, val)} />
+                                            <EmployeeSearch employees={selectedClientData.locations.filter(l => l.assignedTo !== 'General' && selectedClientData.users?.some(u => u.name === l.assignedTo))} placeholder="🔍 Buscar empleado por nombre..." onSelect={(val) => handlePassengerSelectForPoint('start', null, val)} />
                                         </div>
                                     )}
                                     <AddressAutocomplete isLoaded={isLoaded} placeholder="Dirección exacta de Inicio..." value={startPoint?.address} onSelect={(loc) => setStartPoint(prev => ({...(prev || {}), ...loc, passengerName: prev?.passengerName || ''}))} iconColor="green" zIndex={50} favorites={getFilteredFavorites()} />
@@ -999,7 +1017,7 @@ export default function Planificacion() {
                                             </div>
                                             {selectedClientData?.locations?.some(loc => loc.assignedTo && loc.assignedTo !== 'General') && (
                                                 <div className="mb-3">
-                                                    <EmployeeSearch employees={selectedClientData.locations.filter(l => l.assignedTo !== 'General')} placeholder="🔍 Buscar empleado por nombre..." onSelect={(val) => handlePassengerSelectForPoint('waypoint', index, val)} />
+                                                    <EmployeeSearch employees={selectedClientData.locations.filter(l => l.assignedTo !== 'General' && selectedClientData.users?.some(u => u.name === l.assignedTo))} placeholder="🔍 Buscar empleado por nombre..." onSelect={(val) => handlePassengerSelectForPoint('waypoint', index, val)} />
                                                 </div>
                                             )}
                                             <AddressAutocomplete isLoaded={isLoaded} placeholder={`Dirección de Parada ${getMarkerLabel(index + 1)}...`} value={wp.address} onSelect={(loc) => updateWaypoint(index, {...wp, ...loc, passengerName: wp.passengerName || ''})} iconColor="blue" zIndex={40-index} favorites={getFilteredFavorites()} />
@@ -1020,7 +1038,7 @@ export default function Planificacion() {
                                     </div>
                                     {selectedClientData?.locations?.some(loc => loc.assignedTo && loc.assignedTo !== 'General') && (
                                         <div className="mb-3">
-                                            <EmployeeSearch employees={selectedClientData.locations.filter(l => l.assignedTo !== 'General')} placeholder="🔍 Buscar empleado por nombre..." onSelect={(val) => handlePassengerSelectForPoint('end', null, val)} />
+                                            <EmployeeSearch employees={selectedClientData.locations.filter(l => l.assignedTo !== 'General' && selectedClientData.users?.some(u => u.name === l.assignedTo))} placeholder="🔍 Buscar empleado por nombre..." onSelect={(val) => handlePassengerSelectForPoint('end', null, val)} />
                                         </div>
                                     )}
                                     <AddressAutocomplete isLoaded={isLoaded} placeholder="Dirección Destino Final (Ej. Oficina Central)" value={endPoint?.address} onSelect={(loc) => setEndPoint(prev => ({...(prev || {}), ...loc, passengerName: prev?.passengerName || ''}))} iconColor="red" zIndex={10} favorites={getFilteredFavorites()} />
@@ -1099,3 +1117,5 @@ export default function Planificacion() {
     </div>
   );
 }
+
+```

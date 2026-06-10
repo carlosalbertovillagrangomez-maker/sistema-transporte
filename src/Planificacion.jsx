@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2, Eye, RefreshCw, GripVertical, Search, ArrowRight } from 'lucide-react';
+import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2, Eye, RefreshCw, GripVertical, Search, ArrowRight, ChevronLeft } from 'lucide-react';
 // GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline, Autocomplete } from '@react-google-maps/api';
 
@@ -384,7 +384,7 @@ export default function Planificacion() {
       const timeBuckets = {};
 
       activeEmps.forEach(emp => {
-          const tKey = mode === 'Ida' ? emp.entrada : emp.salida;
+          const tKey = mode === 'Ida' ? (emp.entrada || '08:00') : (emp.salida || '17:00');
           if(!timeBuckets[tKey]) timeBuckets[tKey] = [];
           timeBuckets[tKey].push(emp);
       });
@@ -421,7 +421,9 @@ export default function Planificacion() {
 
               // REGLA DE HORARIO: Antes de las 07:00 NO es compartido
               let isShared = false;
-              const hour = parseInt(tKey.split(':')[0], 10);
+              const hourStr = tKey ? tKey.split(':')[0] : '8';
+              const hour = parseInt(hourStr, 10) || 8;
+              
               if (mode === 'Ida' && hour >= 7) isShared = true;
               if (mode === 'Regreso' && hour < 20) isShared = true;
 
@@ -800,7 +802,7 @@ export default function Planificacion() {
                                                       <div className="flex items-center gap-2">
                                                           <div className="w-3 h-3 rounded-full" style={{ backgroundColor: groupColor }}></div>
                                                           <h4 className="font-black text-sm">Vehículo {idx + 1}</h4>
-                                                          <span className="ml-2 text-[10px] bg-slate-600 px-2 py-1 rounded font-bold border border-slate-500"><Clock className="w-3 h-3 inline mr-1"/>{globalCarpool.mode === 'Ida' ? 'Llega' : 'Sale'} a las {grupo.timeKey}</span>
+                                                          <span className="ml-2 text-[10px] bg-slate-600 px-2 py-1 rounded font-bold border border-slate-500"><Clock className="w-3 h-3 inline mr-1"/>{globalCarpool.mode === 'Ida' ? 'Llega a' : 'Sale a'} las {grupo.timeKey}</span>
                                                       </div>
                                                       <div className="flex gap-2">
                                                           <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold">{grupo.employees.length}/4 pax</span>

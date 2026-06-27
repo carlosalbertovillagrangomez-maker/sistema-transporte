@@ -135,6 +135,7 @@ export default function Planificacion() {
   const [showCarpoolModal, setShowCarpoolModal] = useState(false);
   const [carpoolStep, setCarpoolStep] = useState(1); 
   const [employeeRoster, setEmployeeRoster] = useState([]); 
+  const [rosterSearch, setRosterSearch] = useState(''); // NUEVO: Buscador de personal
   
   const [carpoolGroups, setCarpoolGroups] = useState([]);
   const [previewGroupId, setPreviewGroupId] = useState('all'); 
@@ -265,6 +266,7 @@ export default function Planificacion() {
       setNewRoute({...newRoute, client: '', serviceType: 'Programado', scheduledDate: ''});
       setCarpoolGroups([]);
       setEmployeeRoster([]);
+      setRosterSearch(''); // Limpiar buscador
       setPreviewGroupId('all');
       setGlobalCarpool({ mode: 'Ida' });
       setSelectedClientData(null);
@@ -276,6 +278,7 @@ export default function Planificacion() {
       const clientObj = availableClients.find(c => c.name === clientName);
       setSelectedClientData(clientObj || null);
       setCarpoolGroups([]); 
+      setRosterSearch(''); // Limpiar buscador al cambiar de empresa
 
       // ETAPA 1: Cargar el Roster (Lista Plana de Empleados)
       if (clientObj) {
@@ -286,7 +289,7 @@ export default function Planificacion() {
               const uData = clientObj.users?.find(u => u.name === emp.assignedTo) || {};
               return {
                   ...emp,
-                  included: false, // <-- CAMBIO: Asistencia apagada por defecto (Opt-in)
+                  included: false, // Opt-in por defecto
                   entrada: uData.entrada || '08:00',
                   salida: uData.salida || '17:00'
               }
@@ -295,10 +298,10 @@ export default function Planificacion() {
       } else { setEmployeeRoster([]); }
   };
 
-  const updateRosterItem = (index, field, value) => {
+  const updateRosterItem = (originalIndex, field, value) => {
       setEmployeeRoster(prev => {
           const newRoster = [...prev];
-          newRoster[index][field] = value;
+          newRoster[originalIndex][field] = value;
           return newRoster;
       });
   };
@@ -351,12 +354,11 @@ export default function Planificacion() {
 
   const isEmpInAnyGroup = (name) => { return carpoolGroups.some(g => g.employees.some(e => e.assignedTo === name)); };
 
-  // --- CAMBIO: Anti-duplicados y Eliminación cruzada automática ---
   const addEmployeeToGroup = async (groupId, empObj) => {
       if(!empObj) return;
       let newGroups = [];
       setCarpoolGroups(prev => {
-          // 1. Limpiamos al empleado de CUALQUIER otra cuadrilla donde ya estuviera
+          // 1. Limpiamos al empleado de CUALQUIER otra cuadrilla
           const cleanedGroups = prev.map(g => ({
               ...g,
               employees: g.employees.filter(e => e.assignedTo !== empObj.assignedTo)
@@ -372,7 +374,6 @@ export default function Planificacion() {
           });
           return newGroups;
       });
-      // Recalcular ruta real con el retraso para asegurar el set state
       setTimeout(() => fetchRealRoutesForGroups(newGroups), 100);
   };
 
@@ -381,7 +382,6 @@ export default function Planificacion() {
       if(!selectedClientData) return alert("Selecciona una empresa primero.");
       const mode = globalCarpool.mode; 
       
-      // Filtrar roster por los que están "Incluidos" para hoy
       const activeEmps = employeeRoster.filter(emp => emp.included);
       if(activeEmps.length === 0) return alert("No hay empleados seleccionados para planificar.");
 
@@ -407,27 +407,24 @@ export default function Planificacion() {
           while(unassignedValid.length > 0) {
               let currentGrp = [];
               
-              // LÓGICA: Encontrar al más lejano de la empresa para que sea la semilla
               unassignedValid.sort((a,b) => {
                   const distA = Math.pow(parseFloat(a.lat) - ofiCoords.lat, 2) + Math.pow(parseFloat(a.lon||a.lng) - ofiCoords.lng, 2);
                   const distB = Math.pow(parseFloat(b.lat) - ofiCoords.lat, 2) + Math.pow(parseFloat(b.lon||b.lng) - ofiCoords.lng, 2);
-                  return distB - distA; // Descendente (Más lejos primero)
+                  return distB - distA; 
               });
               
-              let seed = unassignedValid.shift(); // Saco al más lejano
+              let seed = unassignedValid.shift(); 
               currentGrp.push(seed);
 
-              // LÓGICA: Buscar a los 3 más cercanos a esa semilla
               while(currentGrp.length < 4 && unassignedValid.length > 0) {
                   unassignedValid.sort((a,b) => {
                       const distA = Math.pow(parseFloat(a.lat) - parseFloat(seed.lat), 2) + Math.pow(parseFloat(a.lon||a.lng) - parseFloat(seed.lon||seed.lng), 2);
                       const distB = Math.pow(parseFloat(b.lat) - parseFloat(seed.lat), 2) + Math.pow(parseFloat(b.lon||b.lng) - parseFloat(seed.lon||seed.lng), 2);
-                      return distA - distB; // Ascendente (Más cerca a la semilla)
+                      return distA - distB; 
                   });
                   currentGrp.push(unassignedValid.shift());
               }
 
-              // REGLA DE HORARIO: Antes de las 07:00 NO es compartido
               let isShared = false;
               const hourStr = tKey ? tKey.split(':')[0] : '8';
               const hour = parseInt(hourStr, 10) || 8;
@@ -442,7 +439,7 @@ export default function Planificacion() {
                   driverId: '',
                   driverName: '',
                   sharedMeetingPoint: { active: isShared, address: '', lat: null, lng: null },
-                  routeGeometry: [] // Para trazar la ruta real
+                  routeGeometry: [] 
               });
           }
 
@@ -460,8 +457,8 @@ export default function Planificacion() {
       });
 
       setCarpoolGroups(newGroups);
-      setCarpoolStep(2); // Pasamos a la vista de Cuadrillas
-      fetchRealRoutesForGroups(newGroups); // Trazamos OSRM
+      setCarpoolStep(2); 
+      fetchRealRoutesForGroups(newGroups); 
   };
 
   const removeEmployeeFromGroup = (groupId, empIndex) => {
@@ -595,7 +592,7 @@ export default function Planificacion() {
                   start: startAddress, startCoords: { lat: startLat, lng: startLng, contact: startContact },
                   end: endAddress, endCoords: { lat: endLat, lng: endLng, contact: endContact },
                   waypointsData: waypointsData, waypoints: waypoints, 
-                  technicalData: { geometry: g.routeGeometry || [] }, // Guardar ruta real
+                  technicalData: { geometry: g.routeGeometry || [] },
                   finalDate: newRoute.scheduledDate, createdDate: new Date().toISOString()
               };
               await addDoc(collection(db, "rutas"), newTrip);
@@ -754,27 +751,55 @@ export default function Planificacion() {
                                               Selecciona una empresa para cargar su plantilla de personal.
                                           </div>
                                       ) : (
-                                          <div className="space-y-3">
-                                              {employeeRoster.map((emp, index) => (
-                                                  <div key={index} className={`flex items-center gap-4 bg-white p-4 rounded-xl border shadow-sm transition ${emp.included ? 'border-orange-200 ring-1 ring-orange-100' : 'border-slate-200 opacity-60 grayscale'}`}>
-                                                      <input type="checkbox" className="w-5 h-5 text-orange-500 rounded cursor-pointer" checked={emp.included} onChange={(e) => updateRosterItem(index, 'included', e.target.checked)} />
-                                                      <div className="flex-1">
-                                                          <h4 className="font-black text-slate-800 text-sm">{emp.assignedTo}</h4>
-                                                          <p className="text-[10px] text-slate-500 truncate mt-0.5">{emp.address}</p>
-                                                      </div>
-                                                      {globalCarpool.mode === 'Ida' ? (
-                                                          <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100">
-                                                              <span className="text-[10px] font-bold text-slate-500 uppercase">ENTRADA:</span>
-                                                              <input type="time" className="text-xs font-black outline-none bg-transparent w-20 text-slate-800" value={emp.entrada} onChange={(e) => updateRosterItem(index, 'entrada', e.target.value)} disabled={!emp.included} />
-                                                          </div>
-                                                      ) : (
-                                                          <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100">
-                                                              <span className="text-[10px] font-bold text-slate-500 uppercase">SALIDA:</span>
-                                                              <input type="time" className="text-xs font-black outline-none bg-transparent w-20 text-slate-800" value={emp.salida} onChange={(e) => updateRosterItem(index, 'salida', e.target.value)} disabled={!emp.included} />
-                                                          </div>
-                                                      )}
+                                          <div className="space-y-4">
+                                              {/* NUEVO: Buscador de personal para la Etapa 1 */}
+                                              <div className="relative mb-6">
+                                                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                                                      <Search className="h-4 w-4 text-slate-400" />
                                                   </div>
-                                              ))}
+                                                  <input 
+                                                      type="text" 
+                                                      placeholder="Buscar empleado por nombre o dirección..." 
+                                                      className="w-full pl-10 pr-4 py-3 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-orange-500 outline-none transition text-sm font-bold text-slate-700 shadow-sm"
+                                                      value={rosterSearch}
+                                                      onChange={(e) => setRosterSearch(e.target.value)}
+                                                  />
+                                              </div>
+
+                                              <div className="space-y-3">
+                                                  {employeeRoster
+                                                      .map((emp, originalIndex) => ({ ...emp, originalIndex }))
+                                                      .filter(emp => 
+                                                          emp.assignedTo?.toLowerCase().includes(rosterSearch.toLowerCase()) || 
+                                                          emp.address?.toLowerCase().includes(rosterSearch.toLowerCase())
+                                                      )
+                                                      .map((emp) => (
+                                                      <div key={emp.originalIndex} className={`flex items-center gap-4 bg-white p-4 rounded-xl border shadow-sm transition ${emp.included ? 'border-orange-200 ring-1 ring-orange-100' : 'border-slate-200 opacity-60 grayscale'}`}>
+                                                          <input type="checkbox" className="w-5 h-5 text-orange-500 rounded cursor-pointer" checked={emp.included} onChange={(e) => updateRosterItem(emp.originalIndex, 'included', e.target.checked)} />
+                                                          <div className="flex-1">
+                                                              <h4 className="font-black text-slate-800 text-sm">{emp.assignedTo}</h4>
+                                                              <p className="text-[10px] text-slate-500 truncate mt-0.5">{emp.address}</p>
+                                                          </div>
+                                                          {globalCarpool.mode === 'Ida' ? (
+                                                              <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100">
+                                                                  <span className="text-[10px] font-bold text-slate-500 uppercase">ENTRADA:</span>
+                                                                  <input type="time" className="text-xs font-black outline-none bg-transparent w-20 text-slate-800" value={emp.entrada} onChange={(e) => updateRosterItem(emp.originalIndex, 'entrada', e.target.value)} disabled={!emp.included} />
+                                                              </div>
+                                                          ) : (
+                                                              <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100">
+                                                                  <span className="text-[10px] font-bold text-slate-500 uppercase">SALIDA:</span>
+                                                                  <input type="time" className="text-xs font-black outline-none bg-transparent w-20 text-slate-800" value={emp.salida} onChange={(e) => updateRosterItem(emp.originalIndex, 'salida', e.target.value)} disabled={!emp.included} />
+                                                              </div>
+                                                          )}
+                                                      </div>
+                                                  ))}
+                                                  
+                                                  {employeeRoster.filter(emp => emp.assignedTo?.toLowerCase().includes(rosterSearch.toLowerCase()) || emp.address?.toLowerCase().includes(rosterSearch.toLowerCase())).length === 0 && (
+                                                      <div className="text-center p-6 text-slate-400 font-bold text-sm">
+                                                          No se encontró ningún empleado con "{rosterSearch}"
+                                                      </div>
+                                                  )}
+                                              </div>
                                               
                                               <div className="pt-6 flex justify-end">
                                                   <button onClick={handleGenerateStep2} className="px-8 py-4 bg-orange-500 text-white rounded-2xl font-black shadow-xl shadow-orange-500/30 hover:bg-orange-600 transition flex items-center gap-2 uppercase tracking-widest text-sm">

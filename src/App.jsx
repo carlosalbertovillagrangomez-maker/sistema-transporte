@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Truck, Monitor, Map as MapIcon, Users, FileText, Bell, AlertTriangle, X, Play, CheckSquare, Clock, Zap, Calendar, Edit, Save, History, Eye, Briefcase, Loader2, BellRing, MessageSquare, Send, Camera } from 'lucide-react';
+import { Truck, Monitor, Map as MapIcon, Users, FileText, Bell, AlertTriangle, X, Play, CheckSquare, Clock, Zap, Calendar, Edit, Save, History, Eye, Briefcase, Loader2, BellRing, MessageSquare, Send, Camera, RefreshCw } from 'lucide-react';
 
 // GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline } from '@react-google-maps/api';
@@ -39,7 +39,7 @@ const getDistance = (p1, p2) => {
 };
 
 function App() {
-  const [currentUser, setCurrentUser] = useState(null); // NUEVO: Control de usuario real
+  const [currentUser, setCurrentUser] = useState(null); 
   const [activeTab, setActiveTab] = useState('monitoreo');
   
   const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries });
@@ -55,6 +55,10 @@ function App() {
   const [chatModalRoute, setChatModalRoute] = useState(null);
   const [chatInput, setChatInput] = useState('');
   const chatScrollRef = useRef(null);
+
+  // NUEVO: Estados para Reasignación
+  const [reassigningRoute, setReassigningRoute] = useState(null);
+  const [newDriverSelection, setNewDriverSelection] = useState('');
 
   // Estados para estabilizar la brújula del coche en el Despachador
   const prevLocRef = useRef(null);
@@ -121,7 +125,6 @@ function App() {
       });
   }, [liveRoutes, onlineDrivers]);
 
-  // RESTO DEL DESPACHADOR...
   useEffect(() => { if (chatScrollRef.current) chatScrollRef.current.scrollTop = chatScrollRef.current.scrollHeight; }, [chatModalRoute?.chat]);
 
   // Lógica para calcular la rotación del coche con filtro estabilizador
@@ -172,9 +175,32 @@ function App() {
       setEditingRoute(null);
   };
 
+  // LÓGICA DE REASIGNACIÓN
+  const confirmReassignDriver = async () => {
+      if (!newDriverSelection || !reassigningRoute) return alert("Selecciona un conductor primero.");
+      const selectedDriverObj = onlineDrivers.find(d => d.id === newDriverSelection);
+      if (!selectedDriverObj) return;
+
+      try {
+          await updateDoc(doc(db, "rutas", reassigningRoute.id), {
+              driver: selectedDriverObj.name,
+              driverId: selectedDriverObj.id,
+              status: 'Aceptada', // Se reinicia a Aceptada para que el nuevo chofer inicie el viaje
+              ofertaEstado: null,
+              ofertaPara: null,
+              ofertaNombre: null,
+              rechazadoPor: [] // Limpiamos rechazos por si acaso
+          });
+          setReassigningRoute(null);
+          setNewDriverSelection('');
+      } catch (error) {
+          console.error("Error reasignando:", error);
+          alert("Hubo un error al reasignar el viaje.");
+      }
+  };
+
   const sendDispatchMessage = async () => {
       if (!chatInput.trim() || !chatModalRoute || !currentUser) return;
-      // NUEVO: Se registra el nombre real del administrador en el chat
       const msg = { sender: 'Despacho', text: chatInput.trim(), time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}), timestamp: new Date().toISOString(), sentBy: currentUser.name };
       try { await updateDoc(doc(db, "rutas", chatModalRoute.id), { chat: arrayUnion(msg) }); setChatInput(''); } catch(e) {}
   };
@@ -197,14 +223,12 @@ function App() {
 
   const rutasVisibles = getFilteredAndSortedRoutes();
 
-  // Si no hay usuario activo, mostramos el Login
   if (!currentUser) return <Login onLogin={(user) => setCurrentUser(user)} />;
 
   return (
     <div className="flex h-screen bg-slate-50 font-sans overflow-hidden">
       <aside className="w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0 transition-all duration-300">
         <div className="h-16 flex items-center justify-center px-6 border-b border-slate-800 bg-slate-950">
-           {/* LOGO TRIPLOGIX */}
            <img src="/logo.png" alt="TripLogix" className="h-8 w-auto mr-2" />
            <span className="text-white font-black text-lg uppercase tracking-wider">Trip<span className="text-orange-500">Logix</span></span>
         </div>
@@ -258,7 +282,6 @@ function App() {
                                     {Array.isArray(selectedRoute.waypointsData) && selectedRoute.waypointsData.map((wp, idx) => ( wp?.lat && wp?.lng ? <Marker key={idx} position={{lat: wp.lat, lng: wp.lng}} icon={ICON_WAYPOINT} /> : null ))}
                                     {selectedRoute.endCoords && <Marker position={selectedRoute.endCoords} icon={ICON_END} />}
                                     
-                                    {/* El coche dinámico que gira en el Despachador */}
                                     {selectedRoute.currentLocation && selectedRoute.status === 'En Ruta' && ( 
                                         <Marker 
                                             position={selectedRoute.currentLocation} 
@@ -306,12 +329,23 @@ function App() {
                                         <button onClick={(e) => { e.stopPropagation(); setEditingRoute(ruta); }} className="text-slate-300 hover:text-orange-500 transition p-1 bg-slate-50 hover:bg-orange-50 rounded-lg"><Edit className="w-4 h-4" /></button>
                                     </div>
 
+                                    {/* --- AQUÍ ESTÁ EL BOTÓN DE REASIGNACIÓN --- */}
                                     {ruta.ofertaEstado === 'Pendiente' ? (
-                                        <div className="bg-yellow-50 border border-yellow-200 text-yellow-700 text-[10px] font-black px-3 py-2 rounded-xl uppercase flex items-center gap-2 mb-4 animate-pulse">
-                                            <Loader2 className="w-3 h-3 animate-spin"/> OFRECIENDO A: {ruta.ofertaNombre.split(' ')[0]}
+                                        <div className="bg-yellow-50 border border-yellow-200 text-yellow-700 text-[10px] font-black px-3 py-2 rounded-xl uppercase flex items-center justify-between gap-2 mb-4 animate-pulse">
+                                            <div className="flex items-center gap-2">
+                                                <Loader2 className="w-3 h-3 animate-spin"/> OFRECIENDO A: {ruta.ofertaNombre?.split(' ')[0]}
+                                            </div>
+                                            <button onClick={(e) => { e.stopPropagation(); setReassigningRoute(ruta); }} className="px-2 py-1 bg-white border border-yellow-300 text-yellow-800 rounded hover:bg-yellow-100 transition shadow-sm">Cambiar</button>
                                         </div>
                                     ) : (
-                                        <p className="text-xs text-slate-500 mb-4 flex items-center gap-2"><Users className="w-4 h-4 text-slate-400"/> <span className="font-bold text-slate-700">{ruta.driver || 'Sin Asignar'}</span></p>
+                                        <div className="flex justify-between items-center mb-4">
+                                            <p className="text-xs text-slate-500 flex items-center gap-2"><Users className="w-4 h-4 text-slate-400"/> <span className="font-bold text-slate-700">{ruta.driver || 'Sin Asignar'}</span></p>
+                                            {(ruta.status === 'Aceptada' || ruta.status === 'En Ruta' || ruta.status === 'Pendiente') && (
+                                                <button onClick={(e) => { e.stopPropagation(); setReassigningRoute(ruta); }} className="text-[9px] font-black uppercase tracking-widest text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-1.5 rounded-lg transition flex items-center gap-1 shadow-sm">
+                                                    <RefreshCw className="w-3 h-3"/> Reasignar
+                                                </button>
+                                            )}
+                                        </div>
                                     )}
                                     
                                     <div className="flex gap-2 mb-4">
@@ -328,7 +362,6 @@ function App() {
                                         )}
                                     </div>
 
-                                    {/* --- NUEVO: MOSTRAR ETA EN EL MONITOR EN VIVO --- */}
                                     {ruta.status === 'En Ruta' && ruta.proximityAlert?.etaMins && (
                                         <div className="mb-4 px-3 py-2 bg-green-50 border border-green-200 rounded-xl text-center">
                                             <p className="text-[10px] font-black text-green-700 uppercase tracking-widest flex items-center justify-center gap-1.5">
@@ -408,6 +441,43 @@ function App() {
                               ))
                           )}
                       </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {/* --- MODAL PARA REASIGNAR CONDUCTOR --- */}
+      {reassigningRoute && (
+          <div className="fixed inset-0 z-[400] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+              <div className="bg-white rounded-[2rem] shadow-2xl p-8 w-full max-w-sm">
+                  <div className="flex justify-between items-center mb-6">
+                      <h3 className="font-black text-slate-800 text-lg flex items-center gap-2"><RefreshCw className="w-5 h-5 text-blue-500"/> Reasignar Viaje</h3>
+                      <button onClick={() => setReassigningRoute(null)} className="text-slate-400 hover:text-red-500 transition"><X className="w-6 h-6"/></button>
+                  </div>
+                  <p className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-4">Ruta: <span className="text-orange-500">{reassigningRoute.client}</span></p>
+                  
+                  <div className="space-y-4">
+                      <div>
+                          <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400 mb-2">Seleccionar Nuevo Operador</label>
+                          <select 
+                              className="w-full border border-slate-200 rounded-xl p-3 text-sm font-bold text-slate-700 focus:border-blue-500 outline-none shadow-sm"
+                              value={newDriverSelection}
+                              onChange={(e) => setNewDriverSelection(e.target.value)}
+                          >
+                              <option value="">👤 Seleccionar chofer disponible...</option>
+                              {onlineDrivers.filter(d => d.id !== reassigningRoute.driverId).map(d => (
+                                  <option key={d.id} value={d.id}>{d.name}</option>
+                              ))}
+                          </select>
+                      </div>
+                      <p className="text-[9px] text-slate-400 font-bold leading-relaxed bg-slate-50 p-3 rounded-lg border border-slate-100">
+                          ⚠️ Al confirmar, este viaje desaparecerá inmediatamente del teléfono del conductor actual y se le enviará al nuevo operador seleccionado.
+                      </p>
+                  </div>
+                  
+                  <div className="flex gap-3 mt-8">
+                      <button onClick={() => setReassigningRoute(null)} className="flex-1 py-3 text-xs font-black uppercase tracking-widest text-slate-500 hover:bg-slate-100 rounded-xl transition">Cancelar</button>
+                      <button onClick={confirmReassignDriver} className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest shadow-lg shadow-blue-500/20 hover:bg-blue-700 flex items-center justify-center gap-2 transition active:scale-95"><CheckSquare className="w-4 h-4" /> Confirmar</button>
                   </div>
               </div>
           </div>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Phone, Truck, Plus, X, User, FileText, MapPin, Save, Mail, 
-  Trash2, Loader2, ShieldCheck, Clock, Eye, Lock, Heart, ShieldAlert, Wifi, CheckCircle2, XCircle
+  Trash2, Loader2, ShieldCheck, Clock, Eye, Lock, Heart, ShieldAlert, Wifi, CheckCircle2, XCircle, Edit
 } from 'lucide-react';
 
 // FIREBASE
@@ -14,6 +14,9 @@ export default function Conductores() {
   const [loading, setLoading] = useState(true);
   const [filterStatus, setFilterStatus] = useState('Todos');
   const [viewDoc, setViewDoc] = useState(null);
+
+  // NUEVO: Estado para saber si estamos editando un expediente existente
+  const [isEditing, setIsEditing] = useState(false);
 
   const [newDriver, setNewDriver] = useState({
     name: '', rfc: '', phone: '', email: '', password: '', address: '',
@@ -36,8 +39,8 @@ export default function Conductores() {
   const handleUpdateStatus = async (id, newStatus) => {
     try {
       await updateDoc(doc(db, "conductores", id), { status: newStatus });
-      setSelectedDriver(null); // Cerramos el modal tras tomar la decisión
-    } catch (error) { alert("Error: " + error.message); }
+      setSelectedDriver(prev => prev ? { ...prev, status: newStatus } : null);
+    } catch (error) { alert("Error al actualizar el estado: " + error.message); }
   };
 
   const handleSaveDriver = async () => {
@@ -49,35 +52,66 @@ export default function Conductores() {
         ? `${newDriver.vehicleModel} (${newDriver.vehiclePlate})` 
         : 'Sin Asignar';
 
-    const nuevoConductor = {
-        ...newDriver,
-        email: newDriver.email.trim().toLowerCase(),
-        initials: newDriver.name.substring(0, 2).toUpperCase(),
-        status: 'Pendiente',
-        isOnline: false, 
-        vehicle: vehiculoFinal,
-        rating: 5, trips: 0,
-        joined: new Date().toLocaleDateString(),
-        created: new Date().toISOString()
-    };
-
     try {
-        await addDoc(collection(db, "conductores"), nuevoConductor);
-        setShowNewDriverModal(false);
-        setNewDriver({
-            name: '', rfc: '', phone: '', email: '', password: '', address: '',
-            licenseNumber: '', licenseType: 'Federal Tipo B', licenseExp: '', bloodType: 'O+',
-            emergencyContact: '', vehicleModel: '', vehiclePlate: '', vehicleType: 'Caja Seca',
-            fotoPerfil: '', identificacion: ''
-        });
+        if (isEditing && selectedDriver) {
+            // ACTUALIZAR CONDUCTOR EXISTENTE
+            const updateData = {
+                ...newDriver,
+                email: newDriver.email.trim().toLowerCase(),
+                vehicle: vehiculoFinal,
+            };
+            await updateDoc(doc(db, "conductores", selectedDriver.id), updateData);
+            setSelectedDriver({ ...selectedDriver, ...updateData }); // Actualiza la vista
+            setIsEditing(false);
+            alert("✅ Expediente actualizado correctamente.");
+        } else {
+            // CREAR NUEVO CONDUCTOR
+            const nuevoConductor = {
+                ...newDriver,
+                email: newDriver.email.trim().toLowerCase(),
+                initials: newDriver.name.substring(0, 2).toUpperCase(),
+                status: 'Pendiente',
+                isOnline: false, 
+                vehicle: vehiculoFinal,
+                rating: 5, trips: 0,
+                joined: new Date().toLocaleDateString(),
+                created: new Date().toISOString()
+            };
+            await addDoc(collection(db, "conductores"), nuevoConductor);
+            setShowNewDriverModal(false);
+            resetForm();
+        }
     } catch (error) { alert("Error: " + error.message); }
   };
 
   const handleDelete = async (id) => {
-    if(confirm("¿Eliminar expediente permanentemente?")) {
+    if(confirm("⚠️ ¿Eliminar expediente permanentemente? Esto no se puede deshacer.")) {
         await deleteDoc(doc(db, "conductores", id));
         setSelectedDriver(null);
     }
+  };
+
+  const resetForm = () => {
+      setNewDriver({
+          name: '', rfc: '', phone: '', email: '', password: '', address: '',
+          licenseNumber: '', licenseType: 'Federal Tipo B', licenseExp: '', bloodType: 'O+',
+          emergencyContact: '', vehicleModel: '', vehiclePlate: '', vehicleType: 'Caja Seca',
+          fotoPerfil: '', identificacion: ''
+      });
+  };
+
+  // Función para abrir el modal de edición cargando los datos del conductor
+  const startEditing = () => {
+      setNewDriver({
+          name: selectedDriver.name || '', rfc: selectedDriver.rfc || '', phone: selectedDriver.phone || '', 
+          email: selectedDriver.email || '', password: selectedDriver.password || '', address: selectedDriver.address || '',
+          licenseNumber: selectedDriver.licenseNumber || '', licenseType: selectedDriver.licenseType || 'Federal Tipo B', 
+          licenseExp: selectedDriver.licenseExp || '', bloodType: selectedDriver.bloodType || 'O+',
+          emergencyContact: selectedDriver.emergencyContact || '', vehicleModel: selectedDriver.vehicleModel || '', 
+          vehiclePlate: selectedDriver.vehiclePlate || '', vehicleType: selectedDriver.vehicleType || 'Caja Seca',
+          fotoPerfil: selectedDriver.fotoPerfil || '', identificacion: selectedDriver.identificacion || ''
+      });
+      setIsEditing(true);
   };
 
   const filteredList = driversList.filter(d => filterStatus === 'Todos' || d.status === filterStatus);
@@ -93,11 +127,11 @@ export default function Conductores() {
         </div>
         <div className="flex gap-3">
             <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
-                {['Todos', 'Pendiente', 'Aprobado'].map((s) => (
+                {['Todos', 'Pendiente', 'Aprobado', 'Suspendido'].map((s) => (
                     <button key={s} onClick={() => setFilterStatus(s)} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition ${filterStatus === s ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}>{s}</button>
                 ))}
             </div>
-            <button onClick={() => setShowNewDriverModal(true)} className="bg-blue-600 text-white px-5 py-2 rounded-xl text-sm font-bold hover:bg-blue-700 transition flex items-center gap-2 shadow-lg shadow-blue-200">
+            <button onClick={() => { setIsEditing(false); resetForm(); setShowNewDriverModal(true); }} className="bg-orange-500 text-white px-5 py-2 rounded-xl text-sm font-bold hover:bg-orange-600 transition flex items-center gap-2 shadow-lg shadow-orange-500/20">
                 <Plus className="w-4 h-4" /> Nuevo Conductor
             </button>
         </div>
@@ -109,7 +143,7 @@ export default function Conductores() {
       {!loading && (
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {filteredList.map((driver) => (
-            <div key={driver.id} className={`bg-white rounded-2xl p-6 border-2 transition-all group relative ${driver.status === 'Pendiente' ? 'border-orange-100 shadow-orange-100/50 shadow-lg' : 'border-transparent shadow-sm hover:shadow-md'}`}>
+            <div key={driver.id} className={`bg-white rounded-2xl p-6 border-2 transition-all group relative ${driver.status === 'Pendiente' ? 'border-yellow-200 shadow-yellow-100/50 shadow-lg' : driver.status === 'Suspendido' ? 'border-red-200 bg-red-50/30' : 'border-transparent shadow-sm hover:shadow-md'}`}>
                 
                 {/* INDICADOR DE ESTADO EN LÍNEA */}
                 {driver.status === 'Aprobado' && (
@@ -126,12 +160,12 @@ export default function Conductores() {
                         ) : (
                             <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center font-bold text-xl text-slate-400 border border-slate-200 uppercase">{driver.initials}</div>
                         )}
-                        <div className={`absolute -bottom-1 -right-1 p-1 rounded-full border-2 border-white shadow-sm ${driver.status === 'Aprobado' ? 'bg-green-500' : 'bg-orange-500'}`}>
-                            {driver.status === 'Aprobado' ? <ShieldCheck className="w-3 h-3 text-white"/> : <Clock className="w-3 h-3 text-white"/>}
+                        <div className={`absolute -bottom-1 -right-1 p-1 rounded-full border-2 border-white shadow-sm ${driver.status === 'Aprobado' ? 'bg-green-500' : driver.status === 'Suspendido' ? 'bg-red-500' : 'bg-yellow-500'}`}>
+                            {driver.status === 'Aprobado' ? <ShieldCheck className="w-3 h-3 text-white"/> : driver.status === 'Suspendido' ? <XCircle className="w-3 h-3 text-white"/> : <Clock className="w-3 h-3 text-white"/>}
                         </div>
                     </div>
                     <div className="flex flex-col items-end mt-8">
-                        <span className={`text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest mb-2 ${driver.status === 'Aprobado' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>{driver.status}</span>
+                        <span className={`text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest mb-2 ${driver.status === 'Aprobado' ? 'bg-green-100 text-green-700' : driver.status === 'Suspendido' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>{driver.status}</span>
                         <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition">
                             <button onClick={() => setViewDoc(driver.identificacion)} className="p-1.5 bg-slate-50 text-slate-400 hover:text-blue-600 rounded-lg border border-slate-100"><Eye className="w-4 h-4"/></button>
                             <button onClick={() => handleDelete(driver.id)} className="p-1.5 bg-slate-50 text-slate-400 hover:text-red-600 rounded-lg border border-slate-100"><Trash2 className="w-4 h-4"/></button>
@@ -141,16 +175,20 @@ export default function Conductores() {
                 <div>
                     <h3 className="text-lg font-black text-slate-800 mb-1">{driver.name}</h3>
                     <div className="space-y-1.5 text-xs text-slate-500 mb-6">
+                        <div className="flex items-center gap-2"><Phone className="w-3.5 h-3.5" /> <span className="font-medium text-slate-700">{driver.phone || 'Sin WhatsApp'}</span></div>
                         <div className="flex items-center gap-2"><Truck className="w-3.5 h-3.5" /> <span className="font-medium text-slate-700">{driver.vehicle}</span></div>
-                        <div className="flex items-center gap-2"><Mail className="w-3.5 h-3.5" /> <span>{driver.email}</span></div>
                     </div>
                 </div>
                 
-                {/* --- CAMBIO: BOTÓN UNIFICADO PARA VER EXPEDIENTE --- */}
+                {/* --- BOTÓN UNIFICADO PARA VER EXPEDIENTE --- */}
                 <div className="pt-4 border-t border-slate-50 flex gap-2">
                     {driver.status === 'Pendiente' ? (
-                        <button onClick={() => setSelectedDriver(driver)} className="w-full py-2.5 bg-orange-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-orange-600 transition shadow-lg shadow-orange-500/20 flex justify-center items-center gap-2">
-                            <ShieldAlert className="w-3 h-3"/> Revisar Expediente
+                        <button onClick={() => setSelectedDriver(driver)} className="w-full py-2.5 bg-yellow-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-yellow-600 transition shadow-lg shadow-yellow-500/20 flex justify-center items-center gap-2">
+                            <ShieldAlert className="w-3 h-3"/> Revisar Alta
+                        </button>
+                    ) : driver.status === 'Suspendido' ? (
+                        <button onClick={() => setSelectedDriver(driver)} className="w-full py-2.5 bg-red-600 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-red-700 transition shadow-lg shadow-red-600/20 flex justify-center items-center gap-2">
+                            <Lock className="w-3 h-3"/> Perfil Bloqueado
                         </button>
                     ) : (
                         <button onClick={() => setSelectedDriver(driver)} className="flex-1 py-2.5 bg-slate-800 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-slate-900 transition shadow-lg shadow-slate-200">Ver Expediente</button>
@@ -161,17 +199,17 @@ export default function Conductores() {
       </div>
       )}
 
-      {/* ================= MODAL DE REGISTRO COMPLETO ================= */}
-      {showNewDriverModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md">
+      {/* ================= MODAL DE REGISTRO COMPLETO Y EDICIÓN ================= */}
+      {(showNewDriverModal || isEditing) && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md">
             <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
                 
                 <div className="px-8 py-6 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                     <div>
-                        <h3 className="text-xl font-black text-slate-800">Alta de Conductor Seguro</h3>
-                        <p className="text-xs text-slate-500">Credenciales de acceso y datos de identidad.</p>
+                        <h3 className="text-xl font-black text-slate-800">{isEditing ? 'Editar Expediente del Conductor' : 'Alta de Conductor Seguro'}</h3>
+                        <p className="text-xs text-slate-500">{isEditing ? `Modificando datos de ${selectedDriver?.name}` : 'Credenciales de acceso y datos de identidad.'}</p>
                     </div>
-                    <button onClick={() => setShowNewDriverModal(false)} className="bg-white p-2 rounded-full border border-slate-200 text-slate-400 hover:text-red-500 transition shadow-sm"><X className="w-5 h-5" /></button>
+                    <button onClick={() => { setShowNewDriverModal(false); setIsEditing(false); }} className="bg-white p-2 rounded-full border border-slate-200 text-slate-400 hover:text-red-500 transition shadow-sm"><X className="w-5 h-5" /></button>
                 </div>
                 
                 <div className="p-8 overflow-y-auto">
@@ -211,8 +249,8 @@ export default function Conductores() {
                                     value={newDriver.rfc} onChange={e => setNewDriver({...newDriver, rfc: e.target.value})} />
                             </div>
                             <div>
-                                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5 ml-1">WhatsApp *</label>
-                                <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" 
+                                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5 ml-1">WhatsApp (Número de Acceso) *</label>
+                                <input type="text" placeholder="Ej. 5512345678" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm focus:border-orange-500 focus:ring-1 focus:ring-orange-500 outline-none" 
                                     value={newDriver.phone} onChange={e => setNewDriver({...newDriver, phone: e.target.value})} />
                             </div>
                             <div className="col-span-2">
@@ -283,9 +321,9 @@ export default function Conductores() {
                 </div>
 
                 <div className="px-8 py-6 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
-                    <button onClick={() => setShowNewDriverModal(false)} className="px-6 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest hover:text-slate-600 transition">Cancelar</button>
+                    <button onClick={() => { setShowNewDriverModal(false); setIsEditing(false); }} className="px-6 py-3 text-xs font-bold text-slate-400 uppercase tracking-widest hover:text-slate-600 transition">Cancelar</button>
                     <button onClick={handleSaveDriver} className="px-8 py-3 text-xs font-black text-white bg-slate-800 rounded-2xl hover:bg-slate-900 shadow-xl transition flex items-center gap-2 uppercase tracking-widest">
-                        <Save className="w-4 h-4" /> Registrar Conductor
+                        <Save className="w-4 h-4" /> {isEditing ? 'Guardar Cambios' : 'Registrar Conductor'}
                     </button>
                 </div>
             </div>
@@ -294,7 +332,7 @@ export default function Conductores() {
 
       {/* MODAL VER DOCUMENTO */}
       {viewDoc && (
-        <div className="fixed inset-0 z-[100] bg-slate-950/95 backdrop-blur-xl flex items-center justify-center p-10" onClick={() => setViewDoc(null)}>
+        <div className="fixed inset-0 z-[150] bg-slate-950/95 backdrop-blur-xl flex items-center justify-center p-10" onClick={() => setViewDoc(null)}>
             <div className="relative max-w-4xl w-full flex flex-col items-center">
                 <button className="mb-4 text-white/50 hover:text-white flex items-center gap-2 font-bold uppercase text-[10px] tracking-[0.3em]"><X/> Cerrar Visor</button>
                 {viewDoc ? (
@@ -310,7 +348,7 @@ export default function Conductores() {
       )}
 
       {/* ================= VISOR DE EXPEDIENTE COMPLETO ================= */}
-      {selectedDriver && (
+      {selectedDriver && !isEditing && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md">
             <div className="bg-white w-full max-w-4xl rounded-[3rem] shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
                 
@@ -319,12 +357,22 @@ export default function Conductores() {
                     <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(#ffffff 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
                     <button onClick={() => setSelectedDriver(null)} className="absolute top-8 right-8 bg-white/10 text-white hover:bg-white/20 p-2 rounded-full transition z-10"><X/></button>
                     
+                    {/* Botón Flotante para Editar */}
+                    <button onClick={startEditing} className="absolute top-8 right-20 bg-orange-500 text-white hover:bg-orange-600 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition shadow-lg flex items-center gap-2 z-10">
+                        <Edit className="w-4 h-4"/> Editar Datos
+                    </button>
+                    
                     <div className="absolute -bottom-10 left-12 flex items-end gap-6">
-                         <div className="w-36 h-36 bg-white rounded-[2.5rem] p-2 shadow-2xl">
+                         <div className="w-36 h-36 bg-white rounded-[2.5rem] p-2 shadow-2xl relative">
                             {selectedDriver.fotoPerfil ? (
                                 <img src={selectedDriver.fotoPerfil} className="w-full h-full object-cover rounded-[2rem]" />
                             ) : (
                                 <div className="w-full h-full bg-slate-100 rounded-[2rem] flex items-center justify-center text-4xl font-black text-slate-300">{selectedDriver.initials}</div>
+                            )}
+                            {selectedDriver.status === 'Suspendido' && (
+                                <div className="absolute inset-0 bg-red-500/20 rounded-[2.5rem] flex items-center justify-center backdrop-blur-[1px]">
+                                    <Lock className="w-8 h-8 text-red-600" />
+                                </div>
                             )}
                          </div>
                          <div className="mb-6">
@@ -332,21 +380,31 @@ export default function Conductores() {
                                 <h2 className="text-4xl font-black text-white tracking-tight">{selectedDriver.name}</h2>
                                 {selectedDriver.isOnline && <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_#22c55e]" title="En línea"></div>}
                             </div>
-                            <p className="text-blue-400 text-xs font-black uppercase tracking-[0.3em]">{selectedDriver.status} • OPERADOR ID: {selectedDriver.id.slice(0,8)}</p>
+                            <p className={`${selectedDriver.status === 'Suspendido' ? 'text-red-400' : 'text-blue-400'} text-xs font-black uppercase tracking-[0.3em]`}>{selectedDriver.status} • OPERADOR ID: {selectedDriver.id.slice(0,8)}</p>
                          </div>
                     </div>
                 </div>
 
                 {/* Contenido del Expediente */}
                 <div className="mt-16 p-12 overflow-y-auto">
+                    
+                    {selectedDriver.status === 'Suspendido' && (
+                        <div className="mb-8 p-4 bg-red-50 border-2 border-red-200 rounded-2xl flex items-center gap-4 text-red-700">
+                            <ShieldAlert className="w-8 h-8 shrink-0"/>
+                            <div>
+                                <h4 className="font-black text-sm uppercase">Acceso Restringido</h4>
+                                <p className="text-xs font-medium">Este conductor está suspendido. No puede iniciar sesión en la aplicación ni recibir viajes hasta que sea aprobado nuevamente.</p>
+                            </div>
+                        </div>
+                    )}
+
                     <div className="grid grid-cols-3 gap-12">
-                        
                         {/* COLUMNA 1: IDENTIDAD */}
                         <div className="space-y-6">
                             <h4 className="text-[10px] font-black text-blue-500 uppercase tracking-widest border-b border-blue-50 pb-2 flex items-center gap-2"><User className="w-3 h-3"/> Identidad</h4>
                             <div className="space-y-5">
                                 <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">RFC / ID Fiscal</p><p className="font-bold text-slate-700">{selectedDriver.rfc || 'No registrado'}</p></div>
-                                <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">WhatsApp</p><p className="font-bold text-slate-700">{selectedDriver.phone}</p></div>
+                                <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">WhatsApp (Acceso App)</p><p className="font-bold text-slate-700">{selectedDriver.phone || 'Sin número'}</p></div>
                                 <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Correo Electrónico</p><p className="font-bold text-slate-700">{selectedDriver.email}</p></div>
                                 <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Domicilio</p><p className="font-bold text-slate-700 leading-relaxed">{selectedDriver.address || 'No registrado'}</p></div>
                             </div>
@@ -388,22 +446,32 @@ export default function Conductores() {
                     </div>
                 </div>
 
-                {/* --- NUEVO: FOOTER CON BOTONES DE DECISIÓN DE APROBACIÓN --- */}
+                {/* --- FOOTER CON HERRAMIENTAS ADMINISTRATIVAS --- */}
                 <div className="p-8 bg-slate-50 border-t border-slate-100 flex justify-between items-center">
                     <button onClick={() => handleDelete(selectedDriver.id)} className="px-4 py-2 text-slate-400 font-bold text-xs uppercase hover:text-red-600 transition flex items-center gap-1.5"><Trash2 className="w-4 h-4"/> Borrar Expediente</button>
                     
-                    {selectedDriver.status === 'Pendiente' ? (
-                        <div className="flex gap-3">
-                            <button onClick={() => handleUpdateStatus(selectedDriver.id, 'Rechazado')} className="px-6 py-4 bg-red-50 text-red-600 font-black text-xs uppercase rounded-2xl hover:bg-red-100 border border-red-200 transition tracking-[0.1em] flex items-center gap-2">
-                                <XCircle className="w-5 h-5"/> Rechazar
+                    <div className="flex gap-3">
+                        {selectedDriver.status === 'Aprobado' ? (
+                            <button onClick={() => handleUpdateStatus(selectedDriver.id, 'Suspendido')} className="px-6 py-4 bg-red-50 text-red-600 font-black text-xs uppercase rounded-2xl hover:bg-red-100 border border-red-200 transition tracking-[0.1em] flex items-center gap-2">
+                                <XCircle className="w-5 h-5"/> Suspender Acceso
                             </button>
+                        ) : selectedDriver.status === 'Pendiente' ? (
+                            <>
+                                <button onClick={() => handleUpdateStatus(selectedDriver.id, 'Rechazado')} className="px-6 py-4 bg-red-50 text-red-600 font-black text-xs uppercase rounded-2xl hover:bg-red-100 border border-red-200 transition tracking-[0.1em] flex items-center gap-2">
+                                    <XCircle className="w-5 h-5"/> Rechazar
+                                </button>
+                                <button onClick={() => handleUpdateStatus(selectedDriver.id, 'Aprobado')} className="px-8 py-4 bg-green-500 text-white font-black text-xs uppercase rounded-2xl shadow-xl shadow-green-500/30 hover:bg-green-600 transition tracking-[0.1em] flex items-center gap-2">
+                                    <CheckCircle2 className="w-5 h-5"/> Aprobar Operador
+                                </button>
+                            </>
+                        ) : (
                             <button onClick={() => handleUpdateStatus(selectedDriver.id, 'Aprobado')} className="px-8 py-4 bg-green-500 text-white font-black text-xs uppercase rounded-2xl shadow-xl shadow-green-500/30 hover:bg-green-600 transition tracking-[0.1em] flex items-center gap-2">
-                                <CheckCircle2 className="w-5 h-5"/> Aprobar Operador
+                                <CheckCircle2 className="w-5 h-5"/> Quitar Suspensión
                             </button>
-                        </div>
-                    ) : (
-                        <button onClick={() => setSelectedDriver(null)} className="px-10 py-4 bg-slate-900 text-white font-black text-xs uppercase rounded-2xl shadow-2xl hover:bg-black transition tracking-[0.2em]">Cerrar Expediente</button>
-                    )}
+                        )}
+                        
+                        <button onClick={() => setSelectedDriver(null)} className="px-8 py-4 bg-slate-900 text-white font-black text-xs uppercase rounded-2xl shadow-xl hover:bg-black transition tracking-[0.2em]">Cerrar</button>
+                    </div>
                 </div>
             </div>
         </div>

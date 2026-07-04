@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2, Eye, RefreshCw, GripVertical, Search, ArrowRight, ChevronLeft } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2, Eye, GripVertical, Search, ArrowRight, ChevronLeft } from 'lucide-react';
 // GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline, Autocomplete } from '@react-google-maps/api';
 
@@ -12,6 +12,23 @@ const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0";
 const containerStyle = { width: '100%', height: '100%' };
 const centerMX = { lat: 19.4326, lng: -99.1332 }; 
 const libraries = ['places', 'geometry'];
+
+// --- HELPER: CALCULAR HORA DE RECOLECCIÓN (TIEMPO INVERSO) ---
+const getCalculatedStartTime = (timeKey, durationMins, mode) => {
+    if (!timeKey || durationMins == null) return timeKey;
+    const [h, m] = timeKey.split(':').map(Number);
+    let date = new Date();
+    date.setHours(h, m, 0, 0);
+    
+    // Si es de IDA, restamos 10 minutos de holgura + los minutos de trayecto
+    if (mode === 'Ida') {
+        date.setMinutes(date.getMinutes() - 10 - durationMins);
+    }
+    
+    const finalH = String(date.getHours()).padStart(2, '0');
+    const finalM = String(date.getMinutes()).padStart(2, '0');
+    return `${finalH}:${finalM}`;
+};
 
 // --- COMPONENTES AUXILIARES ---
 const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor = "text-slate-400", zIndex = 50, favorites = [] }) => {
@@ -135,7 +152,7 @@ export default function Planificacion() {
   const [showCarpoolModal, setShowCarpoolModal] = useState(false);
   const [carpoolStep, setCarpoolStep] = useState(1); 
   const [employeeRoster, setEmployeeRoster] = useState([]); 
-  const [rosterSearch, setRosterSearch] = useState(''); // NUEVO: Buscador de personal
+  const [rosterSearch, setRosterSearch] = useState(''); 
   
   const [carpoolGroups, setCarpoolGroups] = useState([]);
   const [previewGroupId, setPreviewGroupId] = useState('all'); 
@@ -197,19 +214,6 @@ export default function Planificacion() {
     else if (pointType === 'waypoint') { const updatedWaypoints = [...waypoints]; updatedWaypoints[waypointIndex] = newPointData; setWaypoints(updatedWaypoints); }
   };
 
-  const handleOptimizeRoute = () => {
-      if (!startPoint?.lat) return alert("Debes definir el 'Punto de Inicio' primero para poder optimizar la ruta.");
-      const validWaypoints = waypoints.filter(w => w.lat && w.lng); const invalidWaypoints = waypoints.filter(w => !w.lat || !w.lng);
-      if (validWaypoints.length < 2) return alert("Necesitas al menos 2 paradas intermedias para poder optimizarlas.");
-      let currentLoc = { lat: startPoint.lat, lng: startPoint.lng }; let unvisited = [...validWaypoints]; let optimizedWaypoints = [];
-      while (unvisited.length > 0) {
-          let nearestIdx = 0; let minDistance = Infinity;
-          for (let i = 0; i < unvisited.length; i++) { const d = getDistance(currentLoc, unvisited[i]); if (d < minDistance) { minDistance = d; nearestIdx = i; } }
-          currentLoc = unvisited[nearestIdx]; optimizedWaypoints.push(unvisited[nearestIdx]); unvisited.splice(nearestIdx, 1);
-      }
-      setWaypoints([...optimizedWaypoints, ...invalidWaypoints]);
-  };
-
   useEffect(() => { if (startPoint?.address && endPoint?.address) calculateRoute(); }, [startPoint?.address, endPoint?.address, waypoints]);
 
   const calculateRoute = async () => {
@@ -248,7 +252,21 @@ export default function Planificacion() {
   const handleSaveRoute = async () => {
       if(!newRoute.client || !startPoint?.address || !endPoint?.address) return alert("Faltan datos obligatorios (Empresa, Origen, Destino).");
       const today = new Date().toISOString().split('T')[0];
-      const rutaSave = { ...newRoute, driver: newRoute.driver, driverId: newRoute.driverId, status: newRoute.driver ? 'Aceptada' : 'Pendiente', start: startPoint.address, end: endPoint.address, startCoords: { lat: startPoint.lat, lng: startPoint.lng, contact: startPoint.contact || '' }, endCoords: { lat: endPoint.lat, lng: endPoint.lng, contact: endPoint.contact || '' }, waypointsData: waypoints.map(w => ({ address: w.address, lat: w.lat, lng: w.lng, contact: w.contact || '' })), waypoints: waypoints.map(w => w.address), technicalData: { ...routeInfo }, finalDate: isProgramado ? newRoute.scheduledDate : today, createdDate: new Date().toISOString() };
+      
+      const rutaSave = { 
+          ...newRoute, 
+          driver: newRoute.driver, driverId: newRoute.driverId, 
+          status: newRoute.driver ? 'Aceptada' : 'Pendiente', 
+          start: startPoint.address, end: endPoint.address, 
+          startCoords: { lat: startPoint.lat, lng: startPoint.lng, contact: startPoint.contact || '', passengerName: startPoint.contact || '' }, 
+          endCoords: { lat: endPoint.lat, lng: endPoint.lng, contact: endPoint.contact || '', passengerName: endPoint.contact || '' }, 
+          waypointsData: waypoints.map(w => ({ address: w.address, lat: w.lat, lng: w.lng, contact: w.contact || '', passengerName: w.contact || '' })), 
+          waypoints: waypoints.map(w => w.address), 
+          technicalData: { ...routeInfo }, 
+          finalDate: isProgramado ? newRoute.scheduledDate : today, 
+          createdDate: new Date().toISOString() 
+      };
+      
       try { 
           await addDoc(collection(db, "rutas"), rutaSave); 
           setShowModal(false); setNewRoute({ client: '', requestUser: '', driver: '', driverId: '', status: 'Pendiente', serviceType: 'Programado', scheduledDate: '', scheduledTime: '' });
@@ -262,11 +280,11 @@ export default function Planificacion() {
 
   const openCarpoolModal = () => {
       setShowCarpoolModal(true);
-      setCarpoolStep(1); // Iniciamos en la Etapa 1
+      setCarpoolStep(1); 
       setNewRoute({...newRoute, client: '', serviceType: 'Programado', scheduledDate: ''});
       setCarpoolGroups([]);
       setEmployeeRoster([]);
-      setRosterSearch(''); // Limpiar buscador
+      setRosterSearch(''); 
       setPreviewGroupId('all');
       setGlobalCarpool({ mode: 'Ida' });
       setSelectedClientData(null);
@@ -278,9 +296,8 @@ export default function Planificacion() {
       const clientObj = availableClients.find(c => c.name === clientName);
       setSelectedClientData(clientObj || null);
       setCarpoolGroups([]); 
-      setRosterSearch(''); // Limpiar buscador al cambiar de empresa
+      setRosterSearch(''); 
 
-      // ETAPA 1: Cargar el Roster (Lista Plana de Empleados)
       if (clientObj) {
           const activeUserNames = clientObj.users?.map(u => u.name) || [];
           const emps = clientObj.locations.filter(loc => loc.assignedTo && loc.assignedTo !== 'General' && activeUserNames.includes(loc.assignedTo));
@@ -289,7 +306,7 @@ export default function Planificacion() {
               const uData = clientObj.users?.find(u => u.name === emp.assignedTo) || {};
               return {
                   ...emp,
-                  included: false, // Opt-in por defecto
+                  included: false,
                   entrada: uData.entrada || '08:00',
                   salida: uData.salida || '17:00'
               }
@@ -306,7 +323,7 @@ export default function Planificacion() {
       });
   };
 
-  // --- CALCULAR RUTAS REALES CON OSRM PARA LAS CUADRILLAS ---
+  // --- CALCULAR RUTAS REALES CON OSRM PARA LAS CUADRILLAS (AQUÍ GUARDAMOS LA DURACIÓN) ---
   const fetchRealRoutesForGroups = async (groups) => {
       setFetchingRealRoutes(true);
       const oficina = selectedClientData?.locations?.find(l => l.assignedTo === 'General');
@@ -344,9 +361,11 @@ export default function Planificacion() {
                   if (data.code === 'Ok' && data.routes.length > 0) {
                       const geometry = data.routes[0].geometry.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
                       updatedGroups[i].routeGeometry = geometry;
+                      // EXTRAEMOS LOS MINUTOS EXACTOS DE TRAYECTO
+                      updatedGroups[i].totalDurationMins = Math.round(data.routes[0].duration / 60);
                   }
               } catch(e) { console.error("OSRM Error", e); }
-          } else { updatedGroups[i].routeGeometry = []; }
+          } else { updatedGroups[i].routeGeometry = []; updatedGroups[i].totalDurationMins = null; }
       }
       setCarpoolGroups(updatedGroups);
       setFetchingRealRoutes(false);
@@ -358,13 +377,10 @@ export default function Planificacion() {
       if(!empObj) return;
       let newGroups = [];
       setCarpoolGroups(prev => {
-          // 1. Limpiamos al empleado de CUALQUIER otra cuadrilla
           const cleanedGroups = prev.map(g => ({
               ...g,
               employees: g.employees.filter(e => e.assignedTo !== empObj.assignedTo)
           }));
-
-          // 2. Lo agregamos a la cuadrilla destino
           newGroups = cleanedGroups.map(g => {
               if (g.id === groupId) {
                   if (g.employees.length >= 4) { alert("El vehículo ya está lleno."); return g; }
@@ -377,7 +393,6 @@ export default function Planificacion() {
       setTimeout(() => fetchRealRoutesForGroups(newGroups), 100);
   };
 
-  // --- FUNCIÓN MAESTRA: AGRUPAR GEOGRÁFICAMENTE DESDE EL MÁS LEJANO + HORARIO ---
   const handleGenerateStep2 = () => {
       if(!selectedClientData) return alert("Selecciona una empresa primero.");
       const mode = globalCarpool.mode; 
@@ -439,7 +454,8 @@ export default function Planificacion() {
                   driverId: '',
                   driverName: '',
                   sharedMeetingPoint: { active: isShared, address: '', lat: null, lng: null },
-                  routeGeometry: [] 
+                  routeGeometry: [],
+                  totalDurationMins: null
               });
           }
 
@@ -451,7 +467,8 @@ export default function Planificacion() {
                   driverId: '',
                   driverName: '',
                   sharedMeetingPoint: { active: false, address: '', lat: null, lng: null },
-                  routeGeometry: []
+                  routeGeometry: [],
+                  totalDurationMins: null
               });
           }
       });
@@ -570,7 +587,9 @@ export default function Planificacion() {
                   } else {
                       const inicio = g.employees[0]; const intermedias = g.employees.slice(1);
                       startAddress = inicio.address; startLat = parseFloat(inicio.lat); startLng = parseFloat(inicio.lon || inicio.lng); startContact = inicio.assignedTo;
-                      waypointsData = intermedias.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo }));
+                      
+                      // Aseguramos inyectar tanto contact como passengerName para la app del conductor
+                      waypointsData = intermedias.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo, passengerName: w.assignedTo }));
                       waypoints = intermedias.map(w => w.address);
                   }
                   endAddress = oficina.address; endLat = parseFloat(oficina.lat); endLng = parseFloat(oficina.lon || oficina.lng); endContact = 'Oficina Central';
@@ -581,16 +600,22 @@ export default function Planificacion() {
                   } else {
                       const finRegreso = g.employees[g.employees.length - 1]; const intermediasRegreso = g.employees.slice(0, -1);
                       endAddress = finRegreso.address; endLat = parseFloat(finRegreso.lat); endLng = parseFloat(finRegreso.lon || finRegreso.lng); endContact = finRegreso.assignedTo;
-                      waypointsData = intermediasRegreso.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo }));
+                      
+                      waypointsData = intermediasRegreso.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo, passengerName: w.assignedTo }));
                       waypoints = intermediasRegreso.map(w => w.address);
                   }
               }
 
+              // Calcular la hora de inicio con la función helper
+              const calculatedStartTime = getCalculatedStartTime(g.timeKey, g.totalDurationMins, globalCarpool.mode);
+
               const newTrip = {
                   client: newRoute.client, driver: g.driverName, driverId: g.driverId, status: 'Aceptada', serviceType: 'Programado',
-                  scheduledDate: newRoute.scheduledDate, scheduledTime: g.timeKey, 
-                  start: startAddress, startCoords: { lat: startLat, lng: startLng, contact: startContact },
-                  end: endAddress, endCoords: { lat: endLat, lng: endLng, contact: endContact },
+                  scheduledDate: newRoute.scheduledDate, 
+                  scheduledTime: g.timeKey, // La hora oficial a la que el corporativo quiere que lleguen o salgan
+                  startTime: calculatedStartTime, // La hora real en la que el chofer debe iniciar para llegar a tiempo
+                  start: startAddress, startCoords: { lat: startLat, lng: startLng, contact: startContact, passengerName: startContact },
+                  end: endAddress, endCoords: { lat: endLat, lng: endLng, contact: endContact, passengerName: endContact },
                   waypointsData: waypointsData, waypoints: waypoints, 
                   technicalData: { geometry: g.routeGeometry || [] },
                   finalDate: newRoute.scheduledDate, createdDate: new Date().toISOString()
@@ -752,7 +777,6 @@ export default function Planificacion() {
                                           </div>
                                       ) : (
                                           <div className="space-y-4">
-                                              {/* NUEVO: Buscador de personal para la Etapa 1 */}
                                               <div className="relative mb-6">
                                                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                                                       <Search className="h-4 w-4 text-slate-400" />
@@ -835,7 +859,17 @@ export default function Planificacion() {
                                                       <div className="flex items-center gap-2">
                                                           <div className="w-3 h-3 rounded-full" style={{ backgroundColor: groupColor }}></div>
                                                           <h4 className="font-black text-sm">Vehículo {idx + 1}</h4>
-                                                          <span className="ml-2 text-[10px] bg-slate-600 px-2 py-1 rounded font-bold border border-slate-500"><Clock className="w-3 h-3 inline mr-1"/>{globalCarpool.mode === 'Ida' ? 'Llega a' : 'Sale a'} las {grupo.timeKey}</span>
+                                                          
+                                                          {/* --- MOSTRAR HORA DE RECOLECCIÓN O SALIDA --- */}
+                                                          {globalCarpool.mode === 'Ida' && grupo.totalDurationMins != null ? (
+                                                              <span className="ml-2 text-[10px] bg-slate-700 px-2 py-1 rounded font-bold border border-slate-600 text-green-400" title={`Llegada a las ${grupo.timeKey}`}>
+                                                                  <Clock className="w-3 h-3 inline mr-1"/>Recoger a las {getCalculatedStartTime(grupo.timeKey, grupo.totalDurationMins, 'Ida')}
+                                                              </span>
+                                                          ) : (
+                                                              <span className="ml-2 text-[10px] bg-slate-600 px-2 py-1 rounded font-bold border border-slate-500">
+                                                                  <Clock className="w-3 h-3 inline mr-1"/>Sale a las {grupo.timeKey}
+                                                              </span>
+                                                          )}
                                                       </div>
                                                       <div className="flex gap-2">
                                                           <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold">{grupo.employees.length}/4 pax</span>
@@ -882,7 +916,7 @@ export default function Planificacion() {
                                                                       employees={selectedClientData?.locations?.filter(l => 
                                                                           l.assignedTo !== 'General' && 
                                                                           (selectedClientData.users?.map(u => u.name) || []).includes(l.assignedTo) &&
-                                                                          !grupo.employees.some(e => e.assignedTo === l.assignedTo) // Ocultar solo a los que YA están en ESTA misma cuadrilla
+                                                                          !grupo.employees.some(e => e.assignedTo === l.assignedTo) 
                                                                       ) || []} 
                                                                       placeholder="🔍 Buscar para agregar/mover aquí..." 
                                                                       onSelect={(emp) => addEmployeeToGroup(grupo.id, emp)} 

@@ -13,21 +13,130 @@ const containerStyle = { width: '100%', height: '100%' };
 const centerMX = { lat: 19.4326, lng: -99.1332 }; 
 const libraries = ['places', 'geometry'];
 
-// --- HELPER: CALCULAR HORA DE RECOLECCIÓN (TIEMPO INVERSO) ---
-const getCalculatedStartTime = (timeKey, durationMins, mode) => {
-    if (!timeKey || durationMins == null) return timeKey;
-    const [h, m] = timeKey.split(':').map(Number);
-    let date = new Date();
-    date.setHours(h, m, 0, 0);
-    
-    // Si es de IDA, restamos 10 minutos de holgura + los minutos de trayecto
-    if (mode === 'Ida') {
-        date.setMinutes(date.getMinutes() - 10 - durationMins);
-    }
-    
+// --- CONFIGURACIÓN DE TIEMPOS CARPOOLING ---
+// Para viajes de Ida, el destino final debe alcanzarse mínimo 10 minutos antes.
+// Además, se agrega una tolerancia operativa de 5 minutos por cada pasajero.
+const FINAL_DESTINATION_EARLY_MINS = 10;
+const PASSENGER_PICKUP_BUFFER_MINS = 5;
+
+const parseTimeKeyToDate = (timeKey) => {
+    const [h, m] = String(timeKey || '').split(':').map(Number);
+    const date = new Date();
+    date.setHours(
+        Number.isFinite(h) ? h : 0,
+        Number.isFinite(m) ? m : 0,
+        0,
+        0
+    );
+    return date;
+};
+
+const addMinutesToDate = (date, minutes) => {
+    return new Date(date.getTime() + (Number(minutes) || 0) * 60000);
+};
+
+const formatHHMM = (date) => {
     const finalH = String(date.getHours()).padStart(2, '0');
     const finalM = String(date.getMinutes()).padStart(2, '0');
     return `${finalH}:${finalM}`;
+};
+
+const safeMinutes = (value) => {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : 0;
+};
+
+// --- HELPER: CALCULAR HORA REAL DE INICIO DEL CHOFER ---
+const getCalculatedStartTime = (timeKey, durationMins, mode, passengerCount = 0) => {
+    if (!timeKey || durationMins == null) return timeKey;
+
+    // En regreso se respeta la hora oficial de salida.
+    if (mode !== 'Ida') return timeKey;
+
+    const officialArrivalDate = parseTimeKeyToDate(timeKey);
+    const targetFinalArrivalDate = addMinutesToDate(officialArrivalDate, -FINAL_DESTINATION_EARLY_MINS);
+    const totalPassengerBufferMins = safeMinutes(passengerCount) * PASSENGER_PICKUP_BUFFER_MINS;
+
+    const startDate = addMinutesToDate(
+        targetFinalArrivalDate,
+        -(safeMinutes(durationMins) + totalPassengerBufferMins)
+    );
+
+    return formatHHMM(startDate);
+};
+
+// --- HELPER: PLAN COMPLETO DE TIEMPOS PARA CARPOOLING ---
+const buildCarpoolTimePlan = ({
+    timeKey,
+    totalDurationMins,
+    routeSegments = [],
+    mode,
+    passengerCount = 0,
+    isShared = false
+}) => {
+    if (!timeKey || totalDurationMins == null || mode !== 'Ida') {
+        return {
+            officialScheduledTime: timeKey,
+            startTime: timeKey,
+            targetFinalArrivalTime: timeKey,
+            estimatedFinalArrivalTime: timeKey,
+            finalEarlyBufferMins: 0,
+            passengerBufferMins: 0,
+            totalPassengerBufferMins: 0,
+            pickupTimes: []
+        };
+    }
+
+    const officialArrivalDate = parseTimeKeyToDate(timeKey);
+    const targetFinalArrivalDate = addMinutesToDate(officialArrivalDate, -FINAL_DESTINATION_EARLY_MINS);
+    const totalPassengerBufferMins = safeMinutes(passengerCount) * PASSENGER_PICKUP_BUFFER_MINS;
+
+    const startDate = addMinutesToDate(
+        targetFinalArrivalDate,
+        -(safeMinutes(totalDurationMins) + totalPassengerBufferMins)
+    );
+
+    let pickupTimes = [];
+
+    if (isShared) {
+        pickupTimes = Array.from({ length: passengerCount }, () => formatHHMM(startDate));
+
+        const estimatedFinalArrivalDate = addMinutesToDate(
+            startDate,
+            safeMinutes(totalDurationMins) + totalPassengerBufferMins
+        );
+
+        return {
+            officialScheduledTime: timeKey,
+            startTime: formatHHMM(startDate),
+            targetFinalArrivalTime: formatHHMM(targetFinalArrivalDate),
+            estimatedFinalArrivalTime: formatHHMM(estimatedFinalArrivalDate),
+            finalEarlyBufferMins: FINAL_DESTINATION_EARLY_MINS,
+            passengerBufferMins: PASSENGER_PICKUP_BUFFER_MINS,
+            totalPassengerBufferMins,
+            pickupTimes
+        };
+    }
+
+    let cursor = new Date(startDate);
+    const safeSegments = Array.isArray(routeSegments) ? routeSegments : [];
+
+    for (let i = 0; i < passengerCount; i++) {
+        pickupTimes.push(formatHHMM(cursor));
+        cursor = addMinutesToDate(cursor, PASSENGER_PICKUP_BUFFER_MINS);
+        cursor = addMinutesToDate(cursor, safeMinutes(safeSegments[i]?.duration));
+    }
+
+    return {
+        officialScheduledTime: timeKey,
+        startTime: formatHHMM(startDate),
+        targetFinalArrivalTime: formatHHMM(targetFinalArrivalDate),
+        estimatedFinalArrivalTime: formatHHMM(cursor),
+        finalEarlyBufferMins: FINAL_DESTINATION_EARLY_MINS,
+        passengerBufferMins: PASSENGER_PICKUP_BUFFER_MINS,
+        totalPassengerBufferMins,
+        pickupTimes
+    };
 };
 
 // --- COMPONENTES AUXILIARES ---
@@ -359,13 +468,25 @@ export default function Planificacion() {
                   const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordsString}?overview=full&geometries=geojson`);
                   const data = await res.json();
                   if (data.code === 'Ok' && data.routes.length > 0) {
-                      const geometry = data.routes[0].geometry.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
+                      const route = data.routes[0];
+                      const geometry = route.geometry.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
+                      const routeSegments = (route.legs || []).map(leg => ({
+                          distance: (leg.distance / 1000).toFixed(1),
+                          duration: Math.round(leg.duration / 60)
+                      }));
+
                       updatedGroups[i].routeGeometry = geometry;
-                      // EXTRAEMOS LOS MINUTOS EXACTOS DE TRAYECTO
-                      updatedGroups[i].totalDurationMins = Math.round(data.routes[0].duration / 60);
+                      updatedGroups[i].routeSegments = routeSegments;
+                      updatedGroups[i].totalDistanceKm = (route.distance / 1000).toFixed(1);
+                      updatedGroups[i].totalDurationMins = Math.round(route.duration / 60);
                   }
               } catch(e) { console.error("OSRM Error", e); }
-          } else { updatedGroups[i].routeGeometry = []; updatedGroups[i].totalDurationMins = null; }
+          } else {
+              updatedGroups[i].routeGeometry = [];
+              updatedGroups[i].routeSegments = [];
+              updatedGroups[i].totalDistanceKm = null;
+              updatedGroups[i].totalDurationMins = null;
+          }
       }
       setCarpoolGroups(updatedGroups);
       setFetchingRealRoutes(false);
@@ -455,6 +576,8 @@ export default function Planificacion() {
                   driverName: '',
                   sharedMeetingPoint: { active: isShared, address: '', lat: null, lng: null },
                   routeGeometry: [],
+                  routeSegments: [],
+                  totalDistanceKm: null,
                   totalDurationMins: null
               });
           }
@@ -468,6 +591,8 @@ export default function Planificacion() {
                   driverName: '',
                   sharedMeetingPoint: { active: false, address: '', lat: null, lng: null },
                   routeGeometry: [],
+                  routeSegments: [],
+                  totalDistanceKm: null,
                   totalDurationMins: null
               });
           }
@@ -606,19 +731,124 @@ export default function Planificacion() {
                   }
               }
 
-              // Calcular la hora de inicio con la función helper
-              const calculatedStartTime = getCalculatedStartTime(g.timeKey, g.totalDurationMins, globalCarpool.mode);
+              // Plan de tiempos avanzado para carpooling:
+              // - Llegar 10 minutos antes al destino final.
+              // - Agregar 5 minutos de margen por cada pasajero.
+              const timePlan = buildCarpoolTimePlan({
+                  timeKey: g.timeKey,
+                  totalDurationMins: g.totalDurationMins,
+                  routeSegments: g.routeSegments || [],
+                  mode: globalCarpool.mode,
+                  passengerCount: g.employees.length,
+                  isShared
+              });
+
+              const passengerSchedule = g.employees.map((emp, index) => ({
+                  passengerName: emp.assignedTo,
+                  pickupTime: globalCarpool.mode === 'Ida'
+                      ? (timePlan.pickupTimes[index] || timePlan.startTime)
+                      : '',
+                  bufferMins: globalCarpool.mode === 'Ida' ? PASSENGER_PICKUP_BUFFER_MINS : 0
+              }));
+
+              const getPassengerPickupTime = (name) => {
+                  return passengerSchedule.find(p => p.passengerName === name)?.pickupTime || '';
+              };
+
+              if (globalCarpool.mode === 'Ida' && waypointsData.length > 0) {
+                  waypointsData = waypointsData.map(w => ({
+                      ...w,
+                      pickupTime: getPassengerPickupTime(w.contact),
+                      pickupBufferMins: PASSENGER_PICKUP_BUFFER_MINS
+                  }));
+              }
+
+              const startCoordsSave = {
+                  lat: startLat,
+                  lng: startLng,
+                  contact: startContact,
+                  passengerName: startContact
+              };
+
+              if (globalCarpool.mode === 'Ida') {
+                  startCoordsSave.pickupTime = isShared
+                      ? timePlan.startTime
+                      : getPassengerPickupTime(startContact);
+                  startCoordsSave.pickupBufferMins = PASSENGER_PICKUP_BUFFER_MINS;
+
+                  if (isShared) {
+                      startCoordsSave.passengersSchedule = passengerSchedule;
+                  }
+              }
+
+              const endCoordsSave = {
+                  lat: endLat,
+                  lng: endLng,
+                  contact: endContact,
+                  passengerName: endContact
+              };
+
+              if (globalCarpool.mode === 'Ida') {
+                  endCoordsSave.targetArrivalTime = timePlan.targetFinalArrivalTime;
+                  endCoordsSave.officialScheduledTime = g.timeKey;
+                  endCoordsSave.finalEarlyBufferMins = FINAL_DESTINATION_EARLY_MINS;
+              }
 
               const newTrip = {
-                  client: newRoute.client, driver: g.driverName, driverId: g.driverId, status: 'Aceptada', serviceType: 'Programado',
-                  scheduledDate: newRoute.scheduledDate, 
-                  scheduledTime: g.timeKey, // La hora oficial a la que el corporativo quiere que lleguen o salgan
-                  startTime: calculatedStartTime, // La hora real en la que el chofer debe iniciar para llegar a tiempo
-                  start: startAddress, startCoords: { lat: startLat, lng: startLng, contact: startContact, passengerName: startContact },
-                  end: endAddress, endCoords: { lat: endLat, lng: endLng, contact: endContact, passengerName: endContact },
-                  waypointsData: waypointsData, waypoints: waypoints, 
-                  technicalData: { geometry: g.routeGeometry || [] },
-                  finalDate: newRoute.scheduledDate, createdDate: new Date().toISOString()
+                  client: newRoute.client,
+                  driver: g.driverName,
+                  driverId: g.driverId,
+                  status: 'Aceptada',
+                  serviceType: 'Programado',
+                  scheduledDate: newRoute.scheduledDate,
+
+                  // Hora oficial del corporativo. Ejemplo: entrada 08:00.
+                  scheduledTime: g.timeKey,
+
+                  // Hora real en la que el chofer debe iniciar.
+                  // Para Ida incluye: duración OSRM + 10 min final + 5 min por pasajero.
+                  startTime: timePlan.startTime,
+
+                  // Campos adicionales para app del conductor, control y reportes.
+                  targetArrivalTime: timePlan.targetFinalArrivalTime,
+                  officialScheduledTime: g.timeKey,
+                  estimatedFinalArrivalTime: timePlan.estimatedFinalArrivalTime,
+                  finalEarlyBufferMins: timePlan.finalEarlyBufferMins,
+                  passengerBufferMins: timePlan.passengerBufferMins,
+                  totalPassengerBufferMins: timePlan.totalPassengerBufferMins,
+                  passengerSchedule,
+
+                  start: startAddress,
+                  startCoords: startCoordsSave,
+
+                  end: endAddress,
+                  endCoords: endCoordsSave,
+
+                  waypointsData: waypointsData,
+                  waypoints: waypoints,
+
+                  technicalData: {
+                      geometry: g.routeGeometry || [],
+                      segments: g.routeSegments || [],
+                      totalDistance: g.totalDistanceKm || null,
+                      totalDuration: g.totalDurationMins || 0,
+                      totalDurationMins: g.totalDurationMins || 0,
+                      carpool: {
+                          mode: globalCarpool.mode,
+                          officialScheduledTime: g.timeKey,
+                          startTime: timePlan.startTime,
+                          targetArrivalTime: timePlan.targetFinalArrivalTime,
+                          estimatedFinalArrivalTime: timePlan.estimatedFinalArrivalTime,
+                          finalEarlyBufferMins: timePlan.finalEarlyBufferMins,
+                          passengerBufferMins: timePlan.passengerBufferMins,
+                          totalPassengerBufferMins: timePlan.totalPassengerBufferMins,
+                          passengerCount: g.employees.length,
+                          passengerSchedule
+                      }
+                  },
+
+                  finalDate: newRoute.scheduledDate,
+                  createdDate: new Date().toISOString()
               };
               await addDoc(collection(db, "rutas"), newTrip);
           }
@@ -862,8 +1092,18 @@ export default function Planificacion() {
                                                           
                                                           {/* --- MOSTRAR HORA DE RECOLECCIÓN O SALIDA --- */}
                                                           {globalCarpool.mode === 'Ida' && grupo.totalDurationMins != null ? (
-                                                              <span className="ml-2 text-[10px] bg-slate-700 px-2 py-1 rounded font-bold border border-slate-600 text-green-400" title={`Llegada a las ${grupo.timeKey}`}>
-                                                                  <Clock className="w-3 h-3 inline mr-1"/>Recoger a las {getCalculatedStartTime(grupo.timeKey, grupo.totalDurationMins, 'Ida')}
+                                                              <span
+                                                                  className="ml-2 text-[10px] bg-slate-700 px-2 py-1 rounded font-bold border border-slate-600 text-green-400"
+                                                                  title={`Entrada oficial ${grupo.timeKey}. Llegada objetivo: ${buildCarpoolTimePlan({
+                                                                      timeKey: grupo.timeKey,
+                                                                      totalDurationMins: grupo.totalDurationMins,
+                                                                      routeSegments: grupo.routeSegments || [],
+                                                                      mode: 'Ida',
+                                                                      passengerCount: grupo.employees.length,
+                                                                      isShared: grupo.sharedMeetingPoint?.active && grupo.sharedMeetingPoint?.lat
+                                                                  }).targetFinalArrivalTime}. Incluye 10 min de antelación final y 5 min por pasajero.`}
+                                                              >
+                                                                  <Clock className="w-3 h-3 inline mr-1"/>Recoger a las {getCalculatedStartTime(grupo.timeKey, grupo.totalDurationMins, 'Ida', grupo.employees.length)}
                                                               </span>
                                                           ) : (
                                                               <span className="ml-2 text-[10px] bg-slate-600 px-2 py-1 rounded font-bold border border-slate-500">

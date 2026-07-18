@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Truck, Monitor, Map as MapIcon, Users, FileText, Bell, AlertTriangle, X, Play, CheckSquare, Clock, Zap, Calendar, Edit, Save, History, Eye, Briefcase, Loader2, BellRing, MessageSquare, Send, Camera, RefreshCw } from 'lucide-react';
+import { Truck, Monitor, Map as MapIcon, Users, FileText, Bell, AlertTriangle, X, Play, CheckSquare, Clock, Zap, Calendar, Edit, Save, History, Eye, Briefcase, Loader2, BellRing, MessageSquare, Send, Camera, RefreshCw, ShieldCheck, MapPin } from 'lucide-react';
 
 // GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline } from '@react-google-maps/api';

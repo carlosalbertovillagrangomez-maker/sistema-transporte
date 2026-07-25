@@ -46,6 +46,28 @@ const safeMinutes = (value) => {
     return Number.isFinite(n) ? n : 0;
 };
 
+const normalizeContactPhone = (...values) => {
+    for (const value of values) {
+        const digits = String(value || '').replace(/\D/g, '');
+        if (digits.length >= 10 && digits.length <= 15) return digits;
+    }
+
+    return '';
+};
+
+const getClientUserPhone = (clientData, personName, fallback = '') => {
+    const user = clientData?.users?.find(item => item?.name === personName);
+
+    return normalizeContactPhone(
+        user?.phone,
+        user?.telefono,
+        user?.whatsapp,
+        user?.mobile,
+        user?.celular,
+        fallback
+    );
+};
+
 // --- HELPER: CALCULAR HORA REAL DE INICIO DEL CHOFER ---
 const getCalculatedStartTime = (timeKey, durationMins, mode, passengerCount = 0) => {
     if (!timeKey || durationMins == null) return timeKey;
@@ -248,8 +270,8 @@ export default function Planificacion() {
   const [newRoute, setNewRoute] = useState({ client: '', requestUser: '', driver: '', driverId: '', status: 'Pendiente', serviceType: 'Programado', scheduledDate: '', scheduledTime: '' });
   const [selectedClientData, setSelectedClientData] = useState(null);
   
-  const [startPoint, setStartPoint] = useState({ address: '', lat: null, lng: null, contact: '', passengerName: '' });
-  const [endPoint, setEndPoint] = useState({ address: '', lat: null, lng: null, contact: '', passengerName: '' });
+  const [startPoint, setStartPoint] = useState({ address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' });
+  const [endPoint, setEndPoint] = useState({ address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' });
   const [waypoints, setWaypoints] = useState([]);
   
   const [routeInfo, setRouteInfo] = useState({ totalDistance: 0, totalDuration: 0, segments: [], geometry: [] });
@@ -312,12 +334,19 @@ export default function Planificacion() {
 
   const handlePassengerSelectForPoint = (pointType, waypointIndex, empObj) => {
     if (!empObj) {
-        if (pointType === 'start') setStartPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '' });
-        if (pointType === 'end') setEndPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '' });
-        if (pointType === 'waypoint') { const w = [...waypoints]; w[waypointIndex] = { address: '', lat: null, lng: null, contact: '', passengerName: '' }; setWaypoints(w); }
+        if (pointType === 'start') setStartPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' });
+        if (pointType === 'end') setEndPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' });
+        if (pointType === 'waypoint') { const w = [...waypoints]; w[waypointIndex] = { address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' }; setWaypoints(w); }
         return;
     }
-    const newPointData = { address: empObj.address, lat: parseFloat(empObj.lat), lng: parseFloat(empObj.lon || empObj.lng), contact: empObj.assignedTo, passengerName: empObj.assignedTo };
+    const newPointData = {
+        address: empObj.address,
+        lat: parseFloat(empObj.lat),
+        lng: parseFloat(empObj.lon || empObj.lng),
+        contact: empObj.assignedTo,
+        passengerName: empObj.assignedTo,
+        phone: getClientUserPhone(selectedClientData, empObj.assignedTo, empObj.phone)
+    };
     if (pointType === 'start') setStartPoint(newPointData);
     else if (pointType === 'end') setEndPoint(newPointData);
     else if (pointType === 'waypoint') { const updatedWaypoints = [...waypoints]; updatedWaypoints[waypointIndex] = newPointData; setWaypoints(updatedWaypoints); }
@@ -354,7 +383,7 @@ export default function Planificacion() {
       } else { setCalculatedEtas([]); }
   }, [routeInfo, isProgramado, newRoute.scheduledTime]);
 
-  const addWaypoint = () => setWaypoints([...waypoints, { address: '', lat: null, lng: null, contact: '', passengerName: '' }]);
+  const addWaypoint = () => setWaypoints([...waypoints, { address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' }]);
   const removeWaypoint = (i) => setWaypoints(waypoints.filter((_, idx) => idx !== i));
   const updateWaypoint = (i, item) => { const w = [...waypoints]; w[i] = item; setWaypoints(w); };
 
@@ -367,11 +396,42 @@ export default function Planificacion() {
           driver: newRoute.driver, driverId: newRoute.driverId, 
           status: newRoute.driver ? 'Aceptada' : 'Pendiente', 
           start: startPoint.address, end: endPoint.address, 
-          startCoords: { lat: startPoint.lat, lng: startPoint.lng, contact: startPoint.contact || '', passengerName: startPoint.contact || '' }, 
-          endCoords: { lat: endPoint.lat, lng: endPoint.lng, contact: endPoint.contact || '', passengerName: endPoint.contact || '' }, 
-          waypointsData: waypoints.map(w => ({ address: w.address, lat: w.lat, lng: w.lng, contact: w.contact || '', passengerName: w.contact || '' })), 
+          tripSource: 'dispatcher',
+          createdBy: 'dispatcher',
+          pricingVisibility: 'hidden_during_trip',
+          showPricingDuringTrip: false,
+          pricingPolicy: 'dispatcher_hidden_during_trip',
+          chat: [],
+          startCoords: {
+              lat: startPoint.lat,
+              lng: startPoint.lng,
+              contact: startPoint.contact || '',
+              passengerName: startPoint.passengerName || startPoint.contact || '',
+              phone: normalizeContactPhone(startPoint.phone),
+              contactPhone: normalizeContactPhone(startPoint.phone)
+          }, 
+          endCoords: {
+              lat: endPoint.lat,
+              lng: endPoint.lng,
+              contact: endPoint.contact || '',
+              passengerName: endPoint.passengerName || endPoint.contact || '',
+              phone: normalizeContactPhone(endPoint.phone),
+              contactPhone: normalizeContactPhone(endPoint.phone)
+          }, 
+          waypointsData: waypoints.map(w => ({
+              address: w.address,
+              lat: w.lat,
+              lng: w.lng,
+              contact: w.contact || '',
+              passengerName: w.passengerName || w.contact || '',
+              phone: normalizeContactPhone(w.phone),
+              contactPhone: normalizeContactPhone(w.phone)
+          })), 
           waypoints: waypoints.map(w => w.address), 
-          technicalData: { ...routeInfo }, 
+          technicalData: {
+              ...routeInfo,
+              routingProvider: 'osrm-planning-only'
+          }, 
           finalDate: isProgramado ? newRoute.scheduledDate : today, 
           createdDate: new Date().toISOString() 
       };
@@ -379,7 +439,7 @@ export default function Planificacion() {
       try { 
           await addDoc(collection(db, "rutas"), rutaSave); 
           setShowModal(false); setNewRoute({ client: '', requestUser: '', driver: '', driverId: '', status: 'Pendiente', serviceType: 'Programado', scheduledDate: '', scheduledTime: '' });
-          setStartPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '' }); setEndPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '' }); setWaypoints([]); setRouteInfo({ totalDistance: 0, totalDuration: 0, segments: [], geometry: [] }); setSelectedClientData(null);
+          setStartPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' }); setEndPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' }); setWaypoints([]); setRouteInfo({ totalDistance: 0, totalDuration: 0, segments: [], geometry: [] }); setSelectedClientData(null);
       } catch (e) { alert(e.message); }
   };
 
@@ -417,7 +477,15 @@ export default function Planificacion() {
                   ...emp,
                   included: false,
                   entrada: uData.entrada || '08:00',
-                  salida: uData.salida || '17:00'
+                  salida: uData.salida || '17:00',
+                  phone: normalizeContactPhone(
+                      uData.phone,
+                      uData.telefono,
+                      uData.whatsapp,
+                      uData.mobile,
+                      uData.celular,
+                      emp.phone
+                  )
               }
           });
           setEmployeeRoster(initialRoster);
@@ -702,31 +770,31 @@ export default function Planificacion() {
               const isShared = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat && ['Ambos', globalCarpool.mode].includes(g.sharedMeetingPoint.type || 'Ambos');
               const allPassengersString = g.employees.map(e => e.assignedTo).join(', ');
 
-              let startAddress, startLat, startLng, startContact;
-              let endAddress, endLat, endLng, endContact;
+              let startAddress, startLat, startLng, startContact, startPhone = '';
+              let endAddress, endLat, endLng, endContact, endPhone = '';
               let waypointsData = [], waypoints = [];
 
               if (globalCarpool.mode === 'Ida') {
                   if (isShared) {
-                      startAddress = g.sharedMeetingPoint.address; startLat = parseFloat(g.sharedMeetingPoint.lat); startLng = parseFloat(g.sharedMeetingPoint.lng); startContact = allPassengersString; 
+                      startAddress = g.sharedMeetingPoint.address; startLat = parseFloat(g.sharedMeetingPoint.lat); startLng = parseFloat(g.sharedMeetingPoint.lng); startContact = allPassengersString; startPhone = ''; 
                   } else {
                       const inicio = g.employees[0]; const intermedias = g.employees.slice(1);
-                      startAddress = inicio.address; startLat = parseFloat(inicio.lat); startLng = parseFloat(inicio.lon || inicio.lng); startContact = inicio.assignedTo;
+                      startAddress = inicio.address; startLat = parseFloat(inicio.lat); startLng = parseFloat(inicio.lon || inicio.lng); startContact = inicio.assignedTo; startPhone = normalizeContactPhone(inicio.phone);
                       
                       // Aseguramos inyectar tanto contact como passengerName para la app del conductor
-                      waypointsData = intermedias.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo, passengerName: w.assignedTo }));
+                      waypointsData = intermedias.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo, passengerName: w.assignedTo, phone: normalizeContactPhone(w.phone), contactPhone: normalizeContactPhone(w.phone) }));
                       waypoints = intermedias.map(w => w.address);
                   }
-                  endAddress = oficina.address; endLat = parseFloat(oficina.lat); endLng = parseFloat(oficina.lon || oficina.lng); endContact = 'Oficina Central';
+                  endAddress = oficina.address; endLat = parseFloat(oficina.lat); endLng = parseFloat(oficina.lon || oficina.lng); endContact = 'Oficina Central'; endPhone = '';
               } else {
-                  startAddress = oficina.address; startLat = parseFloat(oficina.lat); startLng = parseFloat(oficina.lon || oficina.lng); startContact = 'Oficina Central';
+                  startAddress = oficina.address; startLat = parseFloat(oficina.lat); startLng = parseFloat(oficina.lon || oficina.lng); startContact = 'Oficina Central'; startPhone = '';
                   if (isShared) {
-                      endAddress = g.sharedMeetingPoint.address; endLat = parseFloat(g.sharedMeetingPoint.lat); endLng = parseFloat(g.sharedMeetingPoint.lng); endContact = allPassengersString;
+                      endAddress = g.sharedMeetingPoint.address; endLat = parseFloat(g.sharedMeetingPoint.lat); endLng = parseFloat(g.sharedMeetingPoint.lng); endContact = allPassengersString; endPhone = '';
                   } else {
                       const finRegreso = g.employees[g.employees.length - 1]; const intermediasRegreso = g.employees.slice(0, -1);
-                      endAddress = finRegreso.address; endLat = parseFloat(finRegreso.lat); endLng = parseFloat(finRegreso.lon || finRegreso.lng); endContact = finRegreso.assignedTo;
+                      endAddress = finRegreso.address; endLat = parseFloat(finRegreso.lat); endLng = parseFloat(finRegreso.lon || finRegreso.lng); endContact = finRegreso.assignedTo; endPhone = normalizeContactPhone(finRegreso.phone);
                       
-                      waypointsData = intermediasRegreso.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo, passengerName: w.assignedTo }));
+                      waypointsData = intermediasRegreso.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo, passengerName: w.assignedTo, phone: normalizeContactPhone(w.phone), contactPhone: normalizeContactPhone(w.phone) }));
                       waypoints = intermediasRegreso.map(w => w.address);
                   }
               }
@@ -745,6 +813,8 @@ export default function Planificacion() {
 
               const passengerSchedule = g.employees.map((emp, index) => ({
                   passengerName: emp.assignedTo,
+                  phone: normalizeContactPhone(emp.phone),
+                  contactPhone: normalizeContactPhone(emp.phone),
                   pickupTime: globalCarpool.mode === 'Ida'
                       ? (timePlan.pickupTimes[index] || timePlan.startTime)
                       : '',
@@ -767,7 +837,9 @@ export default function Planificacion() {
                   lat: startLat,
                   lng: startLng,
                   contact: startContact,
-                  passengerName: startContact
+                  passengerName: startContact,
+                  phone: normalizeContactPhone(startPhone),
+                  contactPhone: normalizeContactPhone(startPhone)
               };
 
               if (globalCarpool.mode === 'Ida') {
@@ -785,7 +857,9 @@ export default function Planificacion() {
                   lat: endLat,
                   lng: endLng,
                   contact: endContact,
-                  passengerName: endContact
+                  passengerName: endContact,
+                  phone: normalizeContactPhone(endPhone),
+                  contactPhone: normalizeContactPhone(endPhone)
               };
 
               if (globalCarpool.mode === 'Ida') {
@@ -794,12 +868,22 @@ export default function Planificacion() {
                   endCoordsSave.finalEarlyBufferMins = FINAL_DESTINATION_EARLY_MINS;
               }
 
+              if (globalCarpool.mode === 'Regreso' && isShared) {
+                  endCoordsSave.passengersSchedule = passengerSchedule;
+              }
+
               const newTrip = {
                   client: newRoute.client,
                   driver: g.driverName,
                   driverId: g.driverId,
                   status: 'Aceptada',
                   serviceType: 'Programado',
+                  tripSource: 'dispatcher',
+                  createdBy: 'dispatcher',
+                  pricingVisibility: 'hidden_during_trip',
+                  showPricingDuringTrip: false,
+                  pricingPolicy: 'dispatcher_hidden_during_trip',
+                  chat: [],
                   scheduledDate: newRoute.scheduledDate,
 
                   // Hora oficial del corporativo. Ejemplo: entrada 08:00.
@@ -829,6 +913,7 @@ export default function Planificacion() {
 
                   technicalData: {
                       geometry: g.routeGeometry || [],
+                      routingProvider: 'osrm-planning-only',
                       segments: g.routeSegments || [],
                       totalDistance: g.totalDistanceKm || null,
                       totalDuration: g.totalDurationMins || 0,

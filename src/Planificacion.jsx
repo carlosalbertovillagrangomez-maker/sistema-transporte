@@ -1167,6 +1167,14 @@ export default function Planificacion() {
                                           {carpoolGroups.map((grupo, idx) => {
                                               const isPreviewing = previewGroupId === grupo.id;
                                               const groupColor = PREVIEW_COLORS[idx % PREVIEW_COLORS.length];
+                                              const timePlan = buildCarpoolTimePlan({
+                                                  timeKey: grupo.timeKey,
+                                                  totalDurationMins: grupo.totalDurationMins,
+                                                  routeSegments: grupo.routeSegments || [],
+                                                  mode: globalCarpool.mode,
+                                                  passengerCount: grupo.employees.length,
+                                                  isShared: grupo.sharedMeetingPoint?.active && grupo.sharedMeetingPoint?.lat
+                                              });
                                               
                                               return (
                                               <div key={grupo.id} className={`bg-white rounded-2xl shadow-sm border overflow-hidden transition-all ${isPreviewing ? 'border-orange-500 ring-2 ring-orange-500/20' : 'border-slate-200'}`}>
@@ -1198,6 +1206,8 @@ export default function Planificacion() {
                                                       </div>
                                                       <div className="flex gap-2">
                                                           <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold">{grupo.employees.length}/4 pax</span>
+                                                          {grupo.totalDistanceKm != null && <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold">{grupo.totalDistanceKm} km</span>}
+                                                          {grupo.totalDurationMins != null && <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold">{grupo.totalDurationMins} min</span>}
                                                           <button onClick={() => setPreviewGroupId(grupo.id)} className={`text-[10px] font-black uppercase px-2 py-1 rounded transition ${isPreviewing ? 'bg-orange-500 text-white' : 'bg-slate-600 text-slate-300 hover:bg-slate-500'}`}>Ver Ruta</button>
                                                       </div>
                                                   </div>
@@ -1211,8 +1221,20 @@ export default function Planificacion() {
                                                           </select>
                                                       </div>
                                                       
+                                                                                                            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                                                          <p className="text-[10px] font-black text-slate-500 uppercase mb-2">Pasajeros seleccionados</p>
+                                                          <div className="flex flex-wrap gap-2">
+                                                              {grupo.employees.map((emp, empIdx) => (
+                                                                  <span key={`sel-${grupo.id}-${empIdx}`} className="text-[10px] font-bold px-2 py-1 rounded-full bg-white border border-slate-200 text-slate-700">
+                                                                      {globalCarpool.mode === 'Ida' ? String.fromCharCode(65 + empIdx) : String.fromCharCode(66 + empIdx)} · {emp.assignedTo}
+                                                                  </span>
+                                                              ))}
+                                                          </div>
+                                                      </div>
+
                                                       <div>
                                                           <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Orden de Recorrido (Drag & Drop)</label>
+
                                                           <div className="space-y-2 min-h-[50px]">
                                                               {grupo.employees.map((emp, eIdx) => (
                                                                   <div 
@@ -1229,7 +1251,12 @@ export default function Planificacion() {
                                                                              {globalCarpool.mode === 'Ida' ? String.fromCharCode(65+eIdx) : String.fromCharCode(66+eIdx)}
                                                                          </div>
                                                                       )}
-                                                                      <div className="flex-1 overflow-hidden"><p className="text-xs font-bold text-slate-700 truncate">{emp.assignedTo}</p></div>
+                                                                      <div className="flex-1 overflow-hidden">
+                                                                          <p className="text-xs font-bold text-slate-700 truncate">{emp.assignedTo}</p>
+                                                                          {timePlan.pickupTimes?.[eIdx] && (
+                                                                              <p className="text-[10px] text-emerald-600 font-bold mt-0.5">Paso estimado: {timePlan.pickupTimes[eIdx]}</p>
+                                                                          )}
+                                                                      </div>
                                                                       <button onClick={() => removeEmployeeFromGroup(grupo.id, eIdx)} className="text-slate-300 hover:text-red-500 p-1 bg-white rounded border border-slate-100 shadow-sm"><X className="w-3 h-3"/></button>
                                                                   </div>
                                                               ))}

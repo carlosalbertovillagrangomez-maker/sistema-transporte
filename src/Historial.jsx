@@ -251,12 +251,31 @@ export default function Historial() {
         
         const bitacoraTexto = fila.bitacora && fila.bitacora.length > 0 
             ? fila.bitacora.map(b => `[${b.time}] ${b.evento}: ${b.motivo}`).join(" | ")
-            : 'Sin desviaciones';
+             : 'Sin desviaciones';
 
-        const origin = encodeURIComponent(fila.start || ''); 
-        const destination = encodeURIComponent(fila.end || '');
-        let waypointsStr = fila.waypoints?.length > 0 ? '&waypoints=' + fila.waypoints.map(wp => encodeURIComponent(wp)).join('|') : '';
+        const buildWaypointValue = (wp) => {
+            if (!wp) return '';
+            if (typeof wp === 'string') return wp;
+            if (typeof wp === 'object') {
+                if (wp.address) return wp.address;
+                if (wp.lat != null && (wp.lng != null || wp.lon != null)) return `${wp.lat},${wp.lng ?? wp.lon}`;
+            }
+            return '';
+        };
+        const originValue = fila.start || (fila.startCoords?.lat != null && fila.startCoords?.lng != null ? `${fila.startCoords.lat},${fila.startCoords.lng}` : '');
+        const destinationValue = fila.end || (fila.endCoords?.lat != null && fila.endCoords?.lng != null ? `${fila.endCoords.lat},${fila.endCoords.lng}` : '');
+        const origin = encodeURIComponent(originValue);
+        const destination = encodeURIComponent(destinationValue);
+        const waypointValues = Array.isArray(fila.waypointsData)
+            ? fila.waypointsData.map(buildWaypointValue).filter(Boolean)
+            : Array.isArray(fila.waypoints)
+                ? fila.waypoints.map(buildWaypointValue).filter(Boolean)
+                : [];
+        const waypointsStr = waypointValues.length > 0
+            ? '&waypoints=' + waypointValues.map(wp => encodeURIComponent(wp)).join('|')
+            : '';
         const mapLink = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}${waypointsStr}&travelmode=driving`;
+
 
         const boardingEvents = getBoardingEvents(fila);
         const boardingSummary = boardingEvents

@@ -563,7 +563,7 @@ function App() {
                             onLoad={handleMapLoad} 
                             options={{ mapId: "73f56298887c80075f6fc648", streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy" }}
                         >
-                            {onlineDrivers.map(d => d.currentLocation && <Marker key={d.id} position={d.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: "#22c55e", fillOpacity: 0.8, strokeWeight: 2, strokeColor: "white" }} title={`Operador: ${d.name}`} />)}
+                            {onlineDrivers.map(d => d.currentLocation && <Marker key={d.id} position={d.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: "#22c55e", fillOpacity: 0.8, strokeWeight: 2, strokeColor: "white" }} title={`Operador: ${d.name}`} onClick={() => { const driverRoute = liveRoutes.find(r => !["Finalizado", "Completado", "Cancelado"].includes(r.status) && (r.driverId === d.id || r.driver === d.name)); if (driverRoute) setSelectedRoute(driverRoute); }} />)}
                             {selectedRoute && (
                                 <>
                                     {selectedRouteGeometry.length > 1 && (

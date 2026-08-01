@@ -132,6 +132,9 @@ const getRouteAuditSortMs = (route) => (
 );
 
 const getFirstBoardingTime = (route) => {
+    if (route?.firstBoardingTime) return String(route.firstBoardingTime);
+    if (route?.firstBoardingTimestamp) return formatMexicoTime(route.firstBoardingTimestamp);
+
     const evidences = Array.isArray(route?.evidenciasLlegada) ? route.evidenciasLlegada : [];
     if (!evidences.length) return '';
     const ordered = [...evidences].sort((a, b) => (getTimestampMs(a?.timestamp) || 0) - (getTimestampMs(b?.timestamp) || 0));
@@ -152,33 +155,58 @@ const getRouteCurrentStopLabel = (route) => {
 const buildLiveTimeline = (route) => {
     if (!route) return [];
     const events = [];
-    const push = (label, timestamp, detail = '', tone = 'slate') => {
+    const seen = new Set();
+    const push = (label, timestamp, detail = '', tone = 'slate', eventId = '') => {
         const ms = getTimestampMs(timestamp);
+        const key = eventId || `${label}|${ms || timestamp || ''}|${detail}`;
+        if (seen.has(key)) return;
+        seen.add(key);
         events.push({ label, timestamp, ms: ms || 0, time: ms ? formatMexicoDateTime(timestamp) : String(timestamp || ''), detail, tone });
     };
 
-    push('Viaje creado', route.createdDate, route.serviceType || '', 'slate');
-    if (route.assignmentRequestedAt) push('Oferta enviada al conductor', route.assignmentRequestedAt, route.ofertaParaNombre || route.driver || '', 'blue');
-    if (route.actualStartTimestamp || route.navigationStartedAt) push('Conductor inició el viaje', route.actualStartTimestamp || route.navigationStartedAt, `Inicio real: ${getActualStartTime(route) || 'registrado'}`, 'green');
+    push('Viaje creado', route.createdDate, route.serviceType || '', 'slate', `${route.id}-created`);
+    if (route.assignmentRequestedAt) push('Oferta enviada al conductor', route.assignmentRequestedAt, route.ofertaParaNombre || route.driver || '', 'blue', `${route.id}-assignment`);
+    if (route.actualStartTimestamp || route.navigationStartedAt) push('Conductor inició el viaje', route.actualStartTimestamp || route.navigationStartedAt, `Inicio real: ${getActualStartTime(route) || 'registrado'}`, 'green', `${route.id}-started`);
+
+    const stopEvents = Array.isArray(route.stopEvents) ? route.stopEvents : [];
+    stopEvents.forEach((item, index) => {
+        if (item?.type === 'boarding' || item?.type === 'destination_arrival') {
+            push(
+                item.type === 'destination_arrival' ? 'Llegada al destino final' : `Pasajero abordó en ${item.label || `punto ${Number(item.stopIndex) + 1 || index + 1}`}`,
+                item.timestamp || item.time,
+                item.passenger || item.response || '',
+                'green',
+                item.eventId
+            );
+        } else if (item?.type === 'absence') {
+            push(`Ausencia reportada en ${item.label || `punto ${Number(item.stopIndex) + 1 || index + 1}`}`, item.timestamp || item.time, item.passenger || '', 'red', item.eventId);
+        } else if (item?.type === 'client_arrival_acknowledgement') {
+            push(`Cliente confirmó el punto ${Number(item.stopIndex) + 1}`, item.timestamp || item.time, item.response || item.passenger || '', 'blue', item.eventId);
+        }
+    });
 
     (Array.isArray(route.evidenciasLlegada) ? route.evidenciasLlegada : []).forEach((item, index) => {
-        push(`Pasajero abordó en ${item.label || `punto ${index + 1}`}`, item.timestamp || item.time, item.passenger || '', 'green');
+        push(`Pasajero abordó en ${item.label || `punto ${Number(item.stopIndex) + 1 || index + 1}`}`, item.timestamp || item.time, item.passenger || '', 'green', item.eventId);
     });
 
     (Array.isArray(route.evidencias) ? route.evidencias : []).forEach((item, index) => {
-        push(`Ausencia reportada en punto ${index + 1}`, item.timestamp || item.time, item.passenger || '', 'red');
+        push(`Ausencia reportada en ${item.label || `punto ${Number(item.stopIndex) + 1 || index + 1}`}`, item.timestamp || item.time, item.passenger || '', 'red', item.eventId);
     });
 
-    (Array.isArray(route.bitacora) ? route.bitacora : []).forEach((item) => {
-        push(item.evento || 'Evento de bitácora', item.timestamp || item.time, item.motivo || '', 'orange');
+    (Array.isArray(route.arrivalAcknowledgements) ? route.arrivalAcknowledgements : []).forEach((item, index) => {
+        push(`Cliente confirmó el punto ${Number(item.stopIndex) + 1}`, item.timestamp || item.time, item.response || item.passenger || '', 'blue', item.eventId || `${route.id}-ack-${index}`);
+    });
+
+    (Array.isArray(route.bitacora) ? route.bitacora : []).forEach((item, index) => {
+        push(item.evento || 'Evento de bitácora', item.timestamp || item.time, item.motivo || item.punto || '', 'orange', item.eventId || `${route.id}-log-${index}-${item.timestamp || item.time || ''}`);
     });
 
     if (route.proximityAlert?.timestamp) {
-        push('Conductor próximo al punto', route.proximityAlert.timestamp, `${route.proximityAlert.passenger || getRouteCurrentStopLabel(route)} · ${route.proximityAlert.etaMins ?? '--'} min`, 'orange');
+        push('Conductor próximo al punto', route.proximityAlert.timestamp, `${route.proximityAlert.passenger || getRouteCurrentStopLabel(route)} · ${route.proximityAlert.etaMins ?? '--'} min`, 'orange', `${route.id}-proximity-${route.proximityAlert.stopIndex}-${route.proximityAlert.timestamp}`);
     }
 
     if (route.actualEndTimestamp || route.finishedAt || route.endTime) {
-        push('Viaje finalizado', route.actualEndTimestamp || route.finishedAt || route.endTime, `Fin real: ${getActualEndTime(route) || 'registrado'}`, 'green');
+        push('Viaje finalizado', route.actualEndTimestamp || route.finishedAt || route.endTime, `Fin real: ${getActualEndTime(route) || 'registrado'}`, 'green', `${route.id}-finished`);
     }
 
     return events.sort((a, b) => a.ms - b.ms);
@@ -652,7 +680,7 @@ function App() {
                         {rutasVisibles.length === 0 && <div className="text-center py-10 text-slate-400 text-sm font-medium"><p>{viewHistory ? 'No hay historial reciente.' : 'No hay rutas pendientes hoy.'}</p></div>}
 
                         {rutasVisibles.map((ruta) => {
-                            const hasChatOrEvidence = (ruta.chat && ruta.chat.length > 0) || (ruta.evidencias && ruta.evidencias.length > 0);
+                            const hasChatOrEvidence = (ruta.chat && ruta.chat.length > 0) || (ruta.evidencias && ruta.evidencias.length > 0) || (ruta.evidenciasLlegada && ruta.evidenciasLlegada.length > 0) || (ruta.stopEvents && ruta.stopEvents.length > 0);
                             const routeUpdateMs = getLastRouteUpdateMs(ruta);
                             const routeUpdateAge = routeUpdateMs ? Math.max(0, Math.floor((clockTick - routeUpdateMs) / 1000)) : null;
                             const liveDistance = Number(ruta.liveNavigation?.distanceKm);
@@ -832,6 +860,25 @@ function App() {
                                   ))}
                                   {buildLiveTimeline(chatModalRoute).length === 0 && <p className="text-xs text-slate-400 text-center py-5">Todavía no hay eventos registrados.</p>}
                               </div>
+                          </div>
+
+                          <div>
+                              <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-3 flex items-center gap-2"><Camera className="w-4 h-4 text-green-600"/> Evidencias de abordaje</h4>
+                              {(!chatModalRoute.evidenciasLlegada || chatModalRoute.evidenciasLlegada.length === 0) ? (
+                                  <div className="text-center py-8 text-slate-400 bg-white rounded-2xl border border-slate-200"><p className="text-xs font-black uppercase tracking-widest">Sin abordajes registrados</p></div>
+                              ) : (
+                                  <div className="space-y-3">
+                                      {chatModalRoute.evidenciasLlegada
+                                          .slice()
+                                          .sort((a, b) => (Number(a.stopIndex) || 0) - (Number(b.stopIndex) || 0))
+                                          .map((ev, idx) => (
+                                          <div key={ev.eventId || `${ev.stopIndex}-${ev.timestamp}-${idx}`} className="bg-white rounded-2xl shadow-sm border border-green-200 overflow-hidden">
+                                              <div className="bg-green-50 p-4 border-b border-green-100 flex justify-between items-center"><div><p className="text-[10px] font-black text-green-600 uppercase tracking-widest mb-0.5">{ev.label || `Punto ${Number(ev.stopIndex) + 1}`}</p><p className="text-sm font-black text-slate-800">{ev.passenger || 'Pasajero'}</p></div><div className="text-right"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Hora</p><p className="text-sm font-mono font-black text-slate-700">{ev.time || formatMexicoTime(ev.timestamp) || '--:--'}</p></div></div>
+                                              <div className="p-4"><p className="text-xs text-slate-600 font-medium mb-4 flex items-start gap-2"><MapPin className="w-4 h-4 mt-0.5 shrink-0 text-green-500"/> {ev.address || 'Sin dirección registrada'}</p>{ev.photo ? (<div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-100 relative group cursor-pointer" onClick={() => window.open(ev.photo, '_blank')}><img src={ev.photo} alt="Evidencia de abordaje" className="w-full h-48 object-cover" /><div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><p className="text-white text-xs font-black uppercase tracking-widest border-2 border-white px-4 py-2 rounded-lg">Ver completa</p></div></div>) : (<div className="w-full h-20 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 text-[10px] font-black uppercase tracking-widest border border-slate-200">ABORDAJE SIN FOTO</div>)}</div>
+                                          </div>
+                                      ))}
+                                  </div>
+                              )}
                           </div>
 
                           <div>

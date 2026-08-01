@@ -117,7 +117,16 @@ const getActualEndTime = (route) => String(
 
 const getBoardingEvents = (route) => {
     const evidences = Array.isArray(route?.evidenciasLlegada) ? route.evidenciasLlegada : [];
-    return [...evidences].sort((a, b) => (getTimestampMs(a?.timestamp) || 0) - (getTimestampMs(b?.timestamp) || 0));
+    const stopBoardings = (Array.isArray(route?.stopEvents) ? route.stopEvents : [])
+        .filter(item => item?.type === 'boarding' || item?.type === 'destination_arrival');
+
+    const unique = new Map();
+    [...evidences, ...stopBoardings].forEach((item, index) => {
+        const key = item?.eventId || `${item?.stopIndex ?? index}|${item?.timestamp || item?.time || ''}|${item?.passenger || ''}`;
+        if (!unique.has(key)) unique.set(key, item);
+    });
+
+    return [...unique.values()].sort((a, b) => (getTimestampMs(a?.timestamp) || 0) - (getTimestampMs(b?.timestamp) || 0));
 };
 
 const getActualDistanceKm = (route) => {
@@ -145,6 +154,37 @@ const normalizePoint = (point) => {
 
 const normalizePath = (path) => Array.isArray(path) ? path.map(normalizePoint).filter(Boolean) : [];
 
+const getRoutePointValue = (point, fallback = '') => {
+    const normalized = normalizePoint(point);
+    if (normalized) return `${normalized.lat},${normalized.lng}`;
+    if (typeof fallback === 'string' && fallback.trim()) return fallback.trim();
+    if (typeof point === 'string' && point.trim()) return point.trim();
+    return '';
+};
+
+const buildGoogleMapsRouteLink = (route) => {
+    const originValue = getRoutePointValue(route?.startCoords, route?.start);
+    const destinationValue = getRoutePointValue(route?.endCoords, route?.end);
+    if (!originValue || !destinationValue) return '';
+
+    const waypointValues = Array.isArray(route?.waypointsData)
+        ? route.waypointsData.map((point, index) => getRoutePointValue(point, route?.waypoints?.[index])).filter(Boolean)
+        : Array.isArray(route?.waypoints)
+            ? route.waypoints.map(point => getRoutePointValue(point, point)).filter(Boolean)
+            : [];
+
+    const params = new URLSearchParams({
+        api: '1',
+        origin: originValue,
+        destination: destinationValue,
+        travelmode: 'driving'
+    });
+
+    if (waypointValues.length) params.set('waypoints', waypointValues.join('|'));
+    return `https://www.google.com/maps/dir/?${params.toString()}`;
+};
+
+
 export default function Historial() {
   const [showModal, setShowModal] = useState(false);
   const [selectedRoute, setSelectedRoute] = useState(null);
@@ -164,7 +204,9 @@ export default function Historial() {
   const { isLoaded } = useJsApiLoader({ 
       id: 'google-map-script', 
       googleMapsApiKey: GOOGLE_MAPS_API_KEY,
-      libraries: libraries 
+      libraries,
+      language: 'es',
+      region: 'MX' 
   });
   const mapRef = useRef(null);
 
@@ -253,28 +295,7 @@ export default function Historial() {
             ? fila.bitacora.map(b => `[${b.time}] ${b.evento}: ${b.motivo}`).join(" | ")
              : 'Sin desviaciones';
 
-        const buildWaypointValue = (wp) => {
-            if (!wp) return '';
-            if (typeof wp === 'string') return wp;
-            if (typeof wp === 'object') {
-                if (wp.address) return wp.address;
-                if (wp.lat != null && (wp.lng != null || wp.lon != null)) return `${wp.lat},${wp.lng ?? wp.lon}`;
-            }
-            return '';
-        };
-        const originValue = fila.start || (fila.startCoords?.lat != null && fila.startCoords?.lng != null ? `${fila.startCoords.lat},${fila.startCoords.lng}` : '');
-        const destinationValue = fila.end || (fila.endCoords?.lat != null && fila.endCoords?.lng != null ? `${fila.endCoords.lat},${fila.endCoords.lng}` : '');
-        const origin = encodeURIComponent(originValue);
-        const destination = encodeURIComponent(destinationValue);
-        const waypointValues = Array.isArray(fila.waypointsData)
-            ? fila.waypointsData.map(buildWaypointValue).filter(Boolean)
-            : Array.isArray(fila.waypoints)
-                ? fila.waypoints.map(buildWaypointValue).filter(Boolean)
-                : [];
-        const waypointsStr = waypointValues.length > 0
-            ? '&waypoints=' + waypointValues.map(wp => encodeURIComponent(wp)).join('|')
-            : '';
-        const mapLink = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}${waypointsStr}&travelmode=driving`;
+        const mapLink = buildGoogleMapsRouteLink(fila);
 
 
         const boardingEvents = getBoardingEvents(fila);
@@ -313,6 +334,20 @@ export default function Historial() {
 
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(datosParaExcel);
+
+    const linkHeader = 'LINK GOOGLE MAPS';
+    const linkColumnIndex = Object.keys(datosParaExcel[0] || {}).indexOf(linkHeader);
+    if (linkColumnIndex >= 0) {
+        datosParaExcel.forEach((row, rowIndex) => {
+            const url = row[linkHeader];
+            if (!url) return;
+            const cellRef = XLSX.utils.encode_cell({ r: rowIndex + 1, c: linkColumnIndex });
+            if (!ws[cellRef]) ws[cellRef] = { t: 's', v: 'Abrir ruta en Google Maps' };
+            ws[cellRef].v = 'Abrir ruta en Google Maps';
+            ws[cellRef].l = { Target: url, Tooltip: 'Abrir recorrido en Google Maps' };
+        });
+    }
+
     
     const wscols = [
         {wch: 12}, {wch: 16}, {wch: 16}, {wch: 16}, {wch: 48}, {wch: 16},
@@ -441,7 +476,19 @@ export default function Historial() {
                         <h3 className="text-xl font-black text-slate-800">Reporte de Auditoría de Servicio</h3>
                         <p className="text-xs font-bold text-slate-400 uppercase tracking-widest">Ruta ID: {selectedRoute.id}</p>
                     </div>
-                    <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-red-500 bg-white p-2 rounded-full shadow-sm"><X className="w-5 h-5" /></button>
+                    <div className="flex items-center gap-2">
+                        {buildGoogleMapsRouteLink(selectedRoute) && (
+                            <a
+                                href={buildGoogleMapsRouteLink(selectedRoute)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="hidden sm:flex items-center gap-2 px-3 py-2 rounded-xl bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest shadow-sm hover:bg-blue-700 transition"
+                            >
+                                <Navigation className="w-4 h-4" /> Abrir en Google Maps
+                            </a>
+                        )}
+                        <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-red-500 bg-white p-2 rounded-full shadow-sm"><X className="w-5 h-5" /></button>
+                    </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto flex flex-col xl:flex-row">

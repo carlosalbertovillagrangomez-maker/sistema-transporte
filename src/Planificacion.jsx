@@ -769,6 +769,7 @@ export default function Planificacion() {
           for (let g of validGroups) {
               const isShared = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat && ['Ambos', globalCarpool.mode].includes(g.sharedMeetingPoint.type || 'Ambos');
               const allPassengersString = g.employees.map(e => e.assignedTo).join(', ');
+              const resolveEmployeePhone = (employee) => getClientUserPhone(selectedClientData, employee?.assignedTo, employee?.phone);
 
               let startAddress, startLat, startLng, startContact, startPhone = '';
               let endAddress, endLat, endLng, endContact, endPhone = '';
@@ -779,10 +780,10 @@ export default function Planificacion() {
                       startAddress = g.sharedMeetingPoint.address; startLat = parseFloat(g.sharedMeetingPoint.lat); startLng = parseFloat(g.sharedMeetingPoint.lng); startContact = allPassengersString; startPhone = ''; 
                   } else {
                       const inicio = g.employees[0]; const intermedias = g.employees.slice(1);
-                      startAddress = inicio.address; startLat = parseFloat(inicio.lat); startLng = parseFloat(inicio.lon || inicio.lng); startContact = inicio.assignedTo; startPhone = normalizeContactPhone(inicio.phone);
+                      startAddress = inicio.address; startLat = parseFloat(inicio.lat); startLng = parseFloat(inicio.lon || inicio.lng); startContact = inicio.assignedTo; startPhone = resolveEmployeePhone(inicio);
                       
                       // Aseguramos inyectar tanto contact como passengerName para la app del conductor
-                      waypointsData = intermedias.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo, passengerName: w.assignedTo, phone: normalizeContactPhone(w.phone), contactPhone: normalizeContactPhone(w.phone) }));
+                      waypointsData = intermedias.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo, passengerName: w.assignedTo, phone: resolveEmployeePhone(w), contactPhone: resolveEmployeePhone(w) }));
                       waypoints = intermedias.map(w => w.address);
                   }
                   endAddress = oficina.address; endLat = parseFloat(oficina.lat); endLng = parseFloat(oficina.lon || oficina.lng); endContact = 'Oficina Central'; endPhone = '';
@@ -792,9 +793,9 @@ export default function Planificacion() {
                       endAddress = g.sharedMeetingPoint.address; endLat = parseFloat(g.sharedMeetingPoint.lat); endLng = parseFloat(g.sharedMeetingPoint.lng); endContact = allPassengersString; endPhone = '';
                   } else {
                       const finRegreso = g.employees[g.employees.length - 1]; const intermediasRegreso = g.employees.slice(0, -1);
-                      endAddress = finRegreso.address; endLat = parseFloat(finRegreso.lat); endLng = parseFloat(finRegreso.lon || finRegreso.lng); endContact = finRegreso.assignedTo; endPhone = normalizeContactPhone(finRegreso.phone);
+                      endAddress = finRegreso.address; endLat = parseFloat(finRegreso.lat); endLng = parseFloat(finRegreso.lon || finRegreso.lng); endContact = finRegreso.assignedTo; endPhone = resolveEmployeePhone(finRegreso);
                       
-                      waypointsData = intermediasRegreso.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo, passengerName: w.assignedTo, phone: normalizeContactPhone(w.phone), contactPhone: normalizeContactPhone(w.phone) }));
+                      waypointsData = intermediasRegreso.map(w => ({ address: w.address, lat: parseFloat(w.lat), lng: parseFloat(w.lon || w.lng), contact: w.assignedTo, passengerName: w.assignedTo, phone: resolveEmployeePhone(w), contactPhone: resolveEmployeePhone(w) }));
                       waypoints = intermediasRegreso.map(w => w.address);
                   }
               }
@@ -811,15 +812,24 @@ export default function Planificacion() {
                   isShared
               });
 
-              const passengerSchedule = g.employees.map((emp, index) => ({
-                  passengerName: emp.assignedTo,
-                  phone: normalizeContactPhone(emp.phone),
-                  contactPhone: normalizeContactPhone(emp.phone),
-                  pickupTime: globalCarpool.mode === 'Ida'
-                      ? (timePlan.pickupTimes[index] || timePlan.startTime)
-                      : '',
-                  bufferMins: globalCarpool.mode === 'Ida' ? PASSENGER_PICKUP_BUFFER_MINS : 0
-              }));
+              const finalStopIndex = waypointsData.length + 1;
+              const passengerSchedule = g.employees.map((emp, index) => {
+                  const exactPhone = resolveEmployeePhone(emp);
+                  const stopIndex = globalCarpool.mode === 'Ida'
+                      ? (isShared ? 0 : index)
+                      : (isShared ? finalStopIndex : index + 1);
+
+                  return {
+                      stopIndex,
+                      passengerName: emp.assignedTo,
+                      phone: exactPhone,
+                      contactPhone: exactPhone,
+                      pickupTime: globalCarpool.mode === 'Ida'
+                          ? (timePlan.pickupTimes[index] || timePlan.startTime)
+                          : '',
+                      bufferMins: globalCarpool.mode === 'Ida' ? PASSENGER_PICKUP_BUFFER_MINS : 0
+                  };
+              });
 
               const getPassengerPickupTime = (name) => {
                   return passengerSchedule.find(p => p.passengerName === name)?.pickupTime || '';

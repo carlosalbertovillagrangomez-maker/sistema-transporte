@@ -115,6 +115,12 @@ const getActualEndTime = (route) => String(
     ''
 );
 
+const getFirstStopAttendedTime = (route) => String(
+    route?.firstStopAttendedTime ||
+    formatMexicoTime(route?.firstStopAttendedTimestamp) ||
+    ''
+);
+
 const getBoardingEvents = (route) => {
     const evidences = Array.isArray(route?.evidenciasLlegada) ? route.evidenciasLlegada : [];
     const stopBoardings = (Array.isArray(route?.stopEvents) ? route.stopEvents : [])
@@ -130,13 +136,40 @@ const getBoardingEvents = (route) => {
 };
 
 const getActualDistanceKm = (route) => {
-    const value = Number(
-        route?.finalDistanceKm ??
-        route?.realDistanceDriven ??
-        route?.actualDistanceKm ??
-        0
-    );
-    return Number.isFinite(value) ? value : 0;
+    const candidates = [
+        route?.finalDistanceKm,
+        route?.realDistanceDriven,
+        route?.receipt?.distanceKm,
+        route?.actualDistanceKm
+    ];
+
+    for (const candidate of candidates) {
+        const value = Number(candidate);
+        if (Number.isFinite(value) && value > 0) return value;
+    }
+
+    const points = normalizePath(route?.rutaReal);
+    if (points.length < 2) return 0;
+
+    const toRadians = (value) => value * Math.PI / 180;
+    let totalKm = 0;
+    for (let index = 1; index < points.length; index += 1) {
+        const previous = points[index - 1];
+        const current = points[index];
+        const dLat = toRadians(current.lat - previous.lat);
+        const dLng = toRadians(current.lng - previous.lng);
+        const a =
+            Math.sin(dLat / 2) ** 2 +
+            Math.cos(toRadians(previous.lat)) *
+            Math.cos(toRadians(current.lat)) *
+            Math.sin(dLng / 2) ** 2;
+        const segmentKm = 6371 * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+        if (Number.isFinite(segmentKm) && segmentKm >= 0.001 && segmentKm <= 1) {
+            totalKm += segmentKm;
+        }
+    }
+
+    return totalKm;
 };
 
 const getPlannedDistanceKm = (route) => {
@@ -312,6 +345,8 @@ export default function Historial() {
             "FECHA DE CIERRE": fechaSegura,
             "HORA PROGRAMADA": getPlannedStartTime(fila) || '-',
             "HORA INICIO REAL": getActualStartTime(fila) || '-',
+            "PRIMER PUNTO ATENDIDO": getFirstStopAttendedTime(fila) || '-',
+            "RESULTADO PRIMER PUNTO": fila.firstStopAttendedStatus || '-',
             "HORAS DE ABORDAJE": boardingSummary,
             "HORA FINAL REAL": getActualEndTime(fila) || '-',
             "NOMBRE COMPLETO": fila.driver || 'Sin asignar',
@@ -515,6 +550,8 @@ export default function Historial() {
                                         <p className="text-[10px] text-green-700 uppercase font-black tracking-widest">Resultado real del recorrido</p>
                                         <div className="mt-3 space-y-2">
                                             <div className="flex justify-between text-xs"><span className="font-bold text-slate-500">Inicio real</span><span className="font-black text-slate-800">{getActualStartTime(selectedRoute) || '--:--'}</span></div>
+                                            <div className="flex justify-between text-xs"><span className="font-bold text-slate-500">Primer punto atendido</span><span className="font-black text-orange-700">{getFirstStopAttendedTime(selectedRoute) || '--:--'}</span></div>
+                                            <div className="flex justify-between text-xs"><span className="font-bold text-slate-500">Resultado inicial</span><span className="font-black text-orange-700">{selectedRoute.firstStopAttendedStatus || '--'}</span></div>
                                             <div className="flex justify-between text-xs"><span className="font-bold text-slate-500">Fin real</span><span className="font-black text-slate-800">{getActualEndTime(selectedRoute) || '--:--'}</span></div>
                                             <div className="flex justify-between text-xs"><span className="font-bold text-slate-500">Kilómetros GPS</span><span className="font-black text-green-700">{getActualDistanceKm(selectedRoute).toFixed(1)} km</span></div>
                                             <div className="flex justify-between text-xs"><span className="font-bold text-slate-500">Diferencia</span><span className="font-black text-orange-600">{(getActualDistanceKm(selectedRoute) - getPlannedDistanceKm(selectedRoute)).toFixed(1)} km</span></div>

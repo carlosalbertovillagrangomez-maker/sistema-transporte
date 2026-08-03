@@ -141,6 +141,42 @@ const getFirstBoardingTime = (route) => {
     return ordered[0]?.time || formatMexicoTime(ordered[0]?.timestamp) || '';
 };
 
+const getFirstStopAttendedTime = (route) => String(
+    route?.firstStopAttendedTime ||
+    formatMexicoTime(route?.firstStopAttendedTimestamp) ||
+    ''
+);
+
+const calculatePathDistanceKm = (path = []) => {
+    const points = normalizePath(path);
+    if (points.length < 2) return 0;
+
+    let totalKm = 0;
+    for (let index = 1; index < points.length; index += 1) {
+        const segmentKm = getDistance(points[index - 1], points[index]);
+        if (Number.isFinite(segmentKm) && segmentKm >= 0.001 && segmentKm <= 1) {
+            totalKm += segmentKm;
+        }
+    }
+    return totalKm;
+};
+
+const getActualDistanceKm = (route) => {
+    const candidates = [
+        route?.finalDistanceKm,
+        route?.realDistanceDriven,
+        route?.receipt?.distanceKm,
+        route?.actualDistanceKm
+    ];
+
+    for (const candidate of candidates) {
+        const value = Number(candidate);
+        if (Number.isFinite(value) && value > 0) return value;
+    }
+
+    return calculatePathDistanceKm(route?.rutaReal);
+};
+
 const getRouteCurrentStopLabel = (route) => {
     const stopIndex = Number(route?.currentStopIndex ?? route?.nextStopIdx ?? route?.liveNavigation?.stopIndex ?? 0);
     const waypoints = Array.isArray(route?.waypointsData) ? route.waypointsData : [];
@@ -167,6 +203,15 @@ const buildLiveTimeline = (route) => {
     push('Viaje creado', route.createdDate, route.serviceType || '', 'slate', `${route.id}-created`);
     if (route.assignmentRequestedAt) push('Oferta enviada al conductor', route.assignmentRequestedAt, route.ofertaParaNombre || route.driver || '', 'blue', `${route.id}-assignment`);
     if (route.actualStartTimestamp || route.navigationStartedAt) push('Conductor inició el viaje', route.actualStartTimestamp || route.navigationStartedAt, `Inicio real: ${getActualStartTime(route) || 'registrado'}`, 'green', `${route.id}-started`);
+    if (route.firstStopAttendedTimestamp || route.firstStopAttendedTime) {
+        push(
+            'Primer punto atendido',
+            route.firstStopAttendedTimestamp || route.firstStopAttendedTime,
+            `${route.firstStopAttendedPassenger || 'Pasajero'} · ${route.firstStopAttendedStatus || 'Atendido'}`,
+            route.firstStopAttendedStatus === 'Pasajero a bordo' ? 'green' : 'orange',
+            `${route.id}-first-stop-attended`
+        );
+    }
 
     const stopEvents = Array.isArray(route.stopEvents) ? route.stopEvents : [];
     stopEvents.forEach((item, index) => {
@@ -721,6 +766,7 @@ function App() {
                                         <div className="flex-1 bg-slate-50 rounded-xl border border-slate-100 p-3 space-y-1.5">
                                             <div className="flex justify-between text-[10px] gap-3"><span className="text-slate-400 uppercase font-black tracking-widest">Programado:</span><span className="font-mono font-bold text-slate-700">{getPlannedStartTime(ruta) || '--:--'}</span></div>
                                             <div className="flex justify-between text-[10px] gap-3"><span className="text-slate-400 uppercase font-black tracking-widest">Inicio real:</span><span className="font-mono font-bold text-green-700">{getActualStartTime(ruta) || '--:--'}</span></div>
+                                            <div className="flex justify-between text-[10px] gap-3"><span className="text-slate-400 uppercase font-black tracking-widest">Primer punto atendido:</span><span className="font-mono font-bold text-orange-700">{getFirstStopAttendedTime(ruta) || '--:--'}</span></div>
                                             <div className="flex justify-between text-[10px] gap-3"><span className="text-slate-400 uppercase font-black tracking-widest">Primer abordaje:</span><span className="font-mono font-bold text-blue-700">{getFirstBoardingTime(ruta) || '--:--'}</span></div>
                                             <div className="flex justify-between text-[10px] gap-3"><span className="text-slate-400 uppercase font-black tracking-widest">Fin real:</span><span className="font-mono font-bold text-slate-800">{getActualEndTime(ruta) || '--:--'}</span></div>
                                         </div>
@@ -829,9 +875,11 @@ function App() {
                               <div className="bg-white border border-green-100 rounded-2xl p-4 shadow-sm">
                                   <p className="text-[9px] font-black uppercase tracking-widest text-green-600">Ejecución real</p>
                                   <p className="text-xs font-bold text-slate-500 mt-2">Inicio real: <span className="text-slate-800">{getActualStartTime(chatModalRoute) || '--:--'}</span></p>
+                                  <p className="text-xs font-bold text-slate-500 mt-1">Primer punto atendido: <span className="text-slate-800">{getFirstStopAttendedTime(chatModalRoute) || '--:--'}</span></p>
+                                  <p className="text-xs font-bold text-slate-500 mt-1">Resultado inicial: <span className="text-slate-800">{chatModalRoute.firstStopAttendedStatus || '--'}</span></p>
                                   <p className="text-xs font-bold text-slate-500 mt-1">Primer abordaje: <span className="text-slate-800">{getFirstBoardingTime(chatModalRoute) || '--:--'}</span></p>
                                   <p className="text-xs font-bold text-slate-500 mt-1">Fin real: <span className="text-slate-800">{getActualEndTime(chatModalRoute) || '--:--'}</span></p>
-                                  <p className="text-xs font-bold text-slate-500 mt-1">Distancia GPS: <span className="text-slate-800">{Number(chatModalRoute.realDistanceDriven || 0).toFixed(1)} km</span></p>
+                                  <p className="text-xs font-bold text-slate-500 mt-1">Distancia GPS: <span className="text-slate-800">{getActualDistanceKm(chatModalRoute).toFixed(1)} km</span></p>
                               </div>
                           </div>
 

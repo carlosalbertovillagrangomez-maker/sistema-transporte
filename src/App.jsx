@@ -17,7 +17,7 @@ import { collection, onSnapshot, query, orderBy, updateDoc, doc, arrayUnion } fr
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
 const containerStyle = { width: '100%', height: '100%' };
-const centerMX = { lat: 19.4326, lng: -99.1332 }; 
+const DEFAULT_MAP_CENTER = { lat: 19.4326, lng: -99.1332 }; 
 
 // Agregamos 'geometry' para calcular la rotación del coche en vivo
 const libraries = ['places', 'geometry']; 
@@ -74,7 +74,6 @@ const formatMexicoTime = (value) => {
     const milliseconds = getTimestampMs(value);
     if (!milliseconds) return '';
     return new Date(milliseconds).toLocaleTimeString('es-MX', {
-        timeZone: 'America/Mexico_City',
         hour: '2-digit',
         minute: '2-digit'
     });
@@ -84,7 +83,6 @@ const formatMexicoDateTime = (value) => {
     const milliseconds = getTimestampMs(value);
     if (!milliseconds) return 'Sin registro';
     return new Date(milliseconds).toLocaleString('es-MX', {
-        timeZone: 'America/Mexico_City',
         dateStyle: 'short',
         timeStyle: 'short'
     });
@@ -269,13 +267,77 @@ const getDistance = (p1, p2) => {
     return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 };
 
+
+const playControlRoomAlert = (message = 'Nuevo mensaje recibido') => {
+    try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextClass) {
+            const context = new AudioContextClass();
+            const oscillator = context.createOscillator();
+            const gain = context.createGain();
+            oscillator.type = 'sine';
+            oscillator.frequency.setValueAtTime(880, context.currentTime);
+            gain.gain.setValueAtTime(0.0001, context.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.32);
+            oscillator.connect(gain);
+            gain.connect(context.destination);
+            oscillator.start();
+            oscillator.stop(context.currentTime + 0.34);
+            oscillator.addEventListener('ended', () => context.close().catch(() => {}), { once: true });
+        }
+        if ('speechSynthesis' in window && document.visibilityState === 'visible') {
+            window.speechSynthesis.cancel();
+            const utterance = new SpeechSynthesisUtterance(message);
+            utterance.lang = 'es-419';
+            utterance.rate = 1;
+            utterance.volume = 0.9;
+            window.speechSynthesis.speak(utterance);
+        }
+    } catch (error) {
+        console.warn('No se pudo reproducir el aviso del monitor:', error);
+    }
+};
+
+class SectionErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, message: '' };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, message: error?.message || 'Error inesperado' };
+  }
+
+  componentDidCatch(error, info) {
+    console.error('Error en módulo del despachador:', error, info);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex-1 m-6 p-8 rounded-2xl border border-red-200 bg-red-50 text-red-700">
+          <h2 className="font-black text-lg">No fue posible abrir este módulo</h2>
+          <p className="text-sm mt-2">{this.state.message}</p>
+          <button type="button" onClick={() => this.setState({ hasError: false, message: '' })} className="mt-4 px-4 py-2 rounded-lg bg-red-600 text-white font-bold">Reintentar</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 function App() {
   const [currentUser, setCurrentUser] = useState(null); 
   const [activeTab, setActiveTab] = useState('monitoreo');
   
-  const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries });
+  const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries, language: 'es' });
   const mapRef = useRef(null);
   const selectedRouteListenerRef = useRef(null);
+  const programmaticCameraRef = useRef(true);
+  const previousIncomingChatRef = useRef(new Map());
+  const [localMapCenter, setLocalMapCenter] = useState(DEFAULT_MAP_CENTER);
+  const [manualMapInteraction, setManualMapInteraction] = useState(false);
 
   const [liveRoutes, setLiveRoutes] = useState([]);
   const [onlineDrivers, setOnlineDrivers] = useState([]); 
@@ -298,11 +360,34 @@ function App() {
   const prevLocRef = useRef(null);
   const [carHeading, setCarHeading] = useState(0);
 
+  useEffect(() => {
+      if (!('geolocation' in navigator)) return undefined;
+      navigator.geolocation.getCurrentPosition(
+          position => {
+              const point = normalizePoint({ lat: position.coords.latitude, lng: position.coords.longitude });
+              if (point) setLocalMapCenter(point);
+          },
+          () => {},
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 12000 }
+      );
+      return undefined;
+  }, []);
+
   // 1. CARGAR RUTAS Y CONDUCTORES
   useEffect(() => {
     const qRoutes = query(collection(db, "rutas"), orderBy("createdDate", "desc"));
     const unsubRoutes = onSnapshot(qRoutes, (snapshot) => {
         const routesArr = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+        routesArr.forEach(route => {
+            const chat = Array.isArray(route.chat) ? route.chat : [];
+            const lastMessage = chat[chat.length - 1];
+            const lastKey = lastMessage ? `${lastMessage.timestamp || lastMessage.time || ''}|${lastMessage.sender || ''}|${lastMessage.text || ''}` : '';
+            const previousKey = previousIncomingChatRef.current.get(route.id);
+            if (previousKey && lastKey && previousKey !== lastKey && !['Despacho', 'Sistema'].includes(lastMessage?.sender)) {
+                playControlRoomAlert(`Nuevo mensaje de ${lastMessage?.sender === 'Conductor' ? 'conductor' : 'cliente'}`);
+            }
+            previousIncomingChatRef.current.set(route.id, lastKey);
+        });
         setLiveRoutes(routesArr);
         setActiveAlertsCount(routesArr.filter(r => r.proximityAlert?.active === true).length);
         setSelectedRoute(prev => prev ? (routesArr.find(r => r.id === prev.id) || prev) : null);
@@ -418,7 +503,9 @@ function App() {
 
   const focusSelectedRoute = useCallback((map = mapRef.current, forceFit = false) => {
       if (!map || !isLoaded || !selectedRoute || !window.google?.maps) return;
+      if (manualMapInteraction && !forceFit) return;
 
+      programmaticCameraRef.current = true;
       try {
           const currentLocation = normalizePoint(selectedRoute.currentLocation);
           const path = getLiveGeometry(selectedRoute);
@@ -448,21 +535,23 @@ function App() {
           }
       } catch (error) {
           console.error('No se pudo enfocar el viaje en el mapa:', error);
+      } finally {
+          setTimeout(() => { programmaticCameraRef.current = false; }, 300);
       }
-  }, [isLoaded, selectedRoute, followSelectedRoute]);
+  }, [isLoaded, selectedRoute, followSelectedRoute, manualMapInteraction]);
 
   useEffect(() => {
-      if (activeTab !== 'monitoreo' || !mapRef.current) return;
+      if (activeTab !== 'monitoreo' || !mapRef.current || manualMapInteraction) return;
       const timer = setTimeout(() => {
           try {
               window.google?.maps?.event?.trigger(mapRef.current, 'resize');
-              focusSelectedRoute(mapRef.current, !followSelectedRoute);
+              focusSelectedRoute(mapRef.current, false);
           } catch (error) {
               console.error('No se pudo restaurar el monitor:', error);
           }
       }, 250);
       return () => clearTimeout(timer);
-  }, [activeTab, selectedRoute?.id, isLoaded, focusSelectedRoute, followSelectedRoute]);
+  }, [activeTab, selectedRoute?.id, isLoaded, focusSelectedRoute, followSelectedRoute, manualMapInteraction]);
 
   useEffect(() => {
       if (activeTab !== 'monitoreo' || !followSelectedRoute || selectedRoute?.status !== 'En Ruta') return;
@@ -471,8 +560,37 @@ function App() {
 
   const handleMapLoad = useCallback((map) => {
       mapRef.current = map;
-      setTimeout(() => focusSelectedRoute(map, !followSelectedRoute), 100);
-  }, [focusSelectedRoute, followSelectedRoute]);
+      programmaticCameraRef.current = true;
+      setTimeout(() => {
+          if (selectedRoute) focusSelectedRoute(map, !followSelectedRoute);
+          setTimeout(() => { programmaticCameraRef.current = false; }, 500);
+      }, 100);
+  }, [focusSelectedRoute, followSelectedRoute, selectedRoute]);
+
+  const handleUserMapInteraction = useCallback(() => {
+      if (programmaticCameraRef.current) return;
+      setManualMapInteraction(true);
+      setFollowSelectedRoute(false);
+  }, []);
+
+  useEffect(() => {
+      if (!isLoaded || selectedRoute || !mapRef.current || !window.google?.maps || onlineDrivers.length === 0) return;
+      const points = onlineDrivers.map(driver => normalizePoint(driver.currentLocation)).filter(Boolean);
+      if (!points.length) return;
+      programmaticCameraRef.current = true;
+      try {
+          if (points.length === 1) {
+              mapRef.current.panTo(points[0]);
+              mapRef.current.setZoom(13);
+          } else {
+              const bounds = new window.google.maps.LatLngBounds();
+              points.forEach(point => bounds.extend(point));
+              mapRef.current.fitBounds(bounds, 60);
+          }
+      } finally {
+          setTimeout(() => { programmaticCameraRef.current = false; }, 300);
+      }
+  }, [isLoaded, selectedRoute?.id, onlineDrivers]);
 
   const updateRouteStatus = async (id, status, updates = {}) => {
       try {
@@ -485,7 +603,7 @@ function App() {
   const handleStartTrip = (id) => {
       const now = new Date();
       return updateRouteStatus(id, 'En Ruta', {
-          actualStartTime: now.toLocaleTimeString('es-MX', { timeZone: 'America/Mexico_City', hour: '2-digit', minute: '2-digit' }),
+          actualStartTime: now.toLocaleTimeString('es-419', { hour: '2-digit', minute: '2-digit' }),
           actualStartTimestamp: now.toISOString(),
           navigationStartedAt: now.toISOString()
       });
@@ -494,8 +612,8 @@ function App() {
   const handleEndTrip = (id) => {
       const now = new Date();
       return updateRouteStatus(id, 'Finalizado', {
-          endTime: now.toLocaleTimeString('es-MX', { timeZone: 'America/Mexico_City', hour: '2-digit', minute: '2-digit' }),
-          actualEndTime: now.toLocaleTimeString('es-MX', { timeZone: 'America/Mexico_City', hour: '2-digit', minute: '2-digit' }),
+          endTime: now.toLocaleTimeString('es-419', { hour: '2-digit', minute: '2-digit' }),
+          actualEndTime: now.toLocaleTimeString('es-419', { hour: '2-digit', minute: '2-digit' }),
           actualEndTimestamp: now.toISOString(),
           finishedAt: now.toISOString()
       });
@@ -574,7 +692,7 @@ function App() {
   };
 
   const rutasVisibles = getFilteredAndSortedRoutes();
-  const selectedRouteGeometry = getLiveGeometry(selectedRoute);
+  const selectedRouteGeometry = selectedRoute && !['Finalizado', 'Completado', 'Cancelado'].includes(selectedRoute.status) ? getLiveGeometry(selectedRoute) : [];
   const selectedLastUpdateMs = getLastRouteUpdateMs(selectedRoute);
   const selectedUpdateAgeSeconds = selectedLastUpdateMs ? Math.max(0, Math.floor((clockTick - selectedLastUpdateMs) / 1000)) : null;
   const selectedSignalState = selectedUpdateAgeSeconds === null
@@ -589,25 +707,25 @@ function App() {
 
   return (
     <div className="flex h-[100dvh] bg-slate-50 font-sans overflow-hidden">
-      <aside className="w-20 2xl:w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0 transition-all duration-300">
-        <div className="h-16 flex items-center justify-center px-3 2xl:px-6 border-b border-slate-800 bg-slate-950">
+      <aside className="w-20 xl:w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0 transition-all duration-300">
+        <div className="h-16 flex items-center justify-center px-3 xl:px-6 border-b border-slate-800 bg-slate-950">
            <img src="/logo.png" alt="TripLogix" className="h-8 w-auto mr-2" />
-           <span className="hidden 2xl:inline text-white font-black text-lg uppercase tracking-wider">Trip<span className="text-orange-500">Logix</span></span>
+           <span className="hidden xl:inline text-white font-black text-lg uppercase tracking-wider">Trip<span className="text-orange-500">Logix</span></span>
         </div>
-        <nav className="flex-1 p-2 2xl:p-4 space-y-2">
-          <button onClick={() => setActiveTab('monitoreo')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'monitoreo' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><Monitor className="w-5 h-5" /><span className="hidden 2xl:inline font-bold text-sm">Monitor en Vivo</span></button>
-          <button onClick={() => setActiveTab('planificacion')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'planificacion' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><MapIcon className="w-5 h-5" /><span className="hidden 2xl:inline font-bold text-sm">Planificación</span></button>
-          <button onClick={() => setActiveTab('clientes')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'clientes' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><Briefcase className="w-5 h-5" /><span className="hidden 2xl:inline font-bold text-sm">Clientes</span></button>
-          <button onClick={() => setActiveTab('conductores')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'conductores' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><Users className="w-5 h-5" /><span className="hidden 2xl:inline font-bold text-sm">Conductores</span></button>
-          <button onClick={() => setActiveTab('reportes')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'reportes' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><FileText className="w-5 h-5" /><span className="hidden 2xl:inline font-bold text-sm">Reportes</span></button>
+        <nav className="flex-1 p-2 xl:p-4 space-y-2">
+          <button onClick={() => setActiveTab('monitoreo')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'monitoreo' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><Monitor className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Monitor en Vivo</span></button>
+          <button onClick={() => setActiveTab('planificacion')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'planificacion' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><MapIcon className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Planificación</span></button>
+          <button onClick={() => setActiveTab('clientes')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'clientes' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><Briefcase className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Clientes</span></button>
+          <button onClick={() => setActiveTab('conductores')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'conductores' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><Users className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Conductores</span></button>
+          <button onClick={() => setActiveTab('reportes')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'reportes' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><FileText className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Reportes</span></button>
         </nav>
-        <div className="p-2 2xl:p-4 border-t border-slate-800 bg-slate-950">
-            <button onClick={() => setCurrentUser(null)} className="w-full flex items-center justify-center gap-2 text-xs font-bold text-slate-500 hover:text-red-400 transition py-3 rounded-xl hover:bg-red-500/10"><X className="w-4 h-4"/> <span className="hidden 2xl:inline">CERRAR SESIÓN</span></button>
+        <div className="p-2 xl:p-4 border-t border-slate-800 bg-slate-950">
+            <button onClick={() => setCurrentUser(null)} className="w-full flex items-center justify-center gap-2 text-xs font-bold text-slate-500 hover:text-red-400 transition py-3 rounded-xl hover:bg-red-500/10"><X className="w-4 h-4"/> <span className="hidden xl:inline">CERRAR SESIÓN</span></button>
         </div>
       </aside>
 
       <main className="flex-1 flex flex-col min-w-0 relative">
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-6 2xl:px-8 shadow-sm z-10 shrink-0">
+        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-6 xl:px-8 shadow-sm z-10 shrink-0">
           <h1 className="text-base md:text-xl font-black text-slate-800 tracking-tight">{activeTab === 'monitoreo' && 'Torre de Control'}{activeTab === 'planificacion' && 'Planificación de Rutas'}{activeTab === 'clientes' && 'Cartera de Clientes'}{activeTab === 'conductores' && 'Directorio de Conductores'}{activeTab === 'reportes' && 'Historial y Reportes'}</h1>
           <div className="flex items-center gap-6">
               <div className="relative cursor-pointer">
@@ -625,18 +743,20 @@ function App() {
         </header>
 
         {activeTab === 'monitoreo' && (
-            <div className="flex-1 grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_24rem] overflow-y-auto 2xl:overflow-hidden p-3 md:p-4 2xl:p-6 gap-4 2xl:gap-6 animate-[fadeIn_0.3s_ease-out]">
+            <div className="flex-1 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_24rem] overflow-y-auto xl:overflow-hidden p-3 md:p-4 xl:p-6 gap-4 xl:gap-6 animate-[fadeIn_0.3s_ease-out]">
                 {/* MAPA GOOGLE */}
-                <div className="relative h-[48vh] min-h-[360px] 2xl:h-auto 2xl:min-h-0 bg-slate-200 rounded-3xl shadow-sm overflow-hidden border border-slate-200">
+                <div className="relative h-[48vh] min-h-[360px] xl:h-auto xl:min-h-0 bg-slate-200 rounded-3xl shadow-sm overflow-hidden border border-slate-200">
                     {isLoaded ? (
                         <GoogleMap 
                             mapContainerStyle={containerStyle} 
-                            center={centerMX} 
+                            center={localMapCenter} 
                             zoom={12} 
-                            onLoad={handleMapLoad} 
-                            options={{ mapId: "73f56298887c80075f6fc648", streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy" }}
+                            onLoad={handleMapLoad}
+                            onDragStart={handleUserMapInteraction}
+                            onZoomChanged={handleUserMapInteraction}
+                            options={{ mapId: "73f56298887c80075f6fc648", streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy", fullscreenControl: true, fullscreenControlOptions: { position: window.google?.maps?.ControlPosition?.RIGHT_TOP }, zoomControl: true }}
                         >
-                            {onlineDrivers.map(d => d.currentLocation && <Marker key={d.id} position={d.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: "#22c55e", fillOpacity: 0.8, strokeWeight: 2, strokeColor: "white" }} title={`Operador: ${d.name}`} onClick={() => { const driverRoute = liveRoutes.find(r => !["Finalizado", "Completado", "Cancelado"].includes(r.status) && (r.driverId === d.id || r.driver === d.name)); if (driverRoute) setSelectedRoute(driverRoute); }} />)}
+                            {onlineDrivers.map(d => d.currentLocation && <Marker key={d.id} position={d.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: "#22c55e", fillOpacity: 0.8, strokeWeight: 2, strokeColor: "white" }} title={`Operador: ${d.name}`} onClick={() => { const driverRoute = liveRoutes.find(r => !["Finalizado", "Completado", "Cancelado"].includes(r.status) && (r.driverId === d.id || r.driver === d.name)); if (driverRoute) { setManualMapInteraction(false); setFollowSelectedRoute(true); setSelectedRoute(driverRoute); } }} />)}
                             {selectedRoute && (
                                 <>
                                     {selectedRouteGeometry.length > 1 && (
@@ -672,11 +792,17 @@ function App() {
                         </GoogleMap>
                     ) : <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-2"><Loader2 className="animate-spin w-8 h-8 text-orange-500"/><span className="text-xs font-bold uppercase tracking-widest">Cargando Mapas...</span></div>}
 
-                    {!selectedRoute && (<div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-5 py-3 rounded-2xl shadow-sm z-[500] border border-slate-100 max-w-xs"><h5 className="font-black text-slate-800 text-sm mb-1">Radar en Vivo</h5><p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> {onlineDrivers.length} unidades activas</p></div>)}
+                    {selectedRoute ? (
+                        <button type="button" onClick={() => { setSelectedRoute(null); setManualMapInteraction(false); setFollowSelectedRoute(false); }} className="absolute top-4 left-4 z-[500] bg-white/95 backdrop-blur px-4 py-2.5 rounded-xl shadow-lg border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-700 hover:bg-slate-50">
+                            Ver todos los conductores
+                        </button>
+                    ) : (
+                        <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-5 py-3 rounded-2xl shadow-sm z-[500] border border-slate-100 max-w-xs"><h5 className="font-black text-slate-800 text-sm mb-1">Radar en Vivo</h5><p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> {onlineDrivers.length} unidades activas</p></div>
+                    )}
                     
                     {selectedRoute?.status === 'En Ruta' && normalizePoint(selectedRoute?.currentLocation) && (
                         <>
-                            <div className={`absolute top-4 right-4 bg-white/95 backdrop-blur px-4 py-2.5 rounded-2xl shadow-lg z-[500] border flex items-center gap-2 ${selectedSignalState === 'stale' ? 'border-red-300' : selectedSignalState === 'delayed' ? 'border-amber-300' : selectedRoute.proximityAlert?.active ? 'border-orange-300' : 'border-green-200'}`}>
+                            <div className={`absolute top-16 right-4 bg-white/95 backdrop-blur px-4 py-2.5 rounded-2xl shadow-lg z-[500] border flex items-center gap-2 ${selectedSignalState === 'stale' ? 'border-red-300' : selectedSignalState === 'delayed' ? 'border-amber-300' : selectedRoute.proximityAlert?.active ? 'border-orange-300' : 'border-green-200'}`}>
                                 <div className={`w-2.5 h-2.5 rounded-full ${selectedSignalState === 'stale' ? 'bg-red-500' : selectedSignalState === 'delayed' ? 'bg-amber-500 animate-pulse' : selectedRoute.proximityAlert?.active ? 'bg-orange-500 animate-pulse' : 'bg-green-500 animate-pulse'}`}></div>
                                 <div>
                                     <p className={`text-[10px] font-black uppercase tracking-widest ${selectedSignalState === 'stale' ? 'text-red-600' : selectedSignalState === 'delayed' ? 'text-amber-700' : selectedRoute.proximityAlert?.active ? 'text-orange-600' : 'text-slate-700'}`}>
@@ -692,6 +818,7 @@ function App() {
                                 <button
                                     type="button"
                                     onClick={() => {
+                                        setManualMapInteraction(false);
                                         setFollowSelectedRoute(true);
                                         setTimeout(() => focusSelectedRoute(mapRef.current, false), 50);
                                     }}
@@ -702,6 +829,7 @@ function App() {
                                 <button
                                     type="button"
                                     onClick={() => {
+                                        setManualMapInteraction(false);
                                         setFollowSelectedRoute(false);
                                         setTimeout(() => focusSelectedRoute(mapRef.current, true), 50);
                                     }}
@@ -715,7 +843,7 @@ function App() {
                 </div>
 
                 {/* LISTA LATERAL DE RUTAS */}
-                <div className="w-full min-h-[420px] 2xl:min-h-0 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
+                <div className="w-full min-h-[420px] xl:min-h-0 bg-white rounded-3xl border border-slate-200 shadow-sm flex flex-col overflow-hidden">
                     <div className="p-5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center shrink-0">
                         <h2 className="font-black text-slate-800 flex items-center gap-2 text-sm uppercase tracking-widest"><Clock className="w-4 h-4 text-orange-500"/> {viewHistory ? 'Historial' : 'Activos'}</h2>
                         <button onClick={() => setViewHistory(!viewHistory)} className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black transition ${viewHistory ? 'bg-slate-800 text-white shadow-md shadow-slate-800/20' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>{viewHistory ? <><Eye className="w-3 h-3"/> Activos</> : <><History className="w-3 h-3"/> Pasados</>}</button>
@@ -732,7 +860,7 @@ function App() {
                             const liveDuration = Number(ruta.liveNavigation?.durationMinutes);
                             
                             return (
-                                <div key={ruta.id} onClick={() => { setSelectedRoute(ruta); setFollowSelectedRoute(ruta.status === 'En Ruta'); }} className={`border-2 rounded-2xl p-4 transition-all shadow-sm cursor-pointer relative overflow-hidden ${selectedRoute?.id === ruta.id ? 'border-orange-500 bg-orange-50/30 shadow-orange-500/10' : 'bg-white border-slate-100 hover:border-slate-200 hover:shadow-md'} ${ruta.proximityAlert?.active ? 'border-orange-400 bg-orange-50/50' : ''}`}>
+                                <div key={ruta.id} onClick={() => { setSelectedRoute(ruta); setManualMapInteraction(false); setFollowSelectedRoute(ruta.status === 'En Ruta'); }} className={`border-2 rounded-2xl p-4 transition-all shadow-sm cursor-pointer relative overflow-hidden ${selectedRoute?.id === ruta.id ? 'border-orange-500 bg-orange-50/30 shadow-orange-500/10' : 'bg-white border-slate-100 hover:border-slate-200 hover:shadow-md'} ${ruta.proximityAlert?.active ? 'border-orange-400 bg-orange-50/50' : ''}`}>
                                     {ruta.proximityAlert?.active && <div className="absolute top-0 left-0 right-0 bg-orange-500 text-white text-[10px] font-black text-center py-1 flex items-center justify-center gap-1 animate-pulse"><BellRing className="w-3 h-3"/> ¡LLEGANDO A: {ruta.proximityAlert.passenger.toUpperCase()}!</div>}
 
                                     <div className={`flex justify-between items-start mb-3 ${ruta.proximityAlert?.active ? 'mt-4' : ''}`}>
@@ -818,10 +946,10 @@ function App() {
             </div>
         )}
         
-        {activeTab === 'planificacion' && <Planificacion currentUser={currentUser} />}
-        {activeTab === 'clientes' && <Clientes />}
-        {activeTab === 'conductores' && <Conductores />}
-        {activeTab === 'reportes' && <Historial />}
+        {activeTab === 'planificacion' && <SectionErrorBoundary><Planificacion currentUser={currentUser} /></SectionErrorBoundary>}
+        {activeTab === 'clientes' && <SectionErrorBoundary><Clientes /></SectionErrorBoundary>}
+        {activeTab === 'conductores' && <SectionErrorBoundary><Conductores /></SectionErrorBoundary>}
+        {activeTab === 'reportes' && <SectionErrorBoundary><Historial /></SectionErrorBoundary>}
       </main>
 
       {/* MODAL CHAT Y EVIDENCIAS */}

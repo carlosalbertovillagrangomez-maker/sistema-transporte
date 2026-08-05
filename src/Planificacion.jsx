@@ -10,7 +10,7 @@ import { collection, addDoc, onSnapshot, doc, query, orderBy, deleteDoc, updateD
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
 
 const containerStyle = { width: '100%', height: '100%' };
-const centerMX = { lat: 19.4326, lng: -99.1332 }; 
+const DEFAULT_MAP_CENTER = { lat: 19.4326, lng: -99.1332 }; 
 const libraries = ['places', 'geometry'];
 
 // --- CONFIGURACIÓN DE TIEMPOS CARPOOLING ---
@@ -167,7 +167,7 @@ const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor
     const autocompleteRef = useRef(null);
     useEffect(() => { setInputValue(value || ''); }, [value]);
     const generalFavs = favorites.filter(f => !f.assignedTo || f.assignedTo === 'General');
-    const options = { componentRestrictions: { country: "mx" }, fields: ["address_components", "geometry", "formatted_address"] };
+    const options = { fields: ["address_components", "geometry", "formatted_address"] };
 
     const handlePlaceChanged = () => {
         if (autocompleteRef.current !== null) {
@@ -253,14 +253,86 @@ const getDistance = (p1, p2) => {
     return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 };
 
+
+const normalizeCoordinatePoint = (point) => {
+    if (!point) return null;
+    const lat = Number(point.lat);
+    const lng = Number(point.lng ?? point.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+};
+
+const buildTrafficDepartureTime = (dateValue = '', timeValue = '') => {
+    const now = new Date();
+    if (!dateValue || !timeValue) return now;
+    const candidate = new Date(`${dateValue}T${timeValue}:00`);
+    if (!Number.isFinite(candidate.getTime()) || candidate.getTime() < now.getTime()) return now;
+    return candidate;
+};
+
+const requestGoogleDrivingRoute = async (points, departureTime = new Date()) => {
+    const validPoints = (Array.isArray(points) ? points : []).map(normalizeCoordinatePoint).filter(Boolean);
+    if (validPoints.length < 2 || !window.google?.maps?.DirectionsService) return null;
+
+    const directionsService = new window.google.maps.DirectionsService();
+    const result = await directionsService.route({
+        origin: validPoints[0],
+        destination: validPoints[validPoints.length - 1],
+        waypoints: validPoints.slice(1, -1).map(location => ({ location, stopover: true })),
+        optimizeWaypoints: false,
+        travelMode: window.google.maps.TravelMode.DRIVING,
+        drivingOptions: {
+            departureTime,
+            trafficModel: window.google.maps.TrafficModel?.BEST_GUESS || 'bestguess'
+        },
+        provideRouteAlternatives: false
+    });
+
+    const route = result?.routes?.[0];
+    if (!route) return null;
+    const legs = Array.isArray(route.legs) ? route.legs : [];
+    const geometry = (route.overview_path || []).map(point => ({ lat: point.lat(), lng: point.lng() }));
+    const segments = legs.map(leg => ({
+        distance: ((Number(leg.distance?.value) || 0) / 1000).toFixed(1),
+        duration: Math.max(1, Math.round((Number(leg.duration_in_traffic?.value ?? leg.duration?.value) || 0) / 60))
+    }));
+    const totalDistanceMeters = legs.reduce((sum, leg) => sum + (Number(leg.distance?.value) || 0), 0);
+    const totalDurationSeconds = legs.reduce((sum, leg) => sum + (Number(leg.duration_in_traffic?.value ?? leg.duration?.value) || 0), 0);
+
+    return {
+        geometry,
+        segments,
+        totalDistance: (totalDistanceMeters / 1000).toFixed(1),
+        totalDuration: Math.max(1, Math.round(totalDurationSeconds / 60)),
+        routingProvider: 'google-directions-traffic-aware'
+    };
+};
+
 export default function Planificacion() {
   const [showModal, setShowModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [routeToAssign, setRouteToAssign] = useState(null);
 
-  const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries });
+  const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries, language: 'es' });
   const mapRef = useRef(null);
   const previewMapRef = useRef(null);
+  const [localMapCenter, setLocalMapCenter] = useState(DEFAULT_MAP_CENTER);
+
+  useEffect(() => {
+      if (!('geolocation' in navigator)) return undefined;
+      navigator.geolocation.getCurrentPosition(
+          position => {
+              const nextCenter = normalizeCoordinatePoint({
+                  lat: position.coords.latitude,
+                  lng: position.coords.longitude
+              });
+              if (nextCenter) setLocalMapCenter(nextCenter);
+          },
+          () => {},
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 12000 }
+      );
+      return undefined;
+  }, []);
 
   const [availableDrivers, setAvailableDrivers] = useState([]);
   const [availableClients, setAvailableClients] = useState([]);
@@ -357,19 +429,23 @@ export default function Planificacion() {
   const calculateRoute = async () => {
       setIsLoadingRoute(true);
       try {
+          if (!isLoaded) return;
           const points = [startPoint, ...waypoints, endPoint];
-          const validPoints = points.filter(p => p && p.lat && p.lng);
-          if (validPoints.length < 2) { setRouteInfo({ totalDistance: 0, totalDuration: 0, segments: [], geometry: [] }); return; }
-          const coordsString = validPoints.map(p => `${p.lng},${p.lat}`).join(';');
-          const response = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordsString}?overview=full&geometries=geojson&steps=true`);
-          const data = await response.json();
-          if (data.code === 'Ok' && data.routes.length > 0) {
-              const ruta = data.routes[0];
-              const segmentsData = ruta.legs.map(leg => ({ distance: (leg.distance / 1000).toFixed(1), duration: Math.round(leg.duration / 60) }));
-              const geometry = ruta.geometry.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
-              setRouteInfo({ totalDistance: (ruta.distance / 1000).toFixed(1), totalDuration: Math.round(ruta.duration / 60), segments: segmentsData, geometry: geometry });
+          const validPoints = points.map(normalizeCoordinatePoint).filter(Boolean);
+          if (validPoints.length < 2) {
+              setRouteInfo({ totalDistance: 0, totalDuration: 0, segments: [], geometry: [] });
+              return;
           }
-      } catch (error) {} finally { setIsLoadingRoute(false); }
+          const departureTime = buildTrafficDepartureTime(newRoute.scheduledDate, newRoute.scheduledTime);
+          const googleRoute = await requestGoogleDrivingRoute(validPoints, departureTime);
+          if (!googleRoute) throw new Error('Google Maps no devolvió una ruta vehicular válida.');
+          setRouteInfo(googleRoute);
+      } catch (error) {
+          console.error('No se pudo calcular la ruta con Google Maps:', error);
+          setRouteInfo({ totalDistance: 0, totalDuration: 0, segments: [], geometry: [] });
+      } finally {
+          setIsLoadingRoute(false);
+      }
   };
 
   useEffect(() => {
@@ -430,7 +506,7 @@ export default function Planificacion() {
           waypoints: waypoints.map(w => w.address), 
           technicalData: {
               ...routeInfo,
-              routingProvider: 'osrm-planning-only'
+              routingProvider: 'google-directions-traffic-aware'
           }, 
           finalDate: isProgramado ? newRoute.scheduledDate : today, 
           createdDate: new Date().toISOString() 
@@ -500,64 +576,65 @@ export default function Planificacion() {
       });
   };
 
-  // --- CALCULAR RUTAS REALES CON OSRM PARA LAS CUADRILLAS (AQUÍ GUARDAMOS LA DURACIÓN) ---
+  // --- CALCULAR RUTAS VEHICULARES CON GOOGLE MAPS Y TRÁFICO ---
   const fetchRealRoutesForGroups = async (groups) => {
+      const safeGroups = Array.isArray(groups) ? groups : [];
       setFetchingRealRoutes(true);
-      const oficina = selectedClientData?.locations?.find(l => l.assignedTo === 'General');
-      const endPointObj = oficina && oficina.lat ? { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng) } : null;
-      
-      let updatedGroups = [...groups];
-      
-      for (let i = 0; i < updatedGroups.length; i++) {
-          let g = updatedGroups[i];
-          const isShared = g.sharedMeetingPoint.active && g.sharedMeetingPoint.lat && ['Ambos', globalCarpool.mode].includes(g.sharedMeetingPoint.type || 'Ambos');
-          
-          let points = [];
-          if (globalCarpool.mode === 'Ida') {
-              if (isShared) {
-                  points.push({ lat: parseFloat(g.sharedMeetingPoint.lat), lng: parseFloat(g.sharedMeetingPoint.lng) });
-                  if(endPointObj) points.push(endPointObj);
-              } else {
-                  g.employees.forEach(emp => { if(emp.lat) points.push({ lat: parseFloat(emp.lat), lng: parseFloat(emp.lon || emp.lng) }); });
-                  if(endPointObj) points.push(endPointObj);
-              }
-          } else {
-              if(endPointObj) points.push(endPointObj);
-              if (isShared) {
-                  points.push({ lat: parseFloat(g.sharedMeetingPoint.lat), lng: parseFloat(g.sharedMeetingPoint.lng) });
-              } else {
-                  g.employees.forEach(emp => { if(emp.lat) points.push({ lat: parseFloat(emp.lat), lng: parseFloat(emp.lon || emp.lng) }); });
-              }
-          }
+      const oficina = selectedClientData?.locations?.find(location => location.assignedTo === 'General');
+      const officePoint = normalizeCoordinatePoint(oficina);
+      const updatedGroups = safeGroups.map(group => ({ ...group }));
 
-          if (points.length >= 2) {
-              const coordsString = points.map(p => `${p.lng},${p.lat}`).join(';');
-              try {
-                  const res = await fetch(`https://router.project-osrm.org/route/v1/driving/${coordsString}?overview=full&geometries=geojson`);
-                  const data = await res.json();
-                  if (data.code === 'Ok' && data.routes.length > 0) {
-                      const route = data.routes[0];
-                      const geometry = route.geometry.coordinates.map(c => ({ lat: c[1], lng: c[0] }));
-                      const routeSegments = (route.legs || []).map(leg => ({
-                          distance: (leg.distance / 1000).toFixed(1),
-                          duration: Math.round(leg.duration / 60)
-                      }));
+      try {
+          for (let index = 0; index < updatedGroups.length; index += 1) {
+              const group = updatedGroups[index];
+              const employees = Array.isArray(group.employees) ? group.employees : [];
+              const sharedPoint = group.sharedMeetingPoint?.active
+                  ? normalizeCoordinatePoint(group.sharedMeetingPoint)
+                  : null;
+              const employeePoints = employees.map(normalizeCoordinatePoint).filter(Boolean);
+              let points = [];
 
-                      updatedGroups[i].routeGeometry = geometry;
-                      updatedGroups[i].routeSegments = routeSegments;
-                      updatedGroups[i].totalDistanceKm = (route.distance / 1000).toFixed(1);
-                      updatedGroups[i].totalDurationMins = Math.round(route.duration / 60);
-                  }
-              } catch(e) { console.error("OSRM Error", e); }
-          } else {
-              updatedGroups[i].routeGeometry = [];
-              updatedGroups[i].routeSegments = [];
-              updatedGroups[i].totalDistanceKm = null;
-              updatedGroups[i].totalDurationMins = null;
+              if (globalCarpool.mode === 'Ida') {
+                  points = sharedPoint ? [sharedPoint, officePoint] : [...employeePoints, officePoint];
+              } else {
+                  points = sharedPoint ? [officePoint, sharedPoint] : [officePoint, ...employeePoints];
+              }
+              points = points.filter(Boolean);
+
+              if (points.length < 2) {
+                  updatedGroups[index] = {
+                      ...group,
+                      routeGeometry: [],
+                      routeSegments: [],
+                      totalDistanceKm: null,
+                      totalDurationMins: null,
+                      routeError: employees.length === 0 ? 'Agrega al menos un usuario.' : 'Faltan coordenadas válidas.'
+                  };
+                  continue;
+              }
+
+              const departureTime = buildTrafficDepartureTime(globalCarpool.date || newRoute.scheduledDate, group.timeKey || newRoute.scheduledTime);
+              const route = await requestGoogleDrivingRoute(points, departureTime);
+              if (!route) throw new Error(`No fue posible calcular la ruta del vehículo ${index + 1}.`);
+
+              updatedGroups[index] = {
+                  ...group,
+                  routeGeometry: route.geometry,
+                  routeSegments: route.segments,
+                  totalDistanceKm: route.totalDistance,
+                  totalDurationMins: route.totalDuration,
+                  routingProvider: route.routingProvider,
+                  routeError: ''
+              };
           }
+          setCarpoolGroups(updatedGroups);
+      } catch (error) {
+          console.error('Google Directions Error:', error);
+          setCarpoolGroups(updatedGroups);
+          alert(error.message || 'No fue posible calcular una de las rutas.');
+      } finally {
+          setFetchingRealRoutes(false);
       }
-      setCarpoolGroups(updatedGroups);
-      setFetchingRealRoutes(false);
   };
 
   const isEmpInAnyGroup = (name) => { return carpoolGroups.some(g => g.employees.some(e => e.assignedTo === name)); };
@@ -672,19 +749,22 @@ export default function Planificacion() {
   };
 
   const removeEmployeeFromGroup = (groupId, empIndex) => {
-      let newGroups = [];
-      setCarpoolGroups(prev => {
-          newGroups = prev.map(g => {
-              if (g.id === groupId) {
-                  const newEmp = [...g.employees];
-                  newEmp.splice(empIndex, 1);
-                  return { ...g, employees: newEmp };
-              }
-              return g;
+      setCarpoolGroups(previousGroups => {
+          const nextGroups = previousGroups.map(group => {
+              if (group.id !== groupId) return group;
+              const employees = (group.employees || []).filter((_, index) => index !== empIndex);
+              return {
+                  ...group,
+                  employees,
+                  routeGeometry: employees.length ? group.routeGeometry : [],
+                  routeSegments: employees.length ? group.routeSegments : [],
+                  totalDistanceKm: employees.length ? group.totalDistanceKm : null,
+                  totalDurationMins: employees.length ? group.totalDurationMins : null
+              };
           });
-          return newGroups;
+          setTimeout(() => fetchRealRoutesForGroups(nextGroups), 50);
+          return nextGroups;
       });
-      fetchRealRoutesForGroups(newGroups);
   };
 
   const handleDragStart = (e, groupId, empIndex) => { e.dataTransfer.setData('sourceGroupId', groupId); e.dataTransfer.setData('sourceEmpIndex', empIndex.toString()); };
@@ -900,7 +980,7 @@ export default function Planificacion() {
                   scheduledTime: g.timeKey,
 
                   // Hora real en la que el chofer debe iniciar.
-                  // Para Ida incluye: duración OSRM + 10 min final + 5 min por pasajero.
+                  // Para Ida incluye: duración Google con tráfico + 10 min final + 5 min por pasajero.
                   startTime: timePlan.startTime,
 
                   // Campos adicionales para app del conductor, control y reportes.
@@ -923,7 +1003,7 @@ export default function Planificacion() {
 
                   technicalData: {
                       geometry: g.routeGeometry || [],
-                      routingProvider: 'osrm-planning-only',
+                      routingProvider: 'google-directions-traffic-aware',
                       segments: g.routeSegments || [],
                       totalDistance: g.totalDistanceKm || null,
                       totalDuration: g.totalDurationMins || 0,
@@ -957,7 +1037,7 @@ export default function Planificacion() {
   const handleMapLoad = useCallback((map) => { mapRef.current = map; }, []);
   const handlePreviewMapLoad = useCallback((map) => { previewMapRef.current = map; }, []);
   const routeToDisplay = viewRoute?.technicalData?.geometry ? viewRoute.technicalData.geometry : [];
-  let mapCenter = centerMX; if(routeToDisplay.length > 0) mapCenter = routeToDisplay[0];
+  let mapCenter = localMapCenter; if(routeToDisplay.length > 0) mapCenter = routeToDisplay[0];
   const activePlanRoutes = routesList.filter(r => r.status === 'Pendiente' || r.status === 'Aceptada' || r.status === 'En Ruta');
 
   if (!isLoaded) return <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin w-8 h-8 text-slate-800"/></div>;
@@ -1122,6 +1202,7 @@ export default function Planificacion() {
                                                           emp.assignedTo?.toLowerCase().includes(rosterSearch.toLowerCase()) || 
                                                           emp.address?.toLowerCase().includes(rosterSearch.toLowerCase())
                                                       )
+                                                      .sort((a, b) => Number(Boolean(b.included)) - Number(Boolean(a.included)))
                                                       .map((emp) => (
                                                       <div key={emp.originalIndex} className={`flex items-center gap-4 bg-white p-4 rounded-xl border shadow-sm transition ${emp.included ? 'border-orange-200 ring-1 ring-orange-100' : 'border-slate-200 opacity-60 grayscale'}`}>
                                                           <input type="checkbox" className="w-5 h-5 text-orange-500 rounded cursor-pointer" checked={emp.included} onChange={(e) => updateRosterItem(emp.originalIndex, 'included', e.target.checked)} />
@@ -1307,10 +1388,10 @@ export default function Planificacion() {
                                   <div className="flex-1 bg-slate-300 relative">
                                       {fetchingRealRoutes && ( <div className="absolute top-4 right-4 bg-slate-900/80 text-white px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 z-20 backdrop-blur"><Loader2 className="animate-spin w-4 h-4"/> Trazando Rutas Reales...</div> )}
                                       {!isLoaded ? ( <div className="h-full flex items-center justify-center text-slate-500 font-bold"><Loader2 className="animate-spin mr-2"/> Cargando Mapas...</div> ) : (
-                                          <GoogleMap mapContainerStyle={containerStyle} center={centerMX} zoom={11} onLoad={handlePreviewMapLoad} options={{ streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy" }}>
+                                          <GoogleMap mapContainerStyle={containerStyle} center={localMapCenter} zoom={11} onLoad={handlePreviewMapLoad} options={{ streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy" }}>
                                               {selectedClientData && (
                                                   <Marker 
-                                                      position={{ lat: parseFloat(selectedClientData.locations.find(l => l.assignedTo === 'General')?.lat || centerMX.lat), lng: parseFloat(selectedClientData.locations.find(l => l.assignedTo === 'General')?.lon || selectedClientData.locations.find(l => l.assignedTo === 'General')?.lng || centerMX.lng) }} 
+                                                      position={{ lat: parseFloat(selectedClientData.locations.find(l => l.assignedTo === 'General')?.lat || localMapCenter.lat), lng: parseFloat(selectedClientData.locations.find(l => l.assignedTo === 'General')?.lon || selectedClientData.locations.find(l => l.assignedTo === 'General')?.lng || localMapCenter.lng) }} 
                                                       icon="http://maps.google.com/mapfiles/kml/pal3/icon21.png" title="Oficina Central"
                                                   />
                                               )}
@@ -1322,7 +1403,7 @@ export default function Planificacion() {
                                                   const oficina = selectedClientData?.locations?.find(l => l.assignedTo === 'General');
                                                   const endPoint = oficina && oficina.lat ? { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng) } : null;
 
-                                                  // RENDERIZAR RUTA REAL (OSRM)
+                                                  // RENDERIZAR RUTA VEHICULAR (GOOGLE)
                                                   if (g.routeGeometry && g.routeGeometry.length > 0) {
                                                       return (
                                                           <React.Fragment key={`real-route-${g.id}`}>
@@ -1461,7 +1542,7 @@ export default function Planificacion() {
                         </div>
                     </div>
                     <div className="flex-1 bg-slate-200 relative">
-                        <GoogleMap mapContainerStyle={containerStyle} center={centerMX} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false }}>
+                        <GoogleMap mapContainerStyle={containerStyle} center={localMapCenter} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false }}>
                             {startPoint?.lat && <Marker position={startPoint} label="A" />}
                             {waypoints.map((wp, idx) => (
                                 wp.lat && wp.lng && <Marker key={idx} position={{lat: wp.lat, lng: wp.lng}} label={getMarkerLabel(idx + 1)} />

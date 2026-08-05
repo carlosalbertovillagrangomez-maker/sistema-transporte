@@ -4,14 +4,14 @@ import * as XLSX from 'xlsx';
 
 // FIREBASE
 import { db } from './firebase';
-import { collection, onSnapshot, query, orderBy } from 'firebase/firestore';
+import { collection, onSnapshot } from 'firebase/firestore';
 
 // GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline } from '@react-google-maps/api';
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
 const containerStyle = { width: '100%', height: '100%' };
-const centerMX = { lat: 19.4326, lng: -99.1332 }; 
+const DEFAULT_MAP_CENTER = { lat: 19.4326, lng: -99.1332 }; 
 const libraries = ['places', 'geometry'];
 
 // --- HELPERS DE FECHAS Y AUDITORÍA ---
@@ -52,7 +52,7 @@ const getRouteAuditTimestamp = (route) => (
 const getDateKey = (value) => {
     const milliseconds = getTimestampMs(value);
     if (!milliseconds) return '';
-    return new Date(milliseconds).toLocaleDateString('en-CA', { timeZone: 'America/Mexico_City' });
+    return new Date(milliseconds).toLocaleDateString('en-CA', {});
 };
 
 const getSafeDate = (route) => {
@@ -67,7 +67,6 @@ const getSafeDate = (route) => {
     const milliseconds = getTimestampMs(value);
     if (!milliseconds) return 'Sin fecha';
     return new Date(milliseconds).toLocaleDateString('es-MX', {
-        timeZone: 'America/Mexico_City',
         year: 'numeric',
         month: '2-digit',
         day: '2-digit'
@@ -78,7 +77,6 @@ const getDiaSemana = (route) => {
     const milliseconds = getRouteAuditTimestamp(route);
     if (!milliseconds) return '';
     return new Date(milliseconds).toLocaleDateString('es-MX', {
-        timeZone: 'America/Mexico_City',
         weekday: 'long'
     }).toUpperCase();
 };
@@ -87,7 +85,6 @@ const formatMexicoTime = (value) => {
     const milliseconds = getTimestampMs(value);
     if (!milliseconds) return '';
     return new Date(milliseconds).toLocaleTimeString('es-MX', {
-        timeZone: 'America/Mexico_City',
         hour: '2-digit',
         minute: '2-digit'
     });
@@ -229,6 +226,11 @@ export default function Historial() {
   const [filterDateEnd, setFilterDateEnd] = useState('');
   const [filterDriver, setFilterDriver] = useState('');
   const [filterClient, setFilterClient] = useState('');
+  const [serviceTab, setServiceTab] = useState('Todos');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [loadError, setLoadError] = useState('');
+  const [isLoadingRoutes, setIsLoadingRoutes] = useState(true);
+  const [localMapCenter, setLocalMapCenter] = useState(DEFAULT_MAP_CENTER);
 
   const [uniqueDrivers, setUniqueDrivers] = useState([]);
   const [uniqueClients, setUniqueClients] = useState([]);
@@ -238,43 +240,76 @@ export default function Historial() {
       id: 'google-map-script', 
       googleMapsApiKey: GOOGLE_MAPS_API_KEY,
       libraries,
-      language: 'es',
-      region: 'MX' 
+      language: 'es' 
   });
   const mapRef = useRef(null);
 
+  useEffect(() => {
+    if (!('geolocation' in navigator)) return undefined;
+    navigator.geolocation.getCurrentPosition(
+      position => setLocalMapCenter({ lat: position.coords.latitude, lng: position.coords.longitude }),
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+    );
+    return undefined;
+  }, []);
+
   // === CARGAR DATOS ===
   useEffect(() => {
-    const q = query(collection(db, "rutas"), orderBy("createdDate", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-        const routesArr = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    setIsLoadingRoutes(true);
+    setLoadError('');
+    const unsubscribe = onSnapshot(
+      collection(db, 'rutas'),
+      snapshot => {
+        const routesArr = snapshot.docs.map(routeDoc => ({ id: routeDoc.id, ...routeDoc.data() }));
         setAllRoutes(routesArr);
-        
-        const drivers = [...new Set(routesArr.map(r => r.driver).filter(Boolean))];
-        const clients = [...new Set(routesArr.map(r => r.client).filter(Boolean))];
-        setUniqueDrivers(drivers);
-        setUniqueClients(clients);
-    });
+        setUniqueDrivers([...new Set(routesArr.map(route => route.driver).filter(Boolean))].sort());
+        setUniqueClients([...new Set(routesArr.map(route => route.client).filter(Boolean))].sort());
+        setIsLoadingRoutes(false);
+      },
+      error => {
+        console.error('No se pudo cargar el historial:', error);
+        setLoadError('No fue posible cargar los reportes. Revisa la conexión o los permisos de Firestore.');
+        setIsLoadingRoutes(false);
+      }
+    );
     return () => unsubscribe();
   }, []);
 
   // === FILTRADO Y ORDEN DESCENDENTE POR CIERRE REAL ===
   const filteredRoutes = useMemo(() => {
-    let result = allRoutes.filter(r => ['Finalizado', 'Completado', 'Cancelado'].includes(r.status));
+    let result = allRoutes.filter(route => ['Finalizado', 'Completado', 'Cancelado'].includes(route.status));
 
-    if (filterDateStart) result = result.filter(r => getDateKey(
-        r.actualEndTimestamp || r.finishedAt || r.completedAt || r.finalDate || r.scheduledDate || r.createdDate
+    if (serviceTab === 'Inmediatos') result = result.filter(route => route.serviceType === 'Prioritario');
+    if (serviceTab === 'Programados') result = result.filter(route => route.serviceType === 'Programado');
+
+    if (filterDateStart) result = result.filter(route => getDateKey(
+        route.actualEndTimestamp || route.finishedAt || route.completedAt || route.finalDate || route.scheduledDate || route.createdDate
     ) >= filterDateStart);
 
-    if (filterDateEnd) result = result.filter(r => getDateKey(
-        r.actualEndTimestamp || r.finishedAt || r.completedAt || r.finalDate || r.scheduledDate || r.createdDate
+    if (filterDateEnd) result = result.filter(route => getDateKey(
+        route.actualEndTimestamp || route.finishedAt || route.completedAt || route.finalDate || route.scheduledDate || route.createdDate
     ) <= filterDateEnd);
 
-    if (filterDriver) result = result.filter(r => r.driver === filterDriver);
-    if (filterClient) result = result.filter(r => r.client === filterClient);
+    if (filterDriver) result = result.filter(route => route.driver === filterDriver);
+    if (filterClient) result = result.filter(route => route.client === filterClient);
+
+    const normalizedSearch = searchTerm.trim().toLowerCase();
+    if (normalizedSearch) {
+      result = result.filter(route => [
+        route.client,
+        route.driver,
+        route.start,
+        route.end,
+        route.scheduledDate,
+        getSafeDate(route),
+        route.id,
+        ...(Array.isArray(route.waypoints) ? route.waypoints : [])
+      ].filter(Boolean).join(' ').toLowerCase().includes(normalizedSearch));
+    }
 
     return [...result].sort((a, b) => getRouteAuditTimestamp(b) - getRouteAuditTimestamp(a));
-  }, [filterDateStart, filterDateEnd, filterDriver, filterClient, allRoutes]);
+  }, [filterDateStart, filterDateEnd, filterDriver, filterClient, serviceTab, searchTerm, allRoutes]);
 
   // === CENTRAR MAPA (ZOOM INTELIGENTE) ===
   useEffect(() => {
@@ -402,12 +437,26 @@ export default function Historial() {
   };
 
   return (
-    <div className="flex-1 p-4 md:p-6 2xl:p-8 overflow-y-auto bg-slate-50 h-full">
+    <div className="flex-1 p-4 md:p-6 xl:p-8 overflow-y-auto bg-slate-50 h-full">
       
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-3 mb-6">
           <div>
               <h2 className="text-2xl md:text-3xl font-black text-slate-800 tracking-tight">Historial y Reportes</h2>
               <p className="text-slate-500 text-sm">Auditoría de rutas, bitácoras y exportación de kilometrajes.</p>
+          </div>
+      </div>
+
+      <div className="bg-white p-3 rounded-xl shadow-sm border border-slate-200 mb-4 flex flex-col lg:flex-row lg:items-center gap-3">
+          <div className="flex gap-2 flex-wrap">
+              {['Todos', 'Inmediatos', 'Programados'].map(tab => (
+                  <button key={tab} type="button" onClick={() => setServiceTab(tab)} className={`px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition ${serviceTab === tab ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
+                      {tab}
+                  </button>
+              ))}
+          </div>
+          <div className="relative flex-1 lg:max-w-md lg:ml-auto">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input value={searchTerm} onChange={event => setSearchTerm(event.target.value)} placeholder="Buscar por fecha, conductor, cliente, origen o destino" className="w-full pl-10 pr-3 py-2.5 rounded-lg border border-slate-300 bg-slate-50 text-sm outline-none focus:border-blue-500" />
           </div>
       </div>
 
@@ -420,7 +469,7 @@ export default function Historial() {
               <div className="min-w-[200px]"><label className="block text-xs font-bold text-slate-400 mb-1">Conductor</label><select className="bg-slate-50 border border-slate-300 text-slate-700 text-sm rounded-lg block w-full p-2.5 outline-none" value={filterDriver} onChange={(e) => setFilterDriver(e.target.value)}><option value="">Todos</option>{uniqueDrivers.map((d, i) => <option key={i} value={d}>{d}</option>)}</select></div>
               <div className="min-w-[200px]"><label className="block text-xs font-bold text-slate-400 mb-1">Cliente</label><select className="bg-slate-50 border border-slate-300 text-slate-700 text-sm rounded-lg block w-full p-2.5 outline-none" value={filterClient} onChange={(e) => setFilterClient(e.target.value)}><option value="">Todos</option>{uniqueClients.map((c, i) => <option key={i} value={c}>{c}</option>)}</select></div>
               <div className="sm:col-span-2 xl:col-span-1 flex flex-wrap xl:flex-nowrap justify-start xl:justify-end gap-2">
-                  {(filterDateStart || filterDateEnd || filterDriver || filterClient) && (<button onClick={() => {setFilterDateStart(''); setFilterDateEnd(''); setFilterDriver(''); setFilterClient('');}} className="text-red-500 hover:bg-red-50 px-3 py-2.5 rounded-lg text-sm font-bold transition flex items-center gap-1"><X className="w-4 h-4"/> Limpiar</button>)}
+                  {(filterDateStart || filterDateEnd || filterDriver || filterClient || searchTerm || serviceTab !== 'Todos') && (<button onClick={() => {setFilterDateStart(''); setFilterDateEnd(''); setFilterDriver(''); setFilterClient(''); setSearchTerm(''); setServiceTab('Todos');}} className="text-red-500 hover:bg-red-50 px-3 py-2.5 rounded-lg text-sm font-bold transition flex items-center gap-1"><X className="w-4 h-4"/> Limpiar</button>)}
                   <button onClick={handleExport} className="bg-green-600 hover:bg-green-700 text-white font-black rounded-lg text-sm px-6 py-2.5 flex items-center gap-2 transition shadow-lg shadow-green-900/20"><FileSpreadsheet className="w-4 h-4"/> Exportar a Excel</button>
               </div>
           </div>
@@ -444,14 +493,19 @@ export default function Historial() {
 
       {/* TABLA */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          {filteredRoutes.length === 0 ? (
+          {isLoadingRoutes ? (
+              <div className="p-16 text-center text-slate-400"><Clock className="w-12 h-12 mx-auto mb-4 animate-pulse opacity-30"/><p className="font-bold">Cargando historial...</p></div>
+          ) : loadError ? (
+              <div className="p-16 text-center text-red-500"><AlertOctagon className="w-12 h-12 mx-auto mb-4 opacity-40"/><p className="font-bold">{loadError}</p></div>
+          ) : filteredRoutes.length === 0 ? (
               <div className="p-16 text-center text-slate-400"><Search className="w-12 h-12 mx-auto mb-4 opacity-20"/><p className="font-bold">No se encontraron viajes en el historial con estos filtros.</p></div>
           ) : (
-              <div className="overflow-x-auto"><table className="min-w-[980px] w-full text-left text-sm text-slate-600">
+              <div className="overflow-x-auto"><table className="min-w-[1120px] w-full text-left text-sm text-slate-600">
                   <thead className="bg-slate-50 border-b border-slate-200 font-bold text-slate-700 uppercase text-xs">
                       <tr>
                           <th className="px-6 py-4">Día / Fecha</th>
                           <th className="px-6 py-4">Cliente</th>
+                          <th className="px-6 py-4">Horarios</th>
                           <th className="px-6 py-4">Operador (Nombre Completo)</th>
                           <th className="px-6 py-4">Resumen de Ruta</th>
                           <th className="px-6 py-4">Kilómetros</th>
@@ -468,6 +522,11 @@ export default function Historial() {
                               <td className="px-6 py-4">
                                   <div className="font-bold text-slate-700">{fila.client}</div>
                                   <div className="text-[10px] text-slate-400 font-bold uppercase">{fila.serviceType}</div>
+                              </td>
+                              <td className="px-6 py-4">
+                                  <div className="text-[10px] font-black uppercase text-slate-400">Programado: <span className="text-slate-700">{getPlannedStartTime(fila) || '--:--'}</span></div>
+                                  <div className="text-xs font-black text-green-600 mt-1">Inicio real: {getActualStartTime(fila) || '--:--'}</div>
+                                  <div className="text-[10px] font-bold text-slate-500 mt-1">Fin: {getActualEndTime(fila) || '--:--'}</div>
                               </td>
                               <td className="px-6 py-4 font-medium">
                                   {fila.driver ? <span className="font-bold text-slate-800">{fila.driver}</span> : <span className="text-slate-400 italic">Sin asignar</span>}
@@ -656,7 +715,7 @@ export default function Historial() {
                     {/* Panel Derecho: Mapa de Auditoría */}
                     <div className="w-full xl:w-1/2 min-h-[420px] xl:min-h-0 bg-slate-200 relative">
                         {isLoaded ? (
-                            <GoogleMap mapContainerStyle={containerStyle} center={centerMX} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false, mapTypeControl: false }}>
+                            <GoogleMap mapContainerStyle={containerStyle} center={normalizePoint(selectedRoute?.startCoords) || localMapCenter} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false, mapTypeControl: false }}>
                                 {/* RUTA PLANEADA */}
                                 {normalizePath(selectedRoute.technicalData?.geometry).length > 1 && (
                                     <Polyline path={normalizePath(selectedRoute.technicalData?.geometry)} options={{ strokeColor: "#3b82f6", strokeOpacity: 0.45, strokeWeight: 4 }} />

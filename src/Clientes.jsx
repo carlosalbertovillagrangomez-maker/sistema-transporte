@@ -3,7 +3,7 @@ import { Users, Building, MapPin, Plus, Trash2, Save, X, User, Phone, Mail, Layo
 
 // FIREBASE
 import { db } from './firebase';
-import { collection, addDoc, onSnapshot, deleteDoc, doc, query, orderBy, updateDoc } from 'firebase/firestore';
+import { collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc } from 'firebase/firestore';
 
 // GOOGLE MAPS
 import { useJsApiLoader, Autocomplete } from '@react-google-maps/api';
@@ -21,7 +21,6 @@ const AddressAutocomplete = ({ value, onSelect, placeholder }) => {
     useEffect(() => { setInputValue(value || ''); }, [value]);
 
     const options = {
-        componentRestrictions: { country: "mx" },
         fields: ["address_components", "geometry", "formatted_address"],
     };
 
@@ -112,7 +111,7 @@ const parseBulkRow = (row, index) => {
 
 export default function Clientes() {
   // Cargar Google Maps (Usamos el mismo ID que en App.jsx para evitar errores)
-  const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries });
+  const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries, language: 'es' });
 
   const [showModal, setShowModal] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -148,12 +147,20 @@ export default function Clientes() {
 
   // === 1. LEER CLIENTES ===
   useEffect(() => {
-    const q = query(collection(db, "clientes"), orderBy("created", "desc"));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-        const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const unsubscribe = onSnapshot(
+      collection(db, 'clientes'),
+      snapshot => {
+        const docs = snapshot.docs
+          .map(clientDoc => ({ id: clientDoc.id, ...clientDoc.data() }))
+          .sort((a, b) => String(b.created || '').localeCompare(String(a.created || '')));
         setClients(docs);
         setLoading(false);
-    });
+      },
+      error => {
+        console.error('No se pudieron cargar los clientes:', error);
+        setLoading(false);
+      }
+    );
     return () => unsubscribe();
   }, []);
 
@@ -215,7 +222,16 @@ export default function Clientes() {
       }
   };
 
-  const addUser = () => {
+  const persistClientArrays = async (users, locations) => {
+      if (!editingId) return;
+      await updateDoc(doc(db, 'clientes', editingId), {
+          users,
+          locations,
+          updatedAt: new Date().toISOString()
+      });
+  };
+
+  const addUser = async () => {
       if(!tempUser.name || (!tempUser.phone && !tempUser.email)) {
           return alert("Ingresa el nombre y al menos teléfono o correo");
       }
@@ -249,6 +265,13 @@ export default function Clientes() {
           : newClient.locations;
 
       setNewClient({...newClient, users, locations});
+      try {
+          await persistClientArrays(users, locations);
+          if (editingId) alert(editingUserIndex !== null ? 'Usuario actualizado correctamente.' : 'Usuario agregado correctamente.');
+      } catch (error) {
+          console.error('No se pudo guardar el usuario:', error);
+          return alert('No fue posible guardar el usuario en la base de datos.');
+      }
       setTempUser({ name: '', phone: '', email: '', role: 'Encargado', entrada: '08:00', salida: '17:00' }); 
       setEditingUserIndex(null);
   };
@@ -266,12 +289,19 @@ export default function Clientes() {
       setEditingUserIndex(index);
   };
 
-  const addLocation = () => {
+  const addLocation = async () => {
       if(!tempLoc.alias || !tempLoc.address) return alert("Define un alias y dirección");
       const locations = [...newClient.locations];
       if (editingLocationIndex !== null) locations[editingLocationIndex] = tempLoc;
       else locations.push(tempLoc);
       setNewClient({...newClient, locations});
+      try {
+          await persistClientArrays(newClient.users, locations);
+          if (editingId) alert(editingLocationIndex !== null ? 'Ubicación actualizada correctamente.' : 'Ubicación agregada correctamente.');
+      } catch (error) {
+          console.error('No se pudo guardar la ubicación:', error);
+          return alert('No fue posible guardar la ubicación en la base de datos.');
+      }
       setTempLoc({ alias: '', address: '', lat: null, lon: null, assignedTo: 'General' });
       setEditingLocationIndex(null);
   };
@@ -279,6 +309,31 @@ export default function Clientes() {
   const editLocation = (index) => {
       setTempLoc({ ...newClient.locations[index] });
       setEditingLocationIndex(index);
+  };
+
+  const deleteUser = async (index) => {
+      const user = newClient.users[index];
+      if (!confirm(`¿Eliminar a ${user?.name || 'este usuario'}?`)) return;
+      const users = newClient.users.filter((_, itemIndex) => itemIndex !== index);
+      const locations = newClient.locations.filter(location => location.assignedTo !== user?.name);
+      setNewClient({ ...newClient, users, locations });
+      try {
+          await persistClientArrays(users, locations);
+      } catch (error) {
+          console.error('No se pudo eliminar el usuario:', error);
+          alert('No fue posible eliminar el usuario de la base de datos.');
+      }
+  };
+
+  const deleteLocation = async (index) => {
+      const locations = newClient.locations.filter((_, itemIndex) => itemIndex !== index);
+      setNewClient({ ...newClient, locations });
+      try {
+          await persistClientArrays(newClient.users, locations);
+      } catch (error) {
+          console.error('No se pudo eliminar la ubicación:', error);
+          alert('No fue posible eliminar la ubicación de la base de datos.');
+      }
   };
 
   const downloadBulkTemplate = () => {
@@ -322,7 +377,7 @@ export default function Clientes() {
       if (!address || !window.google?.maps?.Geocoder) return null;
       try {
           const geocoder = new window.google.maps.Geocoder();
-          const response = await geocoder.geocode({ address, componentRestrictions: { country: 'MX' } });
+          const response = await geocoder.geocode({ address });
           const location = response?.results?.[0]?.geometry?.location;
           if (!location) return null;
           return { lat: location.lat(), lon: location.lng() };
@@ -563,7 +618,7 @@ export default function Clientes() {
                                             <input type="time" className="text-xs p-2 rounded border w-full outline-none focus:border-blue-500" value={tempUser.salida} onChange={e => setTempUser({...tempUser, salida: e.target.value})} />
                                         </div>
 
-                                        <button onClick={addUser} className="bg-slate-800 text-white text-xs rounded font-bold hover:bg-slate-700 transition md:col-span-2">{editingUserIndex !== null ? 'Actualizar' : 'Agregar'}</button>
+                                        <button type="button" onClick={addUser} className="bg-slate-800 text-white text-xs rounded font-bold hover:bg-slate-700 transition md:col-span-2">{editingUserIndex !== null ? 'Actualizar' : 'Agregar'}</button>
                                     </div>
                                     <div className="space-y-2 mt-4">
                                         {newClient.users.map((u, i) => (
@@ -578,8 +633,8 @@ export default function Clientes() {
                                                     )}
                                                 </span>
                                                 <div className="flex gap-1">
-                                                    <button onClick={() => editUser(i)} className="text-blue-500 hover:bg-blue-50 p-1.5 rounded transition" title="Editar usuario"><Pencil className="w-3.5 h-3.5"/></button>
-                                                    <button onClick={() => setNewClient({...newClient, users: newClient.users.filter((_, idx) => idx !== i)})} className="text-red-400 hover:bg-red-50 p-1.5 rounded transition" title="Eliminar usuario"><Trash2 className="w-3.5 h-3.5"/></button>
+                                                    <button type="button" onClick={() => editUser(i)} className="text-blue-500 hover:bg-blue-50 p-1.5 rounded transition" title="Editar usuario"><Pencil className="w-3.5 h-3.5"/></button>
+                                                    <button type="button" onClick={() => deleteUser(i)} className="text-red-400 hover:bg-red-50 p-1.5 rounded transition" title="Eliminar usuario"><Trash2 className="w-3.5 h-3.5"/></button>
                                                 </div>
                                             </div>
                                         ))}
@@ -617,7 +672,7 @@ export default function Clientes() {
                                         onSelect={(item) => setTempLoc({...tempLoc, address: item.address, lat: item.lat, lon: item.lon})} 
                                     />
                                 </div>
-                                <button onClick={addLocation} className="w-full py-2 bg-blue-600 text-white text-xs rounded font-bold hover:bg-blue-700 transition shadow-sm">{editingLocationIndex !== null ? 'Actualizar ubicación' : 'Guardar ubicación'}</button>
+                                <button type="button" onClick={addLocation} className="w-full py-2 bg-blue-600 text-white text-xs rounded font-bold hover:bg-blue-700 transition shadow-sm">{editingLocationIndex !== null ? 'Actualizar ubicación' : 'Guardar ubicación'}</button>
                                 
                                 <div className="space-y-2 mt-4">
                                     {newClient.locations.map((l, i) => (
@@ -634,8 +689,8 @@ export default function Clientes() {
                                                 <p className="text-slate-500 truncate">{l.address}</p>
                                             </div>
                                             <div className="flex gap-1 shrink-0">
-                                                <button onClick={() => editLocation(i)} className="text-blue-500 hover:bg-blue-50 p-1 rounded transition" title="Editar ubicación"><Pencil className="w-3 h-3"/></button>
-                                                <button onClick={() => setNewClient({...newClient, locations: newClient.locations.filter((_, idx) => idx !== i)})} className="text-red-400 hover:bg-red-50 p-1 rounded transition" title="Eliminar ubicación"><Trash2 className="w-3 h-3"/></button>
+                                                <button type="button" onClick={() => editLocation(i)} className="text-blue-500 hover:bg-blue-50 p-1 rounded transition" title="Editar ubicación"><Pencil className="w-3 h-3"/></button>
+                                                <button type="button" onClick={() => deleteLocation(i)} className="text-red-400 hover:bg-red-50 p-1 rounded transition" title="Eliminar ubicación"><Trash2 className="w-3 h-3"/></button>
                                             </div>
                                         </div>
                                     ))}

@@ -343,6 +343,8 @@ function App() {
   const [onlineDrivers, setOnlineDrivers] = useState([]); 
   const [editingRoute, setEditingRoute] = useState(null); 
   const [viewHistory, setViewHistory] = useState(false);
+  const [historyServiceFilter, setHistoryServiceFilter] = useState('Todos');
+  const [historyDateFilter, setHistoryDateFilter] = useState('');
   const [selectedRoute, setSelectedRoute] = useState(null);
   const [activeAlertsCount, setActiveAlertsCount] = useState(0);
   const [followSelectedRoute, setFollowSelectedRoute] = useState(true);
@@ -675,11 +677,45 @@ function App() {
       }
   };
 
+  const getHistoryRouteDateKey = (ruta) => {
+      const explicitDate = String(ruta?.scheduledDate || ruta?.finalDate || '').trim();
+      if (/^\d{4}-\d{2}-\d{2}/.test(explicitDate)) return explicitDate.slice(0, 10);
+
+      const timestamp = getTimestampMs(
+          ruta?.actualStartTimestamp ||
+          ruta?.actualEndTimestamp ||
+          ruta?.finishedAt ||
+          ruta?.createdDate
+      );
+
+      if (!timestamp) return '';
+
+      const date = new Date(timestamp);
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+  };
+
+  const getHistoryServiceKind = (ruta) => {
+      const serviceType = String(ruta?.serviceType || '').toLowerCase();
+      if (serviceType.includes('prioritario') || serviceType.includes('inmediato')) return 'Inmediatos';
+      return 'Programados';
+  };
+
   const getFilteredAndSortedRoutes = () => {
-      const filtered = liveRoutes.filter(ruta => viewHistory
+      let filtered = liveRoutes.filter(ruta => viewHistory
           ? ['Finalizado', 'Completado', 'Cancelado'].includes(ruta.status)
           : !['Finalizado', 'Completado', 'Cancelado'].includes(ruta.status)
       );
+
+      if (viewHistory && historyServiceFilter !== 'Todos') {
+          filtered = filtered.filter(ruta => getHistoryServiceKind(ruta) === historyServiceFilter);
+      }
+
+      if (viewHistory && historyDateFilter) {
+          filtered = filtered.filter(ruta => getHistoryRouteDateKey(ruta) === historyDateFilter);
+      }
 
       return filtered.sort((a, b) => {
           if (viewHistory) return getRouteAuditSortMs(b) - getRouteAuditSortMs(a);
@@ -849,8 +885,39 @@ function App() {
                         <button onClick={() => setViewHistory(!viewHistory)} className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] uppercase tracking-widest font-black transition ${viewHistory ? 'bg-slate-800 text-white shadow-md shadow-slate-800/20' : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'}`}>{viewHistory ? <><Eye className="w-3 h-3"/> Activos</> : <><History className="w-3 h-3"/> Pasados</>}</button>
                     </div>
                     
+                    {viewHistory && (
+                        <div className="px-5 py-3 border-b border-slate-100 bg-white grid grid-cols-1 sm:grid-cols-[1fr_1fr_auto] gap-2">
+                            <select
+                                value={historyServiceFilter}
+                                onChange={(event) => setHistoryServiceFilter(event.target.value)}
+                                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-700 bg-slate-50 outline-none focus:border-orange-400"
+                            >
+                                <option value="Todos">Todos los viajes</option>
+                                <option value="Inmediatos">Inmediatos</option>
+                                <option value="Programados">Programados</option>
+                            </select>
+                            <input
+                                type="date"
+                                value={historyDateFilter}
+                                onChange={(event) => setHistoryDateFilter(event.target.value)}
+                                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-700 bg-slate-50 outline-none focus:border-orange-400"
+                                aria-label="Filtrar viajes pasados por fecha"
+                            />
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setHistoryServiceFilter('Todos');
+                                    setHistoryDateFilter('');
+                                }}
+                                className="px-3 py-2.5 rounded-xl border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-50"
+                            >
+                                Limpiar
+                            </button>
+                        </div>
+                    )}
+
                     <div className="flex-1 overflow-y-auto p-5 space-y-4">
-                        {rutasVisibles.length === 0 && <div className="text-center py-10 text-slate-400 text-sm font-medium"><p>{viewHistory ? 'No hay historial reciente.' : 'No hay rutas pendientes hoy.'}</p></div>}
+                        {rutasVisibles.length === 0 && <div className="text-center py-10 text-slate-400 text-sm font-medium"><p>{viewHistory ? 'No hay viajes pasados que coincidan con los filtros.' : 'No hay rutas pendientes hoy.'}</p></div>}
 
                         {rutasVisibles.map((ruta) => {
                             const hasChatOrEvidence = (ruta.chat && ruta.chat.length > 0) || (ruta.evidencias && ruta.evidencias.length > 0) || (ruta.evidenciasLlegada && ruta.evidenciasLlegada.length > 0) || (ruta.stopEvents && ruta.stopEvents.length > 0);

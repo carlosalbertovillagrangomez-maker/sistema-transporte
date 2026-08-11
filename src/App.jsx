@@ -347,6 +347,9 @@ function App() {
   const [historyDateFilter, setHistoryDateFilter] = useState('');
   const [selectedRoute, setSelectedRoute] = useState(null);
   const [activeAlertsCount, setActiveAlertsCount] = useState(0);
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [evidencePreview, setEvidencePreview] = useState(null);
+  const [selectedDriverId, setSelectedDriverId] = useState(null);
   const [followSelectedRoute, setFollowSelectedRoute] = useState(true);
   const [clockTick, setClockTick] = useState(Date.now());
 
@@ -361,6 +364,29 @@ function App() {
   // Estados para estabilizar la brújula del coche en el Despachador
   const prevLocRef = useRef(null);
   const [carHeading, setCarHeading] = useState(0);
+
+  // Mantener la sesión del despachador al refrescar la página.
+  useEffect(() => {
+      try {
+          const raw = localStorage.getItem('triplogix_dispatcher_session');
+          if (!raw) return;
+          const savedUser = JSON.parse(raw);
+          if (savedUser?.name) setCurrentUser(savedUser);
+      } catch (sessionError) {
+          console.warn('No se pudo restaurar la sesión del despachador:', sessionError);
+          localStorage.removeItem('triplogix_dispatcher_session');
+      }
+  }, []);
+
+  const handleDispatcherLogin = useCallback((user) => {
+      setCurrentUser(user);
+      try { localStorage.setItem('triplogix_dispatcher_session', JSON.stringify(user)); } catch (_) {}
+  }, []);
+
+  const handleDispatcherLogout = useCallback(() => {
+      try { localStorage.removeItem('triplogix_dispatcher_session'); } catch (_) {}
+      setCurrentUser(null);
+  }, []);
 
   useEffect(() => {
       if (!('geolocation' in navigator)) return undefined;
@@ -594,6 +620,24 @@ function App() {
       }
   }, [isLoaded, selectedRoute?.id, onlineDrivers]);
 
+  // Seguimiento independiente del viaje: permite seguir a un conductor que ya terminó
+  // mientras conserve la app encendida y su estado En Línea.
+  useEffect(() => {
+      if (!selectedDriverId || selectedRoute || manualMapInteraction || !mapRef.current) return;
+      const driver = onlineDrivers.find(item => item.id === selectedDriverId);
+      const point = normalizePoint(driver?.currentLocation);
+      if (!point) return;
+
+      programmaticCameraRef.current = true;
+      try {
+          mapRef.current.panTo(point);
+          const currentZoom = Number(mapRef.current.getZoom?.());
+          if (!Number.isFinite(currentZoom) || currentZoom < 15) mapRef.current.setZoom(16);
+      } finally {
+          setTimeout(() => { programmaticCameraRef.current = false; }, 250);
+      }
+  }, [selectedDriverId, selectedRoute?.id, onlineDrivers, manualMapInteraction]);
+
   const updateRouteStatus = async (id, status, updates = {}) => {
       try {
           await updateDoc(doc(db, 'rutas', id), { status, ...updates });
@@ -738,8 +782,10 @@ function App() {
           : selectedUpdateAgeSeconds > 30
               ? 'delayed'
               : 'live';
+  const activeNotificationRoutes = liveRoutes.filter(route => route?.proximityAlert?.active === true);
+  const selectedOnlineDriver = onlineDrivers.find(driver => driver.id === selectedDriverId) || null;
 
-  if (!currentUser) return <Login onLogin={(user) => setCurrentUser(user)} />;
+  if (!currentUser) return <Login onLogin={handleDispatcherLogin} />;
 
   return (
     <div className="flex h-[100dvh] bg-slate-50 font-sans overflow-hidden">
@@ -756,7 +802,7 @@ function App() {
           <button onClick={() => setActiveTab('reportes')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'reportes' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><FileText className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Reportes</span></button>
         </nav>
         <div className="p-2 xl:p-4 border-t border-slate-800 bg-slate-950">
-            <button onClick={() => setCurrentUser(null)} className="w-full flex items-center justify-center gap-2 text-xs font-bold text-slate-500 hover:text-red-400 transition py-3 rounded-xl hover:bg-red-500/10"><X className="w-4 h-4"/> <span className="hidden xl:inline">CERRAR SESIÓN</span></button>
+            <button onClick={handleDispatcherLogout} className="w-full flex items-center justify-center gap-2 text-xs font-bold text-slate-500 hover:text-red-400 transition py-3 rounded-xl hover:bg-red-500/10"><X className="w-4 h-4"/> <span className="hidden xl:inline">CERRAR SESIÓN</span></button>
         </div>
       </aside>
 
@@ -764,10 +810,10 @@ function App() {
         <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-6 xl:px-8 shadow-sm z-10 shrink-0">
           <h1 className="text-base md:text-xl font-black text-slate-800 tracking-tight">{activeTab === 'monitoreo' && 'Torre de Control'}{activeTab === 'planificacion' && 'Planificación de Rutas'}{activeTab === 'clientes' && 'Cartera de Clientes'}{activeTab === 'conductores' && 'Directorio de Conductores'}{activeTab === 'reportes' && 'Historial y Reportes'}</h1>
           <div className="flex items-center gap-6">
-              <div className="relative cursor-pointer">
+              <button type="button" onClick={() => setShowNotifications(value => !value)} className="relative cursor-pointer p-2 rounded-xl hover:bg-slate-100 transition" aria-label="Ver notificaciones">
                   <Bell className="text-slate-400 hover:text-slate-800 w-6 h-6 transition" />
-                  {activeAlertsCount > 0 && <span className="absolute -top-1 -right-1 h-4 w-4 bg-red-500 text-white text-[10px] font-bold flex items-center justify-center rounded-full border-2 border-white animate-pulse">{activeAlertsCount}</span>}
-              </div>
+                  {activeAlertsCount > 0 && <span className="absolute top-0 right-0 h-4 w-4 bg-red-500 text-white text-[10px] font-bold flex items-center justify-center rounded-full border-2 border-white animate-pulse">{activeAlertsCount}</span>}
+              </button>
               <div className="flex items-center gap-3 cursor-pointer hover:bg-slate-50 p-2 rounded-xl transition border border-transparent hover:border-slate-200">
                   <div className="w-9 h-9 rounded-xl bg-orange-100 flex items-center justify-center text-orange-600 font-black text-xs border border-orange-200">{currentUser.name.substring(0, 2).toUpperCase()}</div>
                   <div className="leading-tight">
@@ -777,6 +823,38 @@ function App() {
               </div>
           </div>
         </header>
+
+        {showNotifications && (
+            <div className="fixed top-16 right-4 md:right-8 z-[2200] w-[min(92vw,380px)] max-h-[70vh] overflow-y-auto bg-white rounded-2xl shadow-2xl border border-slate-200 p-3">
+                <div className="flex items-center justify-between px-2 py-2 border-b border-slate-100">
+                    <div>
+                        <p className="text-[10px] font-black uppercase tracking-widest text-orange-500">Notificaciones activas</p>
+                        <p className="text-xs font-bold text-slate-500 mt-1">Alertas de llegada que requieren atención.</p>
+                    </div>
+                    <button type="button" onClick={() => setShowNotifications(false)} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400"><X className="w-4 h-4"/></button>
+                </div>
+                {activeNotificationRoutes.length === 0 ? (
+                    <div className="py-8 text-center text-slate-400 text-xs font-bold">No hay alertas activas.</div>
+                ) : (
+                    <div className="space-y-2 mt-2">
+                        {activeNotificationRoutes.map(route => (
+                            <button key={route.id} type="button" onClick={() => {
+                                setActiveTab('monitoreo');
+                                setSelectedDriverId(route.driverId || null);
+                                setSelectedRoute(route);
+                                setManualMapInteraction(false);
+                                setFollowSelectedRoute(true);
+                                setShowNotifications(false);
+                            }} className="w-full text-left p-3 rounded-xl border border-orange-100 bg-orange-50 hover:bg-orange-100 transition">
+                                <p className="text-[10px] font-black uppercase text-orange-600">{route.proximityAlert?.passenger || 'Conductor próximo'}</p>
+                                <p className="text-xs font-bold text-slate-800 mt-1">{route.driver || 'Conductor'} · {route.client || 'Servicio'}</p>
+                                <p className="text-[10px] font-bold text-slate-500 mt-1">Llegada estimada: {route.proximityAlert?.etaMins ?? '--'} min</p>
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
+        )}
 
         {activeTab === 'monitoreo' && (
             <div className="flex-1 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_24rem] overflow-y-auto xl:overflow-hidden p-3 md:p-4 xl:p-6 gap-4 xl:gap-6 animate-[fadeIn_0.3s_ease-out]">
@@ -792,7 +870,23 @@ function App() {
                             onZoomChanged={handleUserMapInteraction}
                             options={{ mapId: "73f56298887c80075f6fc648", streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy", fullscreenControl: true, fullscreenControlOptions: { position: window.google?.maps?.ControlPosition?.RIGHT_TOP }, zoomControl: true }}
                         >
-                            {onlineDrivers.map(d => d.currentLocation && <Marker key={d.id} position={d.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: "#22c55e", fillOpacity: 0.8, strokeWeight: 2, strokeColor: "white" }} title={`Operador: ${d.name}`} onClick={() => { const driverRoute = liveRoutes.find(r => !["Finalizado", "Completado", "Cancelado"].includes(r.status) && (r.driverId === d.id || r.driver === d.name)); if (driverRoute) { setManualMapInteraction(false); setFollowSelectedRoute(true); setSelectedRoute(driverRoute); } }} />)}
+                            {onlineDrivers.map(d => d.currentLocation && <Marker key={d.id} position={d.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: "#22c55e", fillOpacity: 0.8, strokeWeight: 2, strokeColor: "white" }} title={`Operador: ${d.name}`} onClick={() => {
+                                setSelectedDriverId(d.id);
+                                setManualMapInteraction(false);
+                                const driverRoute = liveRoutes.find(r => !["Finalizado", "Completado", "Cancelado"].includes(r.status) && (r.driverId === d.id || r.driver === d.name));
+                                if (driverRoute) {
+                                    setFollowSelectedRoute(true);
+                                    setSelectedRoute(driverRoute);
+                                } else {
+                                    setFollowSelectedRoute(false);
+                                    setSelectedRoute(null);
+                                    const point = normalizePoint(d.currentLocation);
+                                    if (point && mapRef.current) {
+                                        mapRef.current.panTo(point);
+                                        mapRef.current.setZoom(16);
+                                    }
+                                }
+                            }} />)}
                             {selectedRoute && (
                                 <>
                                     {selectedRouteGeometry.length > 1 && (
@@ -828,10 +922,13 @@ function App() {
                         </GoogleMap>
                     ) : <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-2"><Loader2 className="animate-spin w-8 h-8 text-orange-500"/><span className="text-xs font-bold uppercase tracking-widest">Cargando Mapas...</span></div>}
 
-                    {selectedRoute ? (
-                        <button type="button" onClick={() => { setSelectedRoute(null); setManualMapInteraction(false); setFollowSelectedRoute(false); }} className="absolute top-4 left-4 z-[500] bg-white/95 backdrop-blur px-4 py-2.5 rounded-xl shadow-lg border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-700 hover:bg-slate-50">
-                            Ver todos los conductores
-                        </button>
+                    {selectedRoute || selectedOnlineDriver ? (
+                        <div className="absolute top-4 left-4 z-[500] flex items-center gap-2">
+                            <button type="button" onClick={() => { setSelectedRoute(null); setSelectedDriverId(null); setManualMapInteraction(false); setFollowSelectedRoute(false); }} className="bg-white/95 backdrop-blur px-4 py-2.5 rounded-xl shadow-lg border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-700 hover:bg-slate-50">
+                                Ver todos los conductores
+                            </button>
+                            {!selectedRoute && selectedOnlineDriver && <span className="bg-green-600 text-white px-3 py-2.5 rounded-xl shadow-lg text-[10px] font-black uppercase tracking-widest">Siguiendo: {selectedOnlineDriver.name}</span>}
+                        </div>
                     ) : (
                         <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-5 py-3 rounded-2xl shadow-sm z-[500] border border-slate-100 max-w-xs"><h5 className="font-black text-slate-800 text-sm mb-1">Radar en Vivo</h5><p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> {onlineDrivers.length} unidades activas</p></div>
                     )}
@@ -1021,7 +1118,7 @@ function App() {
 
       {/* MODAL CHAT Y EVIDENCIAS */}
       {chatModalRoute && (
-          <div className="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+          <div className="fixed inset-0 z-[2600] flex items-center justify-center p-2 md:p-4 bg-slate-900/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
               <div className="bg-white w-full max-w-6xl h-[92dvh] rounded-[2rem] shadow-2xl flex flex-col xl:flex-row overflow-hidden border border-slate-200">
                   <div className="w-full xl:w-1/2 h-1/2 xl:h-full flex flex-col border-b xl:border-b-0 xl:border-r border-slate-200 bg-slate-50">
                       <div className="p-5 bg-slate-800 text-white flex justify-between items-center shadow-md z-10 shrink-0">
@@ -1049,7 +1146,7 @@ function App() {
                               );
                           })}
                       </div>
-                      <div className="p-4 bg-white border-t border-slate-200 flex items-center gap-3 shrink-0">
+                      <div className="sticky bottom-0 z-20 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] bg-white border-t border-slate-200 flex items-center gap-3 shrink-0 shadow-[0_-8px_20px_rgba(15,23,42,0.08)]">
                           <input type="text" value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendDispatchMessage()} placeholder="Escribe al conductor o cliente..." className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-orange-500 focus:bg-white transition-colors" />
                           <button onClick={sendDispatchMessage} className="p-3 bg-orange-500 text-white rounded-xl shadow-md hover:bg-orange-600 active:scale-95 transition-transform"><Send className="w-5 h-5"/></button>
                       </div>
@@ -1117,7 +1214,7 @@ function App() {
                                           .map((ev, idx) => (
                                           <div key={ev.eventId || `${ev.stopIndex}-${ev.timestamp}-${idx}`} className="bg-white rounded-2xl shadow-sm border border-green-200 overflow-hidden">
                                               <div className="bg-green-50 p-4 border-b border-green-100 flex justify-between items-center"><div><p className="text-[10px] font-black text-green-600 uppercase tracking-widest mb-0.5">{ev.label || `Punto ${Number(ev.stopIndex) + 1}`}</p><p className="text-sm font-black text-slate-800">{ev.passenger || 'Pasajero'}</p></div><div className="text-right"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Hora</p><p className="text-sm font-mono font-black text-slate-700">{ev.time || formatMexicoTime(ev.timestamp) || '--:--'}</p></div></div>
-                                              <div className="p-4"><p className="text-xs text-slate-600 font-medium mb-4 flex items-start gap-2"><MapPin className="w-4 h-4 mt-0.5 shrink-0 text-green-500"/> {ev.address || 'Sin dirección registrada'}</p>{ev.photo ? (<div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-100 relative group cursor-pointer" onClick={() => window.open(ev.photo, '_blank')}><img src={ev.photo} alt="Evidencia de abordaje" className="w-full h-48 object-cover" /><div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><p className="text-white text-xs font-black uppercase tracking-widest border-2 border-white px-4 py-2 rounded-lg">Ver completa</p></div></div>) : (<div className="w-full h-20 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 text-[10px] font-black uppercase tracking-widest border border-slate-200">ABORDAJE SIN FOTO</div>)}</div>
+                                              <div className="p-4"><p className="text-xs text-slate-600 font-medium mb-4 flex items-start gap-2"><MapPin className="w-4 h-4 mt-0.5 shrink-0 text-green-500"/> {ev.address || 'Sin dirección registrada'}</p>{ev.photo ? (<div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-100 relative group cursor-pointer" onClick={() => setEvidencePreview({ photo: ev.photo, passenger: ev.passenger || 'Pasajero', label: ev.label || 'Evidencia de abordaje' })}><img src={ev.photo} alt="Evidencia de abordaje" className="w-full h-48 object-cover" /><div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><p className="text-white text-xs font-black uppercase tracking-widest border-2 border-white px-4 py-2 rounded-lg">Ver completa</p></div></div>) : (<div className="w-full h-20 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 text-[10px] font-black uppercase tracking-widest border border-slate-200">ABORDAJE SIN FOTO</div>)}</div>
                                           </div>
                                       ))}
                                   </div>
@@ -1132,12 +1229,29 @@ function App() {
                               chatModalRoute.evidencias.map((ev, idx) => (
                                   <div key={idx} className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                                       <div className="bg-red-50 p-4 border-b border-red-100 flex justify-between items-center"><div><p className="text-[10px] font-black text-red-500 uppercase tracking-widest mb-0.5">Reporte de Ausencia</p><p className="text-sm font-black text-slate-800">{ev.passenger}</p></div><div className="text-right"><p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-0.5">Hora</p><p className="text-sm font-mono font-black text-slate-700">{ev.time}</p></div></div>
-                                      <div className="p-4"><p className="text-xs text-slate-600 font-medium mb-4 flex items-start gap-2"><MapPin className="w-4 h-4 mt-0.5 shrink-0 text-red-400"/> {ev.address}</p>{ev.photo ? (<div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-100 relative group cursor-pointer" onClick={() => window.open(ev.photo, '_blank')}><img src={ev.photo} alt="Evidencia" className="w-full h-48 object-cover" /><div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><p className="text-white text-xs font-black uppercase tracking-widest border-2 border-white px-4 py-2 rounded-lg">Ver Completa</p></div></div>) : (<div className="w-full h-24 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 text-[10px] font-black uppercase tracking-widest border border-slate-200">SIN FOTO</div>)}</div>
+                                      <div className="p-4"><p className="text-xs text-slate-600 font-medium mb-4 flex items-start gap-2"><MapPin className="w-4 h-4 mt-0.5 shrink-0 text-red-400"/> {ev.address}</p>{ev.photo ? (<div className="rounded-xl overflow-hidden border border-slate-200 bg-slate-100 relative group cursor-pointer" onClick={() => setEvidencePreview({ photo: ev.photo, passenger: ev.passenger || 'Pasajero', label: ev.label || 'Evidencia de abordaje' })}><img src={ev.photo} alt="Evidencia" className="w-full h-48 object-cover" /><div className="absolute inset-0 bg-slate-900/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center"><p className="text-white text-xs font-black uppercase tracking-widest border-2 border-white px-4 py-2 rounded-lg">Ver Completa</p></div></div>) : (<div className="w-full h-24 bg-slate-100 rounded-xl flex items-center justify-center text-slate-400 text-[10px] font-black uppercase tracking-widest border border-slate-200">SIN FOTO</div>)}</div>
                                   </div>
                               ))
                           )}
                           </div>
                       </div>
+                  </div>
+              </div>
+          </div>
+      )}
+
+      {evidencePreview?.photo && (
+          <div className="fixed inset-0 z-[3200] bg-slate-950/90 backdrop-blur-md flex items-center justify-center p-4" onClick={() => setEvidencePreview(null)}>
+              <div className="w-full max-w-5xl max-h-[94dvh] bg-white rounded-2xl overflow-hidden shadow-2xl flex flex-col" onClick={(event) => event.stopPropagation()}>
+                  <div className="px-4 py-3 bg-slate-900 text-white flex items-center justify-between shrink-0">
+                      <div>
+                          <p className="text-[10px] uppercase tracking-widest font-black text-orange-400">{evidencePreview.label}</p>
+                          <p className="text-sm font-bold mt-0.5">{evidencePreview.passenger}</p>
+                      </div>
+                      <button type="button" onClick={() => setEvidencePreview(null)} className="p-2 rounded-xl bg-white/10 hover:bg-white/20"><X className="w-5 h-5"/></button>
+                  </div>
+                  <div className="flex-1 min-h-0 overflow-auto bg-slate-100 p-3 flex items-center justify-center">
+                      <img src={evidencePreview.photo} alt={evidencePreview.label} className="max-w-full max-h-[82dvh] object-contain rounded-xl shadow" />
                   </div>
               </div>
           </div>

@@ -167,7 +167,7 @@ const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor
     const autocompleteRef = useRef(null);
     useEffect(() => { setInputValue(value || ''); }, [value]);
     const generalFavs = favorites.filter(f => !f.assignedTo || f.assignedTo === 'General');
-    const options = { componentRestrictions: { country: "mx" }, fields: ["address_components", "geometry", "formatted_address"] };
+    const options = { fields: ["address_components", "geometry", "formatted_address"] };
 
     const handlePlaceChanged = () => {
         if (autocompleteRef.current !== null) {
@@ -258,7 +258,7 @@ export default function Planificacion() {
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [routeToAssign, setRouteToAssign] = useState(null);
 
-  const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries });
+  const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries, language: 'es' });
   const mapRef = useRef(null);
   const previewMapRef = useRef(null);
 

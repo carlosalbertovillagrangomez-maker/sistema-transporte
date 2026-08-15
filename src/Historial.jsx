@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { FileSpreadsheet, Calendar, ArrowUp, X, MapPin, User, Clock, Building, Search, Filter, Zap, Navigation, UserCheck, CheckCircle2, Camera, AlertOctagon } from 'lucide-react';
+import { FileSpreadsheet, Calendar, ArrowUp, X, MapPin, User, Clock, Building, Search, Filter, Zap, Navigation, UserCheck, CheckCircle2, Camera, AlertOctagon, Gauge } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 // FIREBASE
@@ -172,6 +172,15 @@ const getActualDistanceKm = (route) => {
 const getPlannedDistanceKm = (route) => {
     const value = Number(route?.technicalData?.totalDistance ?? route?.distanceKm ?? 0);
     return Number.isFinite(value) ? value : 0;
+};
+
+const getAverageSpeedKmh = (route) => {
+    const distanceKm = getActualDistanceKm(route);
+    const startMs = getTimestampMs(route?.serviceDistanceStartedAt || route?.firstStopAttendedTimestamp || route?.actualStartTimestamp || route?.navigationStartedAt);
+    const endMs = getTimestampMs(route?.actualEndTimestamp || route?.finishedAt || route?.completedAt);
+    if (!(distanceKm > 0) || !startMs || !endMs || endMs <= startMs) return 0;
+    const hours = (endMs - startMs) / 3600000;
+    return hours > 0 ? distanceKm / hours : 0;
 };
 
 const normalizePoint = (point) => {
@@ -543,6 +552,7 @@ export default function Historial() {
                                       <div className="text-[10px] text-slate-400 font-black uppercase tracking-widest">Planeados: <span className="text-blue-600">{getPlannedDistanceKm(fila).toFixed(1)} km</span></div>
                                       <div className="text-sm text-green-600 font-black">Reales: {getActualDistanceKm(fila).toFixed(1)} km</div>
                                       <div className={`text-[10px] font-black ${getActualDistanceKm(fila) - getPlannedDistanceKm(fila) > 0 ? 'text-orange-600' : 'text-slate-400'}`}>Diferencia: {(getActualDistanceKm(fila) - getPlannedDistanceKm(fila)).toFixed(1)} km</div>
+                                      {getAverageSpeedKmh(fila) > 0 && <div className="text-[10px] font-black text-purple-600">Vel. promedio: {getAverageSpeedKmh(fila).toFixed(1)} km/h</div>}
                                   </div>
                               </td>
                               <td className="px-6 py-4 text-right">
@@ -741,7 +751,7 @@ export default function Historial() {
                         {selectedRoute.technicalData && (
                             <div className="absolute bottom-4 md:bottom-6 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur px-4 md:px-6 py-4 rounded-2xl shadow-2xl border border-slate-200 flex flex-col gap-2 z-10 min-w-[280px] max-w-[90%]">
                                 <div className="flex justify-between items-center gap-4 border-b pb-2">
-                                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div><p className="text-[10px] font-black uppercase text-slate-500">Planeada</p></div>
+                                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div><p className="text-[10px] font-black uppercase text-slate-500">Ruta original creada</p></div>
                                     <p className="font-bold text-blue-700">{getPlannedDistanceKm(selectedRoute).toFixed(1)} km</p>
                                 </div>
                                 <div className="flex justify-between items-center gap-4 border-b pb-2">
@@ -749,10 +759,16 @@ export default function Historial() {
                                     <p className="font-bold text-orange-700">{Number(selectedRoute.liveNavigation?.distanceKm || 0).toFixed(1)} km restantes</p>
                                 </div>
                                 <div className="flex justify-between items-center gap-4">
-                                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-purple-500"></div><p className="text-[10px] font-black uppercase text-purple-600">Real GPS</p></div>
+                                    <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-purple-500"></div><p className="text-[10px] font-black uppercase text-purple-600">Ruta final recorrida</p></div>
                                     <p className="font-black text-xl text-purple-700">{getActualDistanceKm(selectedRoute).toFixed(1)} km</p>
                                 </div>
-                                <p className="text-[8px] text-center text-slate-400 font-bold uppercase mt-1">Azul: plan · naranja: recálculo · morado: recorrido GPS.</p>
+                                {getAverageSpeedKmh(selectedRoute) > 0 && (
+                                    <div className="flex justify-between items-center gap-4 border-t pt-2">
+                                        <div className="flex items-center gap-2"><Gauge className="w-3.5 h-3.5 text-purple-600"/><p className="text-[10px] font-black uppercase text-slate-500">Velocidad promedio</p></div>
+                                        <p className="font-black text-purple-700">{getAverageSpeedKmh(selectedRoute).toFixed(1)} km/h</p>
+                                    </div>
+                                )}
+                                <p className="text-[8px] text-center text-slate-400 font-bold uppercase mt-1">Azul: ruta original · naranja: recálculo · morado: recorrido GPS final.</p>
                             </div>
                         )}
                     </div>

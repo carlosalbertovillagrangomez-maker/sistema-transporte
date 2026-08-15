@@ -62,6 +62,8 @@ const normalizeText = (value = '') => String(value || '')
     .trim();
 
 const normalizePhone = (value = '') => String(value || '').replace(/\D/g, '');
+const compareNamesAZ = (a, b) => normalizeText(a?.name || a?.assignedTo || '').localeCompare(normalizeText(b?.name || b?.assignedTo || ''), 'es', { sensitivity: 'base' });
+const sortUsersAZ = (users = []) => [...users].sort(compareNamesAZ);
 
 const getRowValue = (row, aliases = []) => {
     const normalizedEntries = Object.entries(row || {}).map(([key, value]) => [
@@ -151,8 +153,11 @@ export default function Clientes() {
       collection(db, 'clientes'),
       snapshot => {
         const docs = snapshot.docs
-          .map(clientDoc => ({ id: clientDoc.id, ...clientDoc.data() }))
-          .sort((a, b) => String(b.created || '').localeCompare(String(a.created || '')));
+          .map(clientDoc => {
+              const data = clientDoc.data();
+              return { id: clientDoc.id, ...data, users: sortUsersAZ(data.users || []) };
+          })
+          .sort(compareNamesAZ);
         setClients(docs);
         setLoading(false);
       },
@@ -174,11 +179,13 @@ export default function Clientes() {
               const clientRef = doc(db, "clientes", editingId);
               await updateDoc(clientRef, {
                   ...newClient,
+                  users: sortUsersAZ(newClient.users || []),
               });
           } else {
               // === MODO CREACIÓN ===
               const clientToSave = {
                   ...newClient,
+                  users: sortUsersAZ(newClient.users || []),
                   created: new Date().toISOString(),
                   joined: new Date().toLocaleDateString()
               };
@@ -201,7 +208,7 @@ export default function Clientes() {
           type: client.type,
           phone: client.phone || '',
           email: client.email || '',
-          users: client.users || [],
+          users: sortUsersAZ(client.users || []),
           locations: client.locations || []
       });
       setShowModal(true);
@@ -255,6 +262,7 @@ export default function Clientes() {
       } else {
           users.push(userToSave);
       }
+      const sortedUsers = sortUsersAZ(users);
 
       const locations = previousName && previousName !== userToSave.name
           ? newClient.locations.map(location =>
@@ -264,9 +272,9 @@ export default function Clientes() {
             )
           : newClient.locations;
 
-      setNewClient({...newClient, users, locations});
+      setNewClient({...newClient, users: sortedUsers, locations});
       try {
-          await persistClientArrays(users, locations);
+          await persistClientArrays(sortedUsers, locations);
           if (editingId) alert(editingUserIndex !== null ? 'Usuario actualizado correctamente.' : 'Usuario agregado correctamente.');
       } catch (error) {
           console.error('No se pudo guardar el usuario:', error);
@@ -467,7 +475,7 @@ export default function Clientes() {
           }
 
           await updateDoc(doc(db, 'clientes', client.id), {
-              users,
+              users: sortUsersAZ(users),
               locations,
               updatedAt: new Date().toISOString()
           });
@@ -492,7 +500,7 @@ export default function Clientes() {
           client.email,
           ...(client.users || []).flatMap(user => [user.name, user.phone, user.email])
       ].some(value => normalizeText(value).toLowerCase().includes(term));
-  });
+  }).sort(compareNamesAZ);
 
   if (!isLoaded) return <div className="flex items-center justify-center h-full text-slate-400">Cargando módulos...</div>;
 

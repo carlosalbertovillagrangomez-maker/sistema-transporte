@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Truck, Monitor, Map as MapIcon, Users, FileText, Bell, AlertTriangle, X, Play, CheckSquare, Clock, Zap, Calendar, Edit, Save, History, Eye, Briefcase, Loader2, BellRing, MessageSquare, Send, Camera, RefreshCw, ShieldCheck, MapPin, LocateFixed, Route as RouteIcon, Timer, Gauge, CircleDot, Navigation2 } from 'lucide-react';
+import { Truck, Monitor, Map as MapIcon, Users, FileText, Bell, AlertTriangle, X, Play, CheckSquare, Clock, Zap, Calendar, Edit, Save, History, Eye, Briefcase, Loader2, BellRing, MessageSquare, Send, Camera, RefreshCw, ShieldCheck, MapPin, LocateFixed, Route as RouteIcon, Timer, Gauge, CircleDot, Navigation2, Maximize2, Minimize2, Ban } from 'lucide-react';
 
 // GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline } from '@react-google-maps/api';
@@ -256,6 +256,23 @@ const buildLiveTimeline = (route) => {
 };
 
 // === HELPER PARA CALCULAR DISTANCIA ===
+const getDriverCountry = (driver) => {
+    const point = normalizePoint(driver?.currentLocation);
+    if (!point) return 'Sin ubicación';
+
+    // Rangos geográficos amplios. Se usan únicamente como filtro visual del monitor.
+    if (point.lat >= 14 && point.lat <= 33.5 && point.lng >= -119 && point.lng <= -86) return 'México';
+    if (point.lat >= -5 && point.lat <= 13.8 && point.lng >= -82 && point.lng <= -66) return 'Colombia';
+    return 'Otros';
+};
+
+const isDispatcherNotificationUnread = (route) => {
+    if (!route?.proximityAlert?.active) return false;
+    const alertMs = getTimestampMs(route?.proximityAlert?.timestamp) || 0;
+    const readMs = getTimestampMs(route?.dispatcherNotificationReadAt) || 0;
+    return alertMs === 0 ? !route?.dispatcherNotificationReadAt : alertMs > readMs;
+};
+
 const getDistance = (p1, p2) => {
     if (!p1 || !p2 || !p1.lat || !p2.lat) return Infinity;
     const R = 6371; 
@@ -268,24 +285,46 @@ const getDistance = (p1, p2) => {
 };
 
 
-const playControlRoomAlert = (message = 'Nuevo mensaje recibido') => {
+let controlRoomAudioContext = null;
+
+const getControlRoomAudioContext = () => {
     try {
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        if (AudioContextClass) {
-            const context = new AudioContextClass();
+        if (!AudioContextClass) return null;
+        if (!controlRoomAudioContext || controlRoomAudioContext.state === 'closed') {
+            controlRoomAudioContext = new AudioContextClass();
+        }
+        return controlRoomAudioContext;
+    } catch (_) {
+        return null;
+    }
+};
+
+const primeControlRoomAudio = async () => {
+    const context = getControlRoomAudioContext();
+    if (context?.state === 'suspended') {
+        try { await context.resume(); } catch (_) {}
+    }
+};
+
+const playControlRoomAlert = (message = 'Nuevo mensaje recibido') => {
+    try {
+        const context = getControlRoomAudioContext();
+        if (context) {
+            if (context.state === 'suspended') context.resume().catch(() => {});
             const oscillator = context.createOscillator();
             const gain = context.createGain();
             oscillator.type = 'sine';
             oscillator.frequency.setValueAtTime(880, context.currentTime);
             gain.gain.setValueAtTime(0.0001, context.currentTime);
-            gain.gain.exponentialRampToValueAtTime(0.16, context.currentTime + 0.02);
-            gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.32);
+            gain.gain.exponentialRampToValueAtTime(0.18, context.currentTime + 0.02);
+            gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.38);
             oscillator.connect(gain);
             gain.connect(context.destination);
             oscillator.start();
-            oscillator.stop(context.currentTime + 0.34);
-            oscillator.addEventListener('ended', () => context.close().catch(() => {}), { once: true });
+            oscillator.stop(context.currentTime + 0.4);
         }
+        if ('vibrate' in navigator) navigator.vibrate([180, 80, 180]);
         if ('speechSynthesis' in window && document.visibilityState === 'visible') {
             window.speechSynthesis.cancel();
             const utterance = new SpeechSynthesisUtterance(message);
@@ -352,6 +391,8 @@ function App() {
   const [selectedDriverId, setSelectedDriverId] = useState(null);
   const [followSelectedRoute, setFollowSelectedRoute] = useState(true);
   const [clockTick, setClockTick] = useState(Date.now());
+  const [driverCountryFilter, setDriverCountryFilter] = useState('Todos');
+  const [mapExpanded, setMapExpanded] = useState(false);
 
   const [chatModalRoute, setChatModalRoute] = useState(null);
   const [chatInput, setChatInput] = useState('');
@@ -389,6 +430,18 @@ function App() {
   }, []);
 
   useEffect(() => {
+      const prime = () => { primeControlRoomAudio().catch(() => {}); };
+      window.addEventListener('pointerdown', prime, { once: true });
+      window.addEventListener('touchstart', prime, { once: true, passive: true });
+      window.addEventListener('keydown', prime, { once: true });
+      return () => {
+          window.removeEventListener('pointerdown', prime);
+          window.removeEventListener('touchstart', prime);
+          window.removeEventListener('keydown', prime);
+      };
+  }, []);
+
+  useEffect(() => {
       if (!('geolocation' in navigator)) return undefined;
       navigator.geolocation.getCurrentPosition(
           position => {
@@ -417,7 +470,7 @@ function App() {
             previousIncomingChatRef.current.set(route.id, lastKey);
         });
         setLiveRoutes(routesArr);
-        setActiveAlertsCount(routesArr.filter(r => r.proximityAlert?.active === true).length);
+        setActiveAlertsCount(routesArr.filter(isDispatcherNotificationUnread).length);
         setSelectedRoute(prev => prev ? (routesArr.find(r => r.id === prev.id) || prev) : null);
         setChatModalRoute(prev => prev ? (routesArr.find(r => r.id === prev.id) || prev) : null);
     });
@@ -603,7 +656,8 @@ function App() {
 
   useEffect(() => {
       if (!isLoaded || selectedRoute || !mapRef.current || !window.google?.maps || onlineDrivers.length === 0) return;
-      const points = onlineDrivers.map(driver => normalizePoint(driver.currentLocation)).filter(Boolean);
+      const countryDrivers = onlineDrivers.filter(driver => driverCountryFilter === 'Todos' || getDriverCountry(driver) === driverCountryFilter);
+      const points = countryDrivers.map(driver => normalizePoint(driver.currentLocation)).filter(Boolean);
       if (!points.length) return;
       programmaticCameraRef.current = true;
       try {
@@ -618,7 +672,7 @@ function App() {
       } finally {
           setTimeout(() => { programmaticCameraRef.current = false; }, 300);
       }
-  }, [isLoaded, selectedRoute?.id, onlineDrivers]);
+  }, [isLoaded, selectedRoute?.id, onlineDrivers, driverCountryFilter]);
 
   // Seguimiento independiente del viaje: permite seguir a un conductor que ya terminó
   // mientras conserve la app encendida y su estado En Línea.
@@ -663,6 +717,56 @@ function App() {
           actualEndTimestamp: now.toISOString(),
           finishedAt: now.toISOString()
       });
+  };
+
+  const handleCancelTrip = async (route) => {
+      if (!route?.id) return;
+      if (['Finalizado', 'Completado'].includes(route.status)) {
+          alert('Un viaje finalizado no puede cancelarse. Debe conservarse para auditoría.');
+          return;
+      }
+      if (route.status === 'Cancelado') return;
+
+      const hasExecution = Boolean(
+          route.status === 'En Ruta' ||
+          route.actualStartTimestamp ||
+          route.firstStopAttendedTimestamp ||
+          (Array.isArray(route.stopEvents) && route.stopEvents.length > 0)
+      );
+
+      const reason = window.prompt(
+          hasExecution
+              ? 'El viaje ya tiene ejecución registrada. Escribe el motivo de cancelación (mínimo 5 caracteres):'
+              : 'Escribe el motivo de cancelación (mínimo 5 caracteres):',
+          ''
+      );
+      if (reason === null) return;
+      if (String(reason).trim().length < 5) {
+          alert('Indica un motivo de cancelación más claro.');
+          return;
+      }
+
+      const confirmationText = hasExecution
+          ? 'Este viaje ya inició o tiene actividad auditada. La información se conservará y el viaje quedará marcado como CANCELADO. ¿Confirmas?'
+          : '¿Confirmas cancelar este viaje? La ruta se conservará en historial para auditoría.';
+      if (!window.confirm(confirmationText)) return;
+
+      const now = new Date().toISOString();
+      try {
+          await updateDoc(doc(db, 'rutas', route.id), {
+              status: 'Cancelado',
+              cancelReason: String(reason).trim(),
+              canceledAt: now,
+              canceledBy: currentUser?.name || 'Despacho',
+              cancelPreviousStatus: route.status || '',
+              'proximityAlert.active': false,
+              lastUpdate: now
+          });
+          if (selectedRoute?.id === route.id) setSelectedRoute(prev => prev ? { ...prev, status: 'Cancelado', cancelReason: String(reason).trim(), canceledAt: now } : prev);
+      } catch (error) {
+          console.error('No se pudo cancelar el viaje:', error);
+          alert('No fue posible cancelar el viaje. Revisa la conexión.');
+      }
   };
   
   const saveTimeEdit = async () => {
@@ -772,7 +876,10 @@ function App() {
   };
 
   const rutasVisibles = getFilteredAndSortedRoutes();
+  const visibleOnlineDrivers = onlineDrivers.filter(driver => driverCountryFilter === 'Todos' || getDriverCountry(driver) === driverCountryFilter);
   const selectedRouteGeometry = selectedRoute && !['Finalizado', 'Completado', 'Cancelado'].includes(selectedRoute.status) ? getLiveGeometry(selectedRoute) : [];
+  const selectedPlannedGeometry = selectedRoute ? normalizePath(selectedRoute?.technicalData?.geometry) : [];
+  const selectedTravelledGeometry = selectedRoute ? normalizePath(selectedRoute?.rutaReal) : [];
   const selectedLastUpdateMs = getLastRouteUpdateMs(selectedRoute);
   const selectedUpdateAgeSeconds = selectedLastUpdateMs ? Math.max(0, Math.floor((clockTick - selectedLastUpdateMs) / 1000)) : null;
   const selectedSignalState = selectedUpdateAgeSeconds === null
@@ -782,7 +889,7 @@ function App() {
           : selectedUpdateAgeSeconds > 30
               ? 'delayed'
               : 'live';
-  const activeNotificationRoutes = liveRoutes.filter(route => route?.proximityAlert?.active === true);
+  const activeNotificationRoutes = liveRoutes.filter(isDispatcherNotificationUnread);
   const selectedOnlineDriver = onlineDrivers.find(driver => driver.id === selectedDriverId) || null;
 
   if (!currentUser) return <Login onLogin={handleDispatcherLogin} />;
@@ -838,10 +945,16 @@ function App() {
                 ) : (
                     <div className="space-y-2 mt-2">
                         {activeNotificationRoutes.map(route => (
-                            <button key={route.id} type="button" onClick={() => {
+                            <button key={route.id} type="button" onClick={async () => {
+                                const readAt = new Date().toISOString();
+                                try {
+                                    await updateDoc(doc(db, 'rutas', route.id), { dispatcherNotificationReadAt: readAt });
+                                } catch (error) {
+                                    console.warn('No se pudo marcar la alerta como leída:', error);
+                                }
                                 setActiveTab('monitoreo');
                                 setSelectedDriverId(route.driverId || null);
-                                setSelectedRoute(route);
+                                setSelectedRoute({ ...route, dispatcherNotificationReadAt: readAt });
                                 setManualMapInteraction(false);
                                 setFollowSelectedRoute(true);
                                 setShowNotifications(false);
@@ -859,7 +972,7 @@ function App() {
         {activeTab === 'monitoreo' && (
             <div className="flex-1 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_24rem] overflow-y-auto xl:overflow-hidden p-3 md:p-4 xl:p-6 gap-4 xl:gap-6 animate-[fadeIn_0.3s_ease-out]">
                 {/* MAPA GOOGLE */}
-                <div className="relative h-[48vh] min-h-[360px] xl:h-auto xl:min-h-0 bg-slate-200 rounded-3xl shadow-sm overflow-hidden border border-slate-200">
+                <div className={mapExpanded ? "fixed inset-0 z-[2400] bg-slate-200 overflow-hidden" : "relative h-[48vh] min-h-[360px] xl:h-auto xl:min-h-0 bg-slate-200 rounded-3xl shadow-sm overflow-hidden border border-slate-200"}>
                     {isLoaded ? (
                         <GoogleMap 
                             mapContainerStyle={containerStyle} 
@@ -868,9 +981,9 @@ function App() {
                             onLoad={handleMapLoad}
                             onDragStart={handleUserMapInteraction}
                             onZoomChanged={handleUserMapInteraction}
-                            options={{ mapId: "73f56298887c80075f6fc648", streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy", fullscreenControl: true, fullscreenControlOptions: { position: window.google?.maps?.ControlPosition?.RIGHT_TOP }, zoomControl: true }}
+                            options={{ mapId: "73f56298887c80075f6fc648", streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy", fullscreenControl: false, zoomControl: true }}
                         >
-                            {onlineDrivers.map(d => d.currentLocation && <Marker key={d.id} position={d.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: "#22c55e", fillOpacity: 0.8, strokeWeight: 2, strokeColor: "white" }} title={`Operador: ${d.name}`} onClick={() => {
+                            {visibleOnlineDrivers.map(d => d.currentLocation && <Marker key={d.id} position={d.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: "#22c55e", fillOpacity: 0.8, strokeWeight: 2, strokeColor: "white" }} title={`Operador: ${d.name}`} onClick={() => {
                                 setSelectedDriverId(d.id);
                                 setManualMapInteraction(false);
                                 const driverRoute = liveRoutes.find(r => !["Finalizado", "Completado", "Cancelado"].includes(r.status) && (r.driverId === d.id || r.driver === d.name));
@@ -889,10 +1002,22 @@ function App() {
                             }} />)}
                             {selectedRoute && (
                                 <>
+                                    {selectedPlannedGeometry.length > 1 && (
+                                        <Polyline
+                                            path={selectedPlannedGeometry}
+                                            options={{ strokeColor: '#64748b', strokeOpacity: 0.45, strokeWeight: 4, zIndex: 1 }}
+                                        />
+                                    )}
+                                    {selectedTravelledGeometry.length > 1 && (
+                                        <Polyline
+                                            path={selectedTravelledGeometry}
+                                            options={{ strokeColor: '#2563eb', strokeOpacity: 0.9, strokeWeight: 6, zIndex: 3 }}
+                                        />
+                                    )}
                                     {selectedRouteGeometry.length > 1 && (
                                         <Polyline
                                             path={selectedRouteGeometry}
-                                            options={{ strokeColor: '#f97316', strokeOpacity: 0.95, strokeWeight: 7 }}
+                                            options={{ strokeColor: '#f97316', strokeOpacity: 0.95, strokeWeight: 6, zIndex: 2 }}
                                         />
                                     )}
                                     {normalizePoint(selectedRoute.startCoords) && <Marker position={normalizePoint(selectedRoute.startCoords)} icon={ICON_START} />}
@@ -922,6 +1047,55 @@ function App() {
                         </GoogleMap>
                     ) : <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-2"><Loader2 className="animate-spin w-8 h-8 text-orange-500"/><span className="text-xs font-bold uppercase tracking-widest">Cargando Mapas...</span></div>}
 
+                    <div className="absolute top-4 right-4 z-[800] flex items-center gap-2">
+                        <select
+                            value={driverCountryFilter}
+                            onChange={(event) => {
+                                setDriverCountryFilter(event.target.value);
+                                setSelectedRoute(null);
+                                setSelectedDriverId(null);
+                                setManualMapInteraction(false);
+                                setFollowSelectedRoute(false);
+                            }}
+                            className="bg-white/95 border border-slate-200 rounded-xl px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-slate-700 shadow-lg outline-none"
+                            aria-label="Filtrar conductores por país"
+                        >
+                            <option value="Todos">Todos los países</option>
+                            <option value="México">México</option>
+                            <option value="Colombia">Colombia</option>
+                            <option value="Otros">Otros</option>
+                        </select>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                setMapExpanded(value => !value);
+                                setTimeout(() => {
+                                    try { window.google?.maps?.event?.trigger(mapRef.current, 'resize'); } catch (_) {}
+                                }, 120);
+                            }}
+                            className="bg-slate-900 text-white w-11 h-11 rounded-xl shadow-xl flex items-center justify-center hover:bg-slate-800 active:scale-95 transition"
+                            title={mapExpanded ? 'Salir de pantalla completa' : 'Pantalla completa'}
+                        >
+                            {mapExpanded ? <Minimize2 className="w-5 h-5"/> : <Maximize2 className="w-5 h-5"/>}
+                        </button>
+                    </div>
+
+                    {(selectedRoute || selectedOnlineDriver) && (
+                        <div className="absolute top-[4.5rem] right-4 z-[700] bg-slate-900/90 text-white px-3 py-2 rounded-xl shadow-lg border border-white/10 max-w-[260px]">
+                            <p className="text-[8px] font-black uppercase tracking-widest text-orange-300">Viendo conductor</p>
+                            <p className="text-xs font-black truncate">{selectedRoute?.driver || selectedOnlineDriver?.name || 'Conductor'}</p>
+                        </div>
+                    )}
+
+                    {selectedRoute && (
+                        <div className="absolute bottom-4 right-4 z-[700] bg-white/95 backdrop-blur border border-slate-200 rounded-xl px-3 py-2 shadow-lg">
+                            <p className="text-[8px] font-black uppercase tracking-widest text-slate-500 mb-1.5">Lectura de ruta</p>
+                            <div className="flex items-center gap-2 text-[9px] font-bold text-slate-700"><span className="w-5 h-1 rounded bg-blue-600"></span>Recorrido</div>
+                            <div className="flex items-center gap-2 text-[9px] font-bold text-slate-700 mt-1"><span className="w-5 h-1.5 rounded bg-orange-500"></span>Por recorrer</div>
+                            <div className="flex items-center gap-2 text-[9px] font-bold text-slate-700 mt-1"><span className="w-5 h-1 rounded bg-slate-500 opacity-50"></span>Plan original</div>
+                        </div>
+                    )}
+
                     {selectedRoute || selectedOnlineDriver ? (
                         <div className="absolute top-4 left-4 z-[500] flex items-center gap-2">
                             <button type="button" onClick={() => { setSelectedRoute(null); setSelectedDriverId(null); setManualMapInteraction(false); setFollowSelectedRoute(false); }} className="bg-white/95 backdrop-blur px-4 py-2.5 rounded-xl shadow-lg border border-slate-200 text-[10px] font-black uppercase tracking-widest text-slate-700 hover:bg-slate-50">
@@ -930,7 +1104,7 @@ function App() {
                             {!selectedRoute && selectedOnlineDriver && <span className="bg-green-600 text-white px-3 py-2.5 rounded-xl shadow-lg text-[10px] font-black uppercase tracking-widest">Siguiendo: {selectedOnlineDriver.name}</span>}
                         </div>
                     ) : (
-                        <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-5 py-3 rounded-2xl shadow-sm z-[500] border border-slate-100 max-w-xs"><h5 className="font-black text-slate-800 text-sm mb-1">Radar en Vivo</h5><p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> {onlineDrivers.length} unidades activas</p></div>
+                        <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-5 py-3 rounded-2xl shadow-sm z-[500] border border-slate-100 max-w-xs"><h5 className="font-black text-slate-800 text-sm mb-1">Radar en Vivo</h5><p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> {visibleOnlineDrivers.length} unidades activas</p></div>
                     )}
                     
                     {selectedRoute?.status === 'En Ruta' && normalizePoint(selectedRoute?.currentLocation) && (
@@ -1097,10 +1271,16 @@ function App() {
                                         </div>
                                     )}
 
-                                    <div className="flex gap-2">
-                                        {ruta.status !== 'En Ruta' && ruta.status !== 'Finalizado' && (<button onClick={(e) => { e.stopPropagation(); handleStartTrip(ruta.id); }} className="flex-1 bg-slate-800 hover:bg-slate-900 text-white py-2.5 rounded-xl text-[10px] uppercase tracking-widest font-black flex items-center justify-center gap-2 transition shadow-sm"><Play className="w-3 h-3 fill-current" /> INICIAR</button>)}
+                                    <div className="flex gap-2 flex-wrap">
+                                        {!['Finalizado', 'Completado', 'Cancelado'].includes(ruta.status) && (
+                                            <button onClick={(e) => { e.stopPropagation(); handleCancelTrip(ruta); }} className="px-3 bg-white hover:bg-red-50 text-red-600 border border-red-200 py-2.5 rounded-xl text-[9px] uppercase tracking-widest font-black flex items-center justify-center gap-1.5 transition shadow-sm" title="Cancelar conservando auditoría">
+                                                <Ban className="w-3 h-3" /> CANCELAR
+                                            </button>
+                                        )}
+                                        {ruta.status !== 'En Ruta' && !['Finalizado', 'Completado', 'Cancelado'].includes(ruta.status) && (<button onClick={(e) => { e.stopPropagation(); handleStartTrip(ruta.id); }} className="flex-1 bg-slate-800 hover:bg-slate-900 text-white py-2.5 rounded-xl text-[10px] uppercase tracking-widest font-black flex items-center justify-center gap-2 transition shadow-sm"><Play className="w-3 h-3 fill-current" /> INICIAR</button>)}
                                         {ruta.status === 'En Ruta' && (<button onClick={(e) => { e.stopPropagation(); handleEndTrip(ruta.id); }} className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2.5 rounded-xl text-[10px] uppercase tracking-widest font-black flex items-center justify-center gap-2 transition shadow-sm animate-pulse shadow-red-500/20"><CheckSquare className="w-3 h-3" /> FINALIZAR</button>)}
-                                        {ruta.status === 'Finalizado' && <div className="w-full text-center text-[10px] tracking-widest font-black text-green-600 py-2.5 bg-green-50 rounded-xl border border-green-100 uppercase">✅ FINALIZADO</div>}
+                                        {['Finalizado', 'Completado'].includes(ruta.status) && <div className="w-full text-center text-[10px] tracking-widest font-black text-green-600 py-2.5 bg-green-50 rounded-xl border border-green-100 uppercase">✅ FINALIZADO</div>}
+                                        {ruta.status === 'Cancelado' && <div className="w-full text-center text-[10px] tracking-widest font-black text-red-600 py-2.5 bg-red-50 rounded-xl border border-red-100 uppercase">✕ CANCELADO · {ruta.cancelReason || 'Sin motivo'}</div>}
                                     </div>
                                 </div>
                             );

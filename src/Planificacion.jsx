@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2, Eye, GripVertical, Search, ArrowRight, ChevronLeft } from 'lucide-react';
+import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2, Eye, GripVertical, Search, ArrowRight, ChevronLeft, CheckCircle2 } from 'lucide-react';
 // GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline, Autocomplete } from '@react-google-maps/api';
 
@@ -245,6 +245,7 @@ const InlineSummaryBox = ({ distance, duration, eta, color = "slate", showEta })
 
 const getMarkerLabel = (index) => String.fromCharCode(65 + index);
 const PREVIEW_COLORS = ['#f97316', '#3b82f6', '#22c55e', '#a855f7', '#ef4444', '#06b6d4', '#eab308', '#ec4899'];
+const comparePeopleAZ = (a, b) => String(a?.assignedTo || a?.name || '').localeCompare(String(b?.assignedTo || b?.name || ''), 'es', { sensitivity: 'base' });
 
 // FUNCIONES MATEMÁTICAS DE DISTANCIA
 const getDistance = (p1, p2) => {
@@ -308,8 +309,8 @@ export default function Planificacion() {
   }, [startPoint, endPoint, waypoints, routeInfo, viewRoute, isLoaded]);
 
   useEffect(() => {
-    const u1 = onSnapshot(collection(db, "conductores"), (s) => setAvailableDrivers(s.docs.map(d => ({id: d.id, ...d.data()}))));
-    const u2 = onSnapshot(collection(db, "clientes"), (s) => setAvailableClients(s.docs.map(d => ({id: d.id, ...d.data()}))));
+    const u1 = onSnapshot(collection(db, "conductores"), (s) => setAvailableDrivers(s.docs.map(d => ({id: d.id, ...d.data()})).sort(comparePeopleAZ)));
+    const u2 = onSnapshot(collection(db, "clientes"), (s) => setAvailableClients(s.docs.map(d => ({id: d.id, ...d.data()})).sort(comparePeopleAZ)));
     const u3 = onSnapshot(query(collection(db, "rutas"), orderBy("createdDate", "desc")), (s) => setRoutesList(s.docs.map(d => ({id: d.id, ...d.data()}))));
     return () => { u1(); u2(); u3(); };
   }, []);
@@ -376,7 +377,7 @@ export default function Planificacion() {
               waypoints: valid.slice(1, -1).map(item => ({ location: item.location, stopover: true })),
               optimizeWaypoints: false,
               travelMode: window.google.maps.TravelMode.DRIVING,
-              provideRouteAlternatives: false,
+              provideRouteAlternatives: valid.length === 2,
               drivingOptions: {
                   departureTime: new Date(),
                   trafficModel: window.google.maps.TrafficModel?.BEST_GUESS || 'bestguess'
@@ -387,7 +388,11 @@ export default function Planificacion() {
           });
       });
 
-      const route = result.routes[0];
+      const route = [...result.routes].sort((a, b) => {
+          const distanceA = (a.legs || []).reduce((sum, leg) => sum + (Number(leg.distance?.value) || 0), 0);
+          const distanceB = (b.legs || []).reduce((sum, leg) => sum + (Number(leg.distance?.value) || 0), 0);
+          return distanceA - distanceB;
+      })[0];
       const legs = route.legs || [];
       const geometry = [];
       legs.forEach(leg => (leg.steps || []).forEach(step => (step.path || []).forEach(point => {
@@ -554,7 +559,7 @@ export default function Planificacion() {
                   )
               }
           });
-          setEmployeeRoster(initialRoster);
+          setEmployeeRoster(initialRoster.sort(comparePeopleAZ));
       } else { setEmployeeRoster([]); }
   };
 
@@ -1173,7 +1178,7 @@ export default function Planificacion() {
                                           </div>
                                       ) : (
                                           <div className="space-y-4">
-                                              <div className="relative mb-6">
+                                              <div className="relative mb-4">
                                                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                                                       <Search className="h-4 w-4 text-slate-400" />
                                                   </div>
@@ -1186,9 +1191,31 @@ export default function Planificacion() {
                                                   />
                                               </div>
 
+                                              <div className="mb-5 bg-orange-50 border border-orange-200 rounded-xl p-4">
+                                                  <div className="flex items-center justify-between gap-3 mb-2">
+                                                      <p className="text-[10px] font-black uppercase tracking-widest text-orange-700">Pasajeros seleccionados</p>
+                                                      <span className="text-[10px] font-black bg-orange-500 text-white rounded-full px-2.5 py-1">{employeeRoster.filter(emp => emp.included).length}</span>
+                                                  </div>
+                                                  {employeeRoster.filter(emp => emp.included).length === 0 ? (
+                                                      <p className="text-xs font-bold text-orange-400">Aún no has seleccionado pasajeros.</p>
+                                                  ) : (
+                                                      <div className="flex flex-wrap gap-2">
+                                                          {employeeRoster.filter(emp => emp.included).sort(comparePeopleAZ).map((emp, index) => (
+                                                              <span key={`selected-${emp.assignedTo}-${index}`} className="inline-flex items-center gap-1.5 bg-white border border-orange-200 rounded-full px-3 py-1.5 text-[10px] font-black text-slate-700 shadow-sm">
+                                                                  <CheckCircle2 className="w-3 h-3 text-orange-500" /> {emp.assignedTo}
+                                                              </span>
+                                                          ))}
+                                                      </div>
+                                                  )}
+                                              </div>
+
                                               <div className="space-y-3">
                                                   {employeeRoster
                                                       .map((emp, originalIndex) => ({ ...emp, originalIndex }))
+                                                      .sort((a, b) => {
+                                                          if (a.included !== b.included) return a.included ? -1 : 1;
+                                                          return comparePeopleAZ(a, b);
+                                                      })
                                                       .filter(emp => 
                                                           emp.assignedTo?.toLowerCase().includes(rosterSearch.toLowerCase()) || 
                                                           emp.address?.toLowerCase().includes(rosterSearch.toLowerCase())

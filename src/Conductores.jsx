@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { 
   Phone, Truck, Plus, X, User, FileText, MapPin, Save, Mail, 
   Trash2, Loader2, ShieldCheck, Clock, Eye, Lock, Heart, ShieldAlert, Wifi, CheckCircle2, XCircle, Edit
@@ -30,7 +30,7 @@ export default function Conductores() {
   useEffect(() => {
     const q = query(collection(db, "conductores"), orderBy("created", "desc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      setDriversList(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+      setDriversList(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "es", { sensitivity: "base" })));
       setLoading(false);
     });
     return () => unsubscribe();
@@ -45,7 +45,7 @@ export default function Conductores() {
 
   const handleSaveDriver = async () => {
     if (!newDriver.name || !newDriver.phone || !newDriver.email || !newDriver.password) {
-        return alert("Campos obligatorios faltantes (Nombre, Teléfono, Email, Contraseña)");
+        return alert("Campos obligatorios faltantes (Nombre, TelÃ©fono, Email, ContraseÃ±a)");
     }
     
     const vehiculoFinal = (newDriver.vehicleModel && newDriver.vehiclePlate) 
@@ -63,7 +63,7 @@ export default function Conductores() {
             await updateDoc(doc(db, "conductores", selectedDriver.id), updateData);
             setSelectedDriver({ ...selectedDriver, ...updateData }); // Actualiza la vista
             setIsEditing(false);
-            alert("✅ Expediente actualizado correctamente.");
+            alert("âœ… Expediente actualizado correctamente.");
         } else {
             // CREAR NUEVO CONDUCTOR
             const nuevoConductor = {
@@ -85,7 +85,7 @@ export default function Conductores() {
   };
 
   const handleDelete = async (id) => {
-    if(confirm("⚠️ ¿Eliminar expediente permanentemente? Esto no se puede deshacer.")) {
+    if(confirm("âš ï¸ Â¿Eliminar expediente permanentemente? Esto no se puede deshacer.")) {
         await deleteDoc(doc(db, "conductores", id));
         setSelectedDriver(null);
     }
@@ -100,7 +100,7 @@ export default function Conductores() {
       });
   };
 
-  // Función para abrir el modal de edición cargando los datos del conductor
+  // FunciÃ³n para abrir el modal de ediciÃ³n cargando los datos del conductor
   const startEditing = () => {
       setNewDriver({
           name: selectedDriver.name || '', rfc: selectedDriver.rfc || '', phone: selectedDriver.phone || '', 
@@ -145,11 +145,11 @@ export default function Conductores() {
         {filteredList.map((driver) => (
             <div key={driver.id} className={`bg-white rounded-2xl p-6 border-2 transition-all group relative ${driver.status === 'Pendiente' ? 'border-yellow-200 shadow-yellow-100/50 shadow-lg' : driver.status === 'Suspendido' ? 'border-red-200 bg-red-50/30' : 'border-transparent shadow-sm hover:shadow-md'}`}>
                 
-                {/* INDICADOR DE ESTADO EN LÍNEA */}
+                {/* INDICADOR DE ESTADO EN LÃNEA */}
                 {driver.status === 'Aprobado' && (
                     <div className={`absolute top-4 right-4 px-2 py-1 rounded-lg text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 border shadow-sm transition-colors ${driver.isOnline ? 'bg-green-50 text-green-700 border-green-200' : 'bg-slate-50 text-slate-400 border-slate-200'}`}>
                         <div className={`w-1.5 h-1.5 rounded-full ${driver.isOnline ? 'bg-green-500 animate-pulse shadow-[0_0_5px_#22c55e]' : 'bg-slate-300'}`}></div>
-                        {driver.isOnline ? 'En Línea' : 'Inactivo'}
+                        {driver.isOnline ? 'En LÃ­nea' : 'Inactivo'}
                     </div>
                 )}
 
@@ -180,7 +180,7 @@ export default function Conductores() {
                     </div>
                 </div>
                 
-                {/* --- BOTÓN UNIFICADO PARA VER EXPEDIENTE --- */}
+                {/* --- BOTÃ“N UNIFICADO PARA VER EXPEDIENTE --- */}
                 <div className="pt-4 border-t border-slate-50 flex gap-2">
                     {driver.status === 'Pendiente' ? (
                         <button onClick={() => setSelectedDriver(driver)} className="w-full py-2.5 bg-yellow-500 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-yellow-600 transition shadow-lg shadow-yellow-500/20 flex justify-center items-center gap-2">
@@ -199,7 +199,7 @@ export default function Conductores() {
       </div>
       )}
 
-      {/* ================= MODAL DE REGISTRO COMPLETO Y EDICIÓN ================= */}
+      {/* ================= MODAL DE REGISTRO COMPLETO Y EDICIÃ“N ================= */}
       {(showNewDriverModal || isEditing) && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md">
             <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -216,7 +216,7 @@ export default function Conductores() {
                     {/* ACCESO */}
                     <div className="mb-8">
                         <h4 className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-                            <Lock className="w-4 h-4" /> Credenciales de Aplicación
+                            <Lock className="w-4 h-4" /> Credenciales de AplicaciÃ³n
                         </h4>
                         <div className="grid grid-cols-2 gap-4 bg-blue-50/50 p-5 rounded-2xl border border-blue-100">
                             <div>
@@ -225,7 +225,7 @@ export default function Conductores() {
                                     value={newDriver.email} onChange={e => setNewDriver({...newDriver, email: e.target.value})} />
                             </div>
                             <div>
-                                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5 ml-1">Contraseña *</label>
+                                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5 ml-1">ContraseÃ±a *</label>
                                 <input type="text" className="w-full bg-white border border-blue-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500 font-mono" 
                                     value={newDriver.password} onChange={e => setNewDriver({...newDriver, password: e.target.value})} />
                             </div>
@@ -235,7 +235,7 @@ export default function Conductores() {
                     {/* DATOS PERSONALES */}
                     <div className="mb-8">
                         <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-                            <User className="w-4 h-4" /> Información Personal
+                            <User className="w-4 h-4" /> InformaciÃ³n Personal
                         </h4>
                         <div className="grid grid-cols-2 gap-4">
                             <div className="col-span-2">
@@ -249,19 +249,19 @@ export default function Conductores() {
                                     value={newDriver.rfc} onChange={e => setNewDriver({...newDriver, rfc: e.target.value})} />
                             </div>
                             <div>
-                                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5 ml-1">WhatsApp (Número de Acceso) *</label>
+                                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5 ml-1">WhatsApp (NÃºmero de Acceso) *</label>
                                 <input type="text" placeholder="Ej. 5512345678" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm focus:border-orange-500 focus:ring-1 focus:ring-orange-500 outline-none" 
                                     value={newDriver.phone} onChange={e => setNewDriver({...newDriver, phone: e.target.value})} />
                             </div>
                             <div className="col-span-2">
-                                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5 ml-1">Dirección de Domicilio</label>
+                                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5 ml-1">DirecciÃ³n de Domicilio</label>
                                 <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" 
                                     value={newDriver.address} onChange={e => setNewDriver({...newDriver, address: e.target.value})} />
                             </div>
                         </div>
                     </div>
 
-                    {/* VEHÍCULO */}
+                    {/* VEHÃCULO */}
                     <div className="mb-8">
                         <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
                             <Truck className="w-4 h-4" /> Unidad Asignada
@@ -278,7 +278,7 @@ export default function Conductores() {
                                     value={newDriver.vehiclePlate} onChange={e => setNewDriver({...newDriver, vehiclePlate: e.target.value})} />
                             </div>
                             <div className="col-span-2">
-                                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5 ml-1">Tipo de Vehículo</label>
+                                <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5 ml-1">Tipo de VehÃ­culo</label>
                                 <input type="text" placeholder="Ej. Caja Seca, Plataforma" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm"
                                     value={newDriver.vehicleType} onChange={e => setNewDriver({...newDriver, vehicleType: e.target.value})} />
                             </div>
@@ -288,7 +288,7 @@ export default function Conductores() {
                     {/* DOCUMENTOS Y SALUD */}
                     <div className="mb-6">
                         <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
-                            <FileText className="w-4 h-4" /> Documentación y Salud
+                            <FileText className="w-4 h-4" /> DocumentaciÃ³n y Salud
                         </h4>
                         <div className="grid grid-cols-2 gap-4">
                             <div>
@@ -340,7 +340,7 @@ export default function Conductores() {
                 ) : (
                     <div className="bg-slate-900 p-20 rounded-[3rem] border border-slate-800 text-center">
                         <FileText className="w-20 h-20 text-slate-800 mx-auto mb-4" />
-                        <p className="text-slate-500 font-bold uppercase text-xs">El conductor aún no ha subido su identificación</p>
+                        <p className="text-slate-500 font-bold uppercase text-xs">El conductor aÃºn no ha subido su identificaciÃ³n</p>
                     </div>
                 )}
             </div>
@@ -357,7 +357,7 @@ export default function Conductores() {
                     <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(#ffffff 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
                     <button onClick={() => setSelectedDriver(null)} className="absolute top-8 right-8 bg-white/10 text-white hover:bg-white/20 p-2 rounded-full transition z-10"><X/></button>
                     
-                    {/* Botón Flotante para Editar */}
+                    {/* BotÃ³n Flotante para Editar */}
                     <button onClick={startEditing} className="absolute top-8 right-20 bg-orange-500 text-white hover:bg-orange-600 px-4 py-2 rounded-xl text-xs font-black uppercase tracking-widest transition shadow-lg flex items-center gap-2 z-10">
                         <Edit className="w-4 h-4"/> Editar Datos
                     </button>
@@ -378,9 +378,9 @@ export default function Conductores() {
                          <div className="mb-6">
                             <div className="flex items-center gap-3">
                                 <h2 className="text-4xl font-black text-white tracking-tight">{selectedDriver.name}</h2>
-                                {selectedDriver.isOnline && <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_#22c55e]" title="En línea"></div>}
+                                {selectedDriver.isOnline && <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse shadow-[0_0_10px_#22c55e]" title="En lÃ­nea"></div>}
                             </div>
-                            <p className={`${selectedDriver.status === 'Suspendido' ? 'text-red-400' : 'text-blue-400'} text-xs font-black uppercase tracking-[0.3em]`}>{selectedDriver.status} • OPERADOR ID: {selectedDriver.id.slice(0,8)}</p>
+                            <p className={`${selectedDriver.status === 'Suspendido' ? 'text-red-400' : 'text-blue-400'} text-xs font-black uppercase tracking-[0.3em]`}>{selectedDriver.status} â€¢ OPERADOR ID: {selectedDriver.id.slice(0,8)}</p>
                          </div>
                     </div>
                 </div>
@@ -393,7 +393,7 @@ export default function Conductores() {
                             <ShieldAlert className="w-8 h-8 shrink-0"/>
                             <div>
                                 <h4 className="font-black text-sm uppercase">Acceso Restringido</h4>
-                                <p className="text-xs font-medium">Este conductor está suspendido. No puede iniciar sesión en la aplicación ni recibir viajes hasta que sea aprobado nuevamente.</p>
+                                <p className="text-xs font-medium">Este conductor estÃ¡ suspendido. No puede iniciar sesiÃ³n en la aplicaciÃ³n ni recibir viajes hasta que sea aprobado nuevamente.</p>
                             </div>
                         </div>
                     )}
@@ -404,17 +404,17 @@ export default function Conductores() {
                             <h4 className="text-[10px] font-black text-blue-500 uppercase tracking-widest border-b border-blue-50 pb-2 flex items-center gap-2"><User className="w-3 h-3"/> Identidad</h4>
                             <div className="space-y-5">
                                 <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">RFC / ID Fiscal</p><p className="font-bold text-slate-700">{selectedDriver.rfc || 'No registrado'}</p></div>
-                                <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">WhatsApp (Acceso App)</p><p className="font-bold text-slate-700">{selectedDriver.phone || 'Sin número'}</p></div>
-                                <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Correo Electrónico</p><p className="font-bold text-slate-700">{selectedDriver.email}</p></div>
+                                <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">WhatsApp (Acceso App)</p><p className="font-bold text-slate-700">{selectedDriver.phone || 'Sin nÃºmero'}</p></div>
+                                <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Correo ElectrÃ³nico</p><p className="font-bold text-slate-700">{selectedDriver.email}</p></div>
                                 <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Domicilio</p><p className="font-bold text-slate-700 leading-relaxed">{selectedDriver.address || 'No registrado'}</p></div>
                             </div>
                         </div>
 
                         {/* COLUMNA 2: UNIDAD Y LICENCIA */}
                         <div className="space-y-6">
-                            <h4 className="text-[10px] font-black text-orange-500 uppercase tracking-widest border-b border-orange-50 pb-2 flex items-center gap-2"><Truck className="w-3 h-3"/> Flota y Tránsito</h4>
+                            <h4 className="text-[10px] font-black text-orange-500 uppercase tracking-widest border-b border-orange-50 pb-2 flex items-center gap-2"><Truck className="w-3 h-3"/> Flota y TrÃ¡nsito</h4>
                             <div className="space-y-5">
-                                <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Vehículo Asignado</p><p className="font-bold text-slate-700">{selectedDriver.vehicleModel} ({selectedDriver.vehiclePlate})</p></div>
+                                <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">VehÃ­culo Asignado</p><p className="font-bold text-slate-700">{selectedDriver.vehicleModel} ({selectedDriver.vehiclePlate})</p></div>
                                 <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Tipo de Unidad</p><p className="font-bold text-slate-700">{selectedDriver.vehicleType || 'No registrado'}</p></div>
                                 <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Licencia {selectedDriver.licenseType}</p><p className="font-bold text-slate-700">{selectedDriver.licenseNumber}</p></div>
                                 <div className="text-sm"><p className="text-[10px] text-slate-400 uppercase font-bold mb-1">Vigencia Licencia</p><p className="font-bold text-red-500">{selectedDriver.licenseExp || 'Pendiente'}</p></div>
@@ -438,7 +438,7 @@ export default function Conductores() {
                                 </div>
                                 <div className="pt-4">
                                     <button onClick={() => setViewDoc(selectedDriver.identificacion)} className="w-full py-3 bg-blue-50 text-blue-600 rounded-xl text-[10px] font-black uppercase tracking-widest border border-blue-100 hover:bg-blue-100 transition flex items-center justify-center gap-2">
-                                        <Eye className="w-4 h-4"/> Ver Identificación
+                                        <Eye className="w-4 h-4"/> Ver IdentificaciÃ³n
                                     </button>
                                 </div>
                             </div>
@@ -466,7 +466,7 @@ export default function Conductores() {
                             </>
                         ) : (
                             <button onClick={() => handleUpdateStatus(selectedDriver.id, 'Aprobado')} className="px-8 py-4 bg-green-500 text-white font-black text-xs uppercase rounded-2xl shadow-xl shadow-green-500/30 hover:bg-green-600 transition tracking-[0.1em] flex items-center gap-2">
-                                <CheckCircle2 className="w-5 h-5"/> Quitar Suspensión
+                                <CheckCircle2 className="w-5 h-5"/> Quitar SuspensiÃ³n
                             </button>
                         )}
                         

@@ -254,6 +254,109 @@ const getDistance = (p1, p2) => {
     return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
 };
 
+const getPlanSortTimestamp = (route) => {
+    if (String(route?.serviceType || '').toLowerCase().includes('prioritario')) {
+        return new Date(route?.createdDate || 0).getTime() || Date.now();
+    }
+    const date = String(route?.scheduledDate || route?.finalDate || '').trim();
+    const time = String(route?.startTime || route?.pickupTime || route?.scheduledTime || '00:00').trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        const normalized = /^\d{1,2}:\d{2}$/.test(time)
+            ? `${time.split(':')[0].padStart(2, '0')}:${time.split(':')[1]}`
+            : '00:00';
+        const parsed = new Date(`${date}T${normalized}:00`).getTime();
+        if (Number.isFinite(parsed)) return parsed;
+    }
+    return new Date(route?.createdDate || 0).getTime() || 0;
+};
+
+const getGroupMeetingPoints = (group) => {
+    const modern = Array.isArray(group?.sharedMeetingPoints) ? group.sharedMeetingPoints : [];
+    const legacy = group?.sharedMeetingPoint?.active
+        ? [{ ...group.sharedMeetingPoint, id: group.sharedMeetingPoint.id || 'legacy-shared' }]
+        : [];
+    const all = [...modern, ...legacy];
+    const seen = new Set();
+    return all.filter(point => {
+        if (!point?.active) return false;
+        const id = String(point.id || `${point.address}|${point.lat}|${point.lng}`);
+        if (seen.has(id)) return false;
+        seen.add(id);
+        return true;
+    });
+};
+
+const getEmployeeMeetingPoint = (group, employeeName) => {
+    return getGroupMeetingPoints(group).find(point =>
+        Array.isArray(point?.passengerNames) &&
+        point.passengerNames.includes(employeeName)
+    ) || null;
+};
+
+const buildPassengerStopsForGroup = (group) => {
+    const stops = [];
+    const usedMeetingPoints = new Set();
+
+    (group?.employees || []).forEach(employee => {
+        const meetingPoint = getEmployeeMeetingPoint(group, employee.assignedTo);
+        if (meetingPoint) {
+            const key = String(meetingPoint.id || meetingPoint.address);
+            if (usedMeetingPoints.has(key)) return;
+            usedMeetingPoints.add(key);
+
+            const assignedEmployees = (group.employees || []).filter(item =>
+                Array.isArray(meetingPoint.passengerNames) &&
+                meetingPoint.passengerNames.includes(item.assignedTo)
+            );
+
+            stops.push({
+                stopType: 'shared_meeting',
+                id: key,
+                address: meetingPoint.address,
+                lat: Number(meetingPoint.lat),
+                lng: Number(meetingPoint.lng ?? meetingPoint.lon),
+                employees: assignedEmployees
+            });
+            return;
+        }
+
+        stops.push({
+            stopType: 'individual',
+            id: `individual-${employee.assignedTo}`,
+            address: employee.address,
+            lat: Number(employee.lat),
+            lng: Number(employee.lng ?? employee.lon),
+            employees: [employee]
+        });
+    });
+
+    return stops.filter(stop =>
+        stop.address &&
+        Number.isFinite(stop.lat) &&
+        Number.isFinite(stop.lng) &&
+        stop.employees.length > 0
+    );
+};
+
+const buildImmutableOriginalPlan = ({ routeInfo, startPoint, waypoints, endPoint, createdAt }) => ({
+    version: 1,
+    createdAt,
+    geometry: Array.isArray(routeInfo?.geometry) ? routeInfo.geometry : [],
+    totalDistance: routeInfo?.totalDistance ?? null,
+    totalDuration: routeInfo?.totalDuration ?? null,
+    segments: Array.isArray(routeInfo?.segments) ? routeInfo.segments : [],
+    start: startPoint?.address || '',
+    startCoords: startPoint ? { lat: startPoint.lat, lng: startPoint.lng } : null,
+    waypoints: (waypoints || []).map(item => item?.address || ''),
+    waypointsData: (waypoints || []).map(item => ({
+        address: item?.address || '',
+        lat: item?.lat ?? null,
+        lng: item?.lng ?? item?.lon ?? null
+    })),
+    end: endPoint?.address || '',
+    endCoords: endPoint ? { lat: endPoint.lat, lng: endPoint.lng } : null
+});
+
 export default function Planificacion() {
   const [showModal, setShowModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
@@ -290,6 +393,21 @@ export default function Planificacion() {
   const [previewGroupId, setPreviewGroupId] = useState('all'); 
   const [fetchingRealRoutes, setFetchingRealRoutes] = useState(false);
   const [globalCarpool, setGlobalCarpool] = useState({ mode: 'Ida' });
+
+  // === SERVICIO OCASIONAL / CENTRO DE ACOPIO ===
+  const [walkUpMode, setWalkUpMode] = useState(false);
+  const [walkUpPassengers, setWalkUpPassengers] = useState([{ name: '', phone: '' }]);
+  const [walkUpPricing, setWalkUpPricing] = useState({
+      currency: 'MXN',
+      quotedTotal: '',
+      recalculateAtEnd: true,
+      baseFare: '35',
+      perKm: '15',
+      perMinute: '1.5',
+      serviceFee: '12',
+      minimumFare: '75'
+  });
+  const [editingPlannedRouteId, setEditingPlannedRouteId] = useState(null);
 
   const isProgramado = newRoute.serviceType === 'Programado';
 
@@ -458,37 +576,171 @@ export default function Planificacion() {
   const removeWaypoint = (i) => setWaypoints(waypoints.filter((_, idx) => idx !== i));
   const updateWaypoint = (i, item) => { const w = [...waypoints]; w[i] = item; setWaypoints(w); };
 
+  const resetManualRouteForm = () => {
+      setShowModal(false);
+      setEditingPlannedRouteId(null);
+      setWalkUpMode(false);
+      setWalkUpPassengers([{ name: '', phone: '' }]);
+      setWalkUpPricing({
+          currency: 'MXN',
+          quotedTotal: '',
+          recalculateAtEnd: true,
+          baseFare: '35',
+          perKm: '15',
+          perMinute: '1.5',
+          serviceFee: '12',
+          minimumFare: '75'
+      });
+      setNewRoute({ client: '', requestUser: '', driver: '', driverId: '', status: 'Pendiente', serviceType: 'Programado', scheduledDate: '', scheduledTime: '' });
+      setStartPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' });
+      setEndPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' });
+      setWaypoints([]);
+      setRouteInfo({ totalDistance: 0, totalDuration: 0, segments: [], geometry: [] });
+      setSelectedClientData(null);
+  };
+
   const handleSaveRoute = async () => {
-      if(!newRoute.client || !startPoint?.address || !endPoint?.address) return alert("Faltan datos obligatorios (Empresa, Origen, Destino).");
-      const today = new Date().toISOString().split('T')[0];
-      
-      const rutaSave = { 
-          ...newRoute, 
-          driver: newRoute.driver, driverId: newRoute.driverId, 
-          status: newRoute.driver ? 'Aceptada' : 'Pendiente', 
-          start: startPoint.address, end: endPoint.address, 
+      const validWalkUpPassengers = walkUpPassengers
+          .map(item => ({ name: String(item.name || '').trim(), phone: normalizeContactPhone(item.phone) }))
+          .filter(item => item.name);
+
+      if ((!newRoute.client && !walkUpMode) || !startPoint?.address || !endPoint?.address) {
+          return alert(walkUpMode
+              ? "Faltan datos obligatorios (Origen y Destino)."
+              : "Faltan datos obligatorios (Empresa, Origen, Destino)."
+          );
+      }
+
+      if (walkUpMode && validWalkUpPassengers.length === 0) {
+          return alert("Agrega al menos un pasajero para el servicio ocasional.");
+      }
+
+      if (walkUpMode && validWalkUpPassengers.length > 4) {
+          return alert("El servicio ocasional admite máximo 4 pasajeros por unidad.");
+      }
+
+      const quotedTotal = Number(walkUpPricing.quotedTotal);
+      if (walkUpMode && (!Number.isFinite(quotedTotal) || quotedTotal <= 0)) {
+          return alert("Define la cotización inicial del servicio.");
+      }
+
+      if (walkUpMode && walkUpPricing.recalculateAtEnd) {
+          const rateValues = [
+              walkUpPricing.baseFare,
+              walkUpPricing.perKm,
+              walkUpPricing.perMinute,
+              walkUpPricing.serviceFee,
+              walkUpPricing.minimumFare
+          ].map(value => Number(value) || 0);
+          if (rateValues.every(value => value <= 0)) {
+              return alert("Para recalcular al final, define las tarifas aplicables a la moneda seleccionada.");
+          }
+      }
+
+      const nowIso = new Date().toISOString();
+      const today = nowIso.split('T')[0];
+      const existingRoute = editingPlannedRouteId
+          ? routesList.find(item => item.id === editingPlannedRouteId)
+          : null;
+
+      const occasionalSchedule = validWalkUpPassengers.map((passenger, index) => ({
+          stopIndex: 0,
+          passengerName: passenger.name,
+          phone: passenger.phone,
+          contactPhone: passenger.phone,
+          pickupTime: newRoute.scheduledTime || '',
+          seat: index + 1
+      }));
+
+      const startContact = walkUpMode
+          ? validWalkUpPassengers.map(item => item.name).join(', ')
+          : (startPoint.contact || '');
+
+      const startCoordsSave = {
+          lat: startPoint.lat,
+          lng: startPoint.lng,
+          contact: startContact,
+          passengerName: walkUpMode
+              ? (validWalkUpPassengers.length === 1 ? validWalkUpPassengers[0].name : startContact)
+              : (startPoint.passengerName || startPoint.contact || ''),
+          phone: walkUpMode && validWalkUpPassengers.length === 1
+              ? validWalkUpPassengers[0].phone
+              : normalizeContactPhone(startPoint.phone),
+          contactPhone: walkUpMode && validWalkUpPassengers.length === 1
+              ? validWalkUpPassengers[0].phone
+              : normalizeContactPhone(startPoint.phone)
+      };
+
+      if (walkUpMode) {
+          startCoordsSave.passengersSchedule = occasionalSchedule;
+          startCoordsSave.pickupTime = newRoute.scheduledTime || '';
+      } else if (Array.isArray(existingRoute?.startCoords?.passengersSchedule)) {
+          startCoordsSave.passengersSchedule = existingRoute.startCoords.passengersSchedule;
+          startCoordsSave.sharedMeetingPoint = existingRoute.startCoords.sharedMeetingPoint === true;
+          startCoordsSave.pickupTime = existingRoute.startCoords.pickupTime || newRoute.scheduledTime || '';
+      }
+
+      const technicalData = {
+          ...(existingRoute?.technicalData || {}),
+          ...routeInfo,
+          routingProvider: 'google-directions'
+      };
+
+      const immutablePlan = existingRoute?.originalPlan || (
+          existingRoute
+              ? {
+                  version: 1,
+                  createdAt: existingRoute.createdDate || nowIso,
+                  geometry: Array.isArray(existingRoute.technicalData?.geometry) ? existingRoute.technicalData.geometry : [],
+                  totalDistance: existingRoute.technicalData?.totalDistance ?? null,
+                  totalDuration: existingRoute.technicalData?.totalDuration ?? null,
+                  segments: Array.isArray(existingRoute.technicalData?.segments) ? existingRoute.technicalData.segments : [],
+                  start: existingRoute.start || '',
+                  startCoords: existingRoute.startCoords ? {
+                      lat: existingRoute.startCoords.lat ?? null,
+                      lng: existingRoute.startCoords.lng ?? existingRoute.startCoords.lon ?? null
+                  } : null,
+                  waypoints: existingRoute.waypoints || [],
+                  waypointsData: (existingRoute.waypointsData || []).map(item => ({
+                      address: item.address || '',
+                      lat: item.lat ?? null,
+                      lng: item.lng ?? item.lon ?? null
+                  })),
+                  end: existingRoute.end || '',
+                  endCoords: existingRoute.endCoords ? {
+                      lat: existingRoute.endCoords.lat ?? null,
+                      lng: existingRoute.endCoords.lng ?? existingRoute.endCoords.lon ?? null
+                  } : null
+              }
+              : buildImmutableOriginalPlan({
+                  routeInfo,
+                  startPoint,
+                  waypoints,
+                  endPoint,
+                  createdAt: nowIso
+              })
+      );
+
+      const rutaSave = {
+          ...newRoute,
+          client: walkUpMode ? (newRoute.client || 'Servicio ocasional') : newRoute.client,
+          driver: newRoute.driver,
+          driverId: newRoute.driverId,
+          status: existingRoute?.status || (newRoute.driver ? 'Aceptada' : 'Pendiente'),
+          start: startPoint.address,
+          end: endPoint.address,
           tripSource: 'dispatcher',
           createdBy: 'dispatcher',
-          pricingVisibility: 'hidden_during_trip',
-          showPricingDuringTrip: false,
-          pricingPolicy: 'dispatcher_hidden_during_trip',
-          chat: [],
-          startCoords: {
-              lat: startPoint.lat,
-              lng: startPoint.lng,
-              contact: startPoint.contact || '',
-              passengerName: startPoint.passengerName || startPoint.contact || '',
-              phone: normalizeContactPhone(startPoint.phone),
-              contactPhone: normalizeContactPhone(startPoint.phone)
-          }, 
+          chat: existingRoute?.chat || [],
+          startCoords: startCoordsSave,
           endCoords: {
               lat: endPoint.lat,
               lng: endPoint.lng,
-              contact: endPoint.contact || '',
+              contact: endPoint.contact || (walkUpMode ? 'Destino del servicio' : ''),
               passengerName: endPoint.passengerName || endPoint.contact || '',
               phone: normalizeContactPhone(endPoint.phone),
               contactPhone: normalizeContactPhone(endPoint.phone)
-          }, 
+          },
           waypointsData: waypoints.map(w => ({
               address: w.address,
               lat: w.lat,
@@ -496,22 +748,176 @@ export default function Planificacion() {
               contact: w.contact || '',
               passengerName: w.passengerName || w.contact || '',
               phone: normalizeContactPhone(w.phone),
-              contactPhone: normalizeContactPhone(w.phone)
-          })), 
-          waypoints: waypoints.map(w => w.address), 
-          technicalData: {
-              ...routeInfo,
-              routingProvider: 'google-directions'
-          }, 
-          finalDate: isProgramado ? newRoute.scheduledDate : today, 
-          createdDate: new Date().toISOString() 
+              contactPhone: normalizeContactPhone(w.phone),
+              ...(Array.isArray(w.passengersSchedule) ? { passengersSchedule: w.passengersSchedule } : {})
+          })),
+          waypoints: waypoints.map(w => w.address),
+          technicalData,
+          originalPlan: immutablePlan,
+          finalDate: isProgramado ? newRoute.scheduledDate : today,
+          createdDate: existingRoute?.createdDate || nowIso,
+          updatedAt: nowIso
       };
-      
-      try { 
-          await addDoc(collection(db, "rutas"), rutaSave); 
-          setShowModal(false); setNewRoute({ client: '', requestUser: '', driver: '', driverId: '', status: 'Pendiente', serviceType: 'Programado', scheduledDate: '', scheduledTime: '' });
-          setStartPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' }); setEndPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' }); setWaypoints([]); setRouteInfo({ totalDistance: 0, totalDuration: 0, segments: [], geometry: [] }); setSelectedClientData(null);
-      } catch (e) { alert(e.message); }
+
+      if (!walkUpMode && Array.isArray(existingRoute?.endCoords?.passengersSchedule)) {
+          rutaSave.endCoords.passengersSchedule = existingRoute.endCoords.passengersSchedule;
+          rutaSave.endCoords.sharedMeetingPoint = existingRoute.endCoords.sharedMeetingPoint === true;
+      }
+
+      if (walkUpMode) {
+          rutaSave.serviceModel = 'walk_up';
+          rutaSave.serviceType = newRoute.serviceType || 'Prioritario';
+          rutaSave.passengerSchedule = occasionalSchedule;
+          rutaSave.pricingVisibility = 'visible';
+          rutaSave.showPricingDuringTrip = true;
+          rutaSave.pricingPolicy = 'dispatcher_visible_quote';
+          rutaSave.currency = String(walkUpPricing.currency || 'MXN').toUpperCase();
+          rutaSave.recalculateAtEnd = Boolean(walkUpPricing.recalculateAtEnd);
+          rutaSave.pricingMode = walkUpPricing.recalculateAtEnd ? 'quoted_then_recalculate' : 'fixed_quote';
+          rutaSave.pricing = {
+              ...(existingRoute?.pricing || {}),
+              currency: rutaSave.currency,
+              quotedTotal,
+              initialQuote: quotedTotal,
+              estimatedTotal: quotedTotal,
+              total: quotedTotal,
+              fixedQuote: !walkUpPricing.recalculateAtEnd,
+              recalculateAtEnd: Boolean(walkUpPricing.recalculateAtEnd),
+              baseFare: Number(walkUpPricing.baseFare) || 0,
+              perKm: Number(walkUpPricing.perKm) || 0,
+              perMinute: Number(walkUpPricing.perMinute) || 0,
+              serviceFee: Number(walkUpPricing.serviceFee) || 0,
+              minimumFare: Number(walkUpPricing.minimumFare) || 0,
+              quoteSource: 'dispatcher_walk_up',
+              quotedAt: existingRoute?.pricing?.quotedAt || nowIso,
+              updatedAt: nowIso
+          };
+      } else {
+          rutaSave.pricingVisibility = existingRoute?.pricingVisibility || 'hidden_during_trip';
+          rutaSave.showPricingDuringTrip = existingRoute?.showPricingDuringTrip ?? false;
+          rutaSave.pricingPolicy = existingRoute?.pricingPolicy || 'dispatcher_hidden_during_trip';
+      }
+
+      try {
+          if (editingPlannedRouteId && existingRoute) {
+              if (!['Pendiente', 'Aceptada'].includes(existingRoute.status)) {
+                  return alert("Solo se pueden modificar rutas que aún no han iniciado.");
+              }
+
+              const revision = {
+                  changedAt: nowIso,
+                  previousTechnicalData: existingRoute.technicalData || null,
+                  previousStart: existingRoute.start || '',
+                  previousEnd: existingRoute.end || '',
+                  previousWaypoints: existingRoute.waypoints || [],
+                  previousScheduledDate: existingRoute.scheduledDate || '',
+                  previousScheduledTime: existingRoute.scheduledTime || ''
+              };
+
+              rutaSave.planRevisions = [...(existingRoute.planRevisions || []), revision];
+              rutaSave.planEditedAt = nowIso;
+              rutaSave.planEditCount = Number(existingRoute.planEditCount || 0) + 1;
+
+              // Mantener siempre la primera fotografía del plan, aunque se edite.
+              rutaSave.originalPlan = existingRoute.originalPlan || immutablePlan;
+
+              await updateDoc(doc(db, "rutas", editingPlannedRouteId), rutaSave);
+              alert("✅ Ruta planeada actualizada. El plan original quedó conservado para auditoría.");
+          } else {
+              await addDoc(collection(db, "rutas"), rutaSave);
+              alert(walkUpMode
+                  ? `✅ Servicio ocasional creado. Cotización inicial: ${rutaSave.currency} ${quotedTotal.toFixed(2)}.`
+                  : "✅ Ruta creada correctamente."
+              );
+          }
+
+          resetManualRouteForm();
+      } catch (e) {
+          console.error(e);
+          alert(e.message || "No se pudo guardar la ruta.");
+      }
+  };
+
+  const openEditPlannedRoute = (route, event) => {
+      event?.stopPropagation?.();
+      if (!route?.id) return;
+      if (!['Pendiente', 'Aceptada'].includes(route.status)) {
+          alert("Solo se pueden editar rutas que todavía no han iniciado.");
+          return;
+      }
+
+      setEditingPlannedRouteId(route.id);
+      const isWalkUp = route?.serviceModel === 'walk_up';
+      setWalkUpMode(isWalkUp);
+      setNewRoute({
+          client: route.client || '',
+          requestUser: route.requestUser || '',
+          driver: route.driver || '',
+          driverId: route.driverId || '',
+          status: route.status || 'Pendiente',
+          serviceType: route.serviceType || 'Programado',
+          scheduledDate: route.scheduledDate || route.finalDate || '',
+          scheduledTime: route.scheduledTime || ''
+      });
+
+      const clientObj = availableClients.find(c => c.name === route.client);
+      setSelectedClientData(clientObj || null);
+      setStartPoint({
+          address: route.start || '',
+          lat: route.startCoords?.lat ?? null,
+          lng: route.startCoords?.lng ?? route.startCoords?.lon ?? null,
+          contact: route.startCoords?.contact || '',
+          passengerName: route.startCoords?.passengerName || '',
+          phone: route.startCoords?.phone || route.startCoords?.contactPhone || ''
+      });
+      setEndPoint({
+          address: route.end || '',
+          lat: route.endCoords?.lat ?? null,
+          lng: route.endCoords?.lng ?? route.endCoords?.lon ?? null,
+          contact: route.endCoords?.contact || '',
+          passengerName: route.endCoords?.passengerName || '',
+          phone: route.endCoords?.phone || route.endCoords?.contactPhone || ''
+      });
+      setWaypoints((route.waypointsData || []).map(item => ({
+          ...item,
+          address: item.address || '',
+          lng: item.lng ?? item.lon ?? null
+      })));
+      setRouteInfo({
+          totalDistance: route.technicalData?.totalDistance || 0,
+          totalDuration: route.technicalData?.totalDuration || 0,
+          segments: route.technicalData?.segments || [],
+          geometry: route.technicalData?.geometry || [],
+          routedStopLocations: route.technicalData?.routedStopLocations || []
+      });
+
+      if (isWalkUp) {
+          const passengers = Array.isArray(route.passengerSchedule)
+              ? route.passengerSchedule
+              : Array.isArray(route.startCoords?.passengersSchedule)
+                  ? route.startCoords.passengersSchedule
+                  : [];
+          setWalkUpPassengers(
+              passengers.length
+                  ? passengers.slice(0, 4).map(item => ({
+                      name: item.passengerName || item.name || '',
+                      phone: item.phone || item.contactPhone || ''
+                  }))
+                  : [{ name: route.startCoords?.passengerName || '', phone: route.startCoords?.phone || '' }]
+          );
+          setWalkUpPricing({
+              currency: route.pricing?.currency || route.currency || 'MXN',
+              quotedTotal: String(route.pricing?.quotedTotal ?? route.pricing?.initialQuote ?? route.pricing?.total ?? ''),
+              recalculateAtEnd: route.pricing?.recalculateAtEnd !== false && route.recalculateAtEnd !== false,
+              baseFare: String(route.pricing?.baseFare ?? 35),
+              perKm: String(route.pricing?.perKm ?? 15),
+              perMinute: String(route.pricing?.perMinute ?? 1.5),
+              serviceFee: String(route.pricing?.serviceFee ?? 12),
+              minimumFare: String(route.pricing?.minimumFare ?? 75)
+          });
+      }
+
+      setShowModal(true);
   };
 
   // =================================================================================
@@ -572,6 +978,7 @@ export default function Planificacion() {
   };
 
   // --- CALCULAR RUTAS VEHICULARES CON GOOGLE DIRECTIONS ---
+  // Soporta varios puntos compartidos dentro de la misma unidad.
   const fetchRealRoutesForGroups = async (groups) => {
       setFetchingRealRoutes(true);
       const oficina = selectedClientData?.locations?.find(l => l.assignedTo === 'General');
@@ -580,21 +987,27 @@ export default function Planificacion() {
       try {
           for (let i = 0; i < updatedGroups.length; i++) {
               const g = updatedGroups[i];
-              const isShared = g.sharedMeetingPoint.active && g.sharedMeetingPoint.lat && ['Ambos', globalCarpool.mode].includes(g.sharedMeetingPoint.type || 'Ambos');
+              const passengerStops = buildPassengerStopsForGroup(g);
               const points = [];
 
               if (globalCarpool.mode === 'Ida') {
-                  if (isShared) points.push(g.sharedMeetingPoint);
-                  else g.employees.forEach(emp => points.push(emp));
+                  passengerStops.forEach(stop => points.push(stop));
                   if (oficina) points.push(oficina);
               } else {
                   if (oficina) points.push(oficina);
-                  if (isShared) points.push(g.sharedMeetingPoint);
-                  else g.employees.forEach(emp => points.push(emp));
+                  passengerStops.forEach(stop => points.push(stop));
               }
 
               if (points.length < 2) {
-                  updatedGroups[i] = { ...g, routeGeometry: [], routeSegments: [], routedStopLocations: [], totalDistanceKm: null, totalDurationMins: null };
+                  updatedGroups[i] = {
+                      ...g,
+                      routeGeometry: [],
+                      routeSegments: [],
+                      routedStopLocations: [],
+                      passengerStops,
+                      totalDistanceKm: null,
+                      totalDurationMins: null
+                  };
                   continue;
               }
 
@@ -603,6 +1016,7 @@ export default function Planificacion() {
                   if (!result) continue;
                   updatedGroups[i] = {
                       ...g,
+                      passengerStops,
                       routeGeometry: result.geometry,
                       routeSegments: result.segments,
                       routedStopLocations: result.routedStopLocations,
@@ -612,7 +1026,15 @@ export default function Planificacion() {
                   };
               } catch (routeError) {
                   console.error('Google Directions Error', routeError);
-                  updatedGroups[i] = { ...g, routeGeometry: [], routeSegments: [], routedStopLocations: [], totalDistanceKm: null, totalDurationMins: null };
+                  updatedGroups[i] = {
+                      ...g,
+                      passengerStops,
+                      routeGeometry: [],
+                      routeSegments: [],
+                      routedStopLocations: [],
+                      totalDistanceKm: null,
+                      totalDurationMins: null
+                  };
               }
           }
           setCarpoolGroups(updatedGroups);
@@ -629,7 +1051,11 @@ export default function Planificacion() {
       setCarpoolGroups(prev => {
           const cleanedGroups = prev.map(g => ({
               ...g,
-              employees: g.employees.filter(e => e.assignedTo !== empObj.assignedTo)
+              employees: g.employees.filter(e => e.assignedTo !== empObj.assignedTo),
+              sharedMeetingPoints: (g.sharedMeetingPoints || []).map(point => ({
+                  ...point,
+                  passengerNames: (point.passengerNames || []).filter(name => name !== empObj.assignedTo)
+              }))
           }));
           newGroups = cleanedGroups.map(g => {
               if (g.id === groupId) {
@@ -703,7 +1129,8 @@ export default function Planificacion() {
                   timeKey: tKey, 
                   driverId: '',
                   driverName: '',
-                  sharedMeetingPoint: { active: isShared, address: '', lat: null, lng: null },
+                  sharedMeetingPoint: { active: false, address: '', lat: null, lng: null },
+                  sharedMeetingPoints: isShared ? [{ id: `meeting_${groupIdx}_1`, active: true, address: '', lat: null, lng: null, passengerNames: currentGrp.map(emp => emp.assignedTo) }] : [],
                   routeGeometry: [],
                   routeSegments: [],
                   totalDistanceKm: null,
@@ -719,6 +1146,7 @@ export default function Planificacion() {
                   driverId: '',
                   driverName: '',
                   sharedMeetingPoint: { active: false, address: '', lat: null, lng: null },
+                  sharedMeetingPoints: [],
                   routeGeometry: [],
                   routeSegments: [],
                   totalDistanceKm: null,
@@ -738,8 +1166,16 @@ export default function Planificacion() {
           newGroups = prev.map(g => {
               if (g.id === groupId) {
                   const newEmp = [...g.employees];
+                  const removed = newEmp[empIndex];
                   newEmp.splice(empIndex, 1);
-                  return { ...g, employees: newEmp };
+                  return {
+                      ...g,
+                      employees: newEmp,
+                      sharedMeetingPoints: (g.sharedMeetingPoints || []).map(point => ({
+                          ...point,
+                          passengerNames: (point.passengerNames || []).filter(name => name !== removed?.assignedTo)
+                      }))
+                  };
               }
               return g;
           });
@@ -777,7 +1213,14 @@ export default function Planificacion() {
               const [moved] = sEmps.splice(sourceEmpIndex, 1);
               const tEmps = [...newGroups[tIdx].employees];
               tEmps.splice(targetEmpIndex, 0, moved);
-              newGroups[sIdx] = { ...newGroups[sIdx], employees: sEmps };
+              newGroups[sIdx] = {
+                  ...newGroups[sIdx],
+                  employees: sEmps,
+                  sharedMeetingPoints: (newGroups[sIdx].sharedMeetingPoints || []).map(point => ({
+                      ...point,
+                      passengerNames: (point.passengerNames || []).filter(name => name !== moved?.assignedTo)
+                  }))
+              };
               newGroups[tIdx] = { ...newGroups[tIdx], employees: tEmps };
               resultedGroups = newGroups; return newGroups;
           });
@@ -788,6 +1231,92 @@ export default function Planificacion() {
   const setGroupDriver = (groupId, driverId) => {
       const driver = availableDrivers.find(d => d.id === driverId);
       setCarpoolGroups(prev => prev.map(g => g.id === groupId ? { ...g, driverId, driverName: driver?.name || '' } : g));
+  };
+
+  const refreshGroupsAfterChange = (nextGroups) => {
+      setCarpoolGroups(nextGroups);
+      setTimeout(() => fetchRealRoutesForGroups(nextGroups), 80);
+  };
+
+  const addGroupMeetingPoint = (groupId) => {
+      const nextGroups = carpoolGroups.map(group => {
+          if (group.id !== groupId) return group;
+          const current = Array.isArray(group.sharedMeetingPoints) ? group.sharedMeetingPoints : [];
+          if (current.length >= 4) {
+              alert("Puedes configurar hasta 4 puntos de reunión por unidad.");
+              return group;
+          }
+          return {
+              ...group,
+              sharedMeetingPoints: [
+                  ...current,
+                  {
+                      id: `meeting_${group.id}_${Date.now()}`,
+                      active: true,
+                      address: '',
+                      lat: null,
+                      lng: null,
+                      passengerNames: []
+                  }
+              ]
+          };
+      });
+      setCarpoolGroups(nextGroups);
+  };
+
+  const updateGroupMeetingPoint = (groupId, meetingId, updates, recalculate = false) => {
+      const nextGroups = carpoolGroups.map(group => {
+          if (group.id !== groupId) return group;
+          return {
+              ...group,
+              sharedMeetingPoints: (group.sharedMeetingPoints || []).map(point =>
+                  point.id === meetingId ? { ...point, ...updates } : point
+              )
+          };
+      });
+      if (recalculate) refreshGroupsAfterChange(nextGroups);
+      else setCarpoolGroups(nextGroups);
+  };
+
+  const removeGroupMeetingPoint = (groupId, meetingId) => {
+      const nextGroups = carpoolGroups.map(group =>
+          group.id === groupId
+              ? {
+                  ...group,
+                  sharedMeetingPoints: (group.sharedMeetingPoints || []).filter(point => point.id !== meetingId)
+              }
+              : group
+      );
+      refreshGroupsAfterChange(nextGroups);
+  };
+
+  const toggleMeetingPassenger = (groupId, meetingId, employeeName) => {
+      const nextGroups = carpoolGroups.map(group => {
+          if (group.id !== groupId) return group;
+
+          // Un pasajero solo puede pertenecer a un punto compartido.
+          const cleared = (group.sharedMeetingPoints || []).map(point => ({
+              ...point,
+              passengerNames: (point.passengerNames || []).filter(name => name !== employeeName)
+          }));
+
+          return {
+              ...group,
+              sharedMeetingPoints: cleared.map(point => {
+                  if (point.id !== meetingId) return point;
+                  const wasAssigned = (group.sharedMeetingPoints || [])
+                      .find(item => item.id === meetingId)
+                      ?.passengerNames?.includes(employeeName);
+                  return {
+                      ...point,
+                      passengerNames: wasAssigned
+                          ? point.passengerNames
+                          : [...(point.passengerNames || []), employeeName]
+                  };
+              })
+          };
+      });
+      refreshGroupsAfterChange(nextGroups);
   };
 
   useEffect(() => {
@@ -802,11 +1331,13 @@ export default function Planificacion() {
                   if (g.routeGeometry && g.routeGeometry.length > 0) {
                       g.routeGeometry.forEach(p => bounds.extend(p)); hasPoints = true;
                   } else {
-                      if (g.sharedMeetingPoint.active && g.sharedMeetingPoint.lat) {
-                          bounds.extend({ lat: parseFloat(g.sharedMeetingPoint.lat), lng: parseFloat(g.sharedMeetingPoint.lng) }); hasPoints = true;
-                      } else {
-                          g.employees.forEach(emp => { if (emp.lat) { bounds.extend({ lat: parseFloat(emp.lat), lng: parseFloat(emp.lon || emp.lng) }); hasPoints = true; } });
-                      }
+                      const previewStops = buildPassengerStopsForGroup(g);
+                      previewStops.forEach(stop => {
+                          if (Number.isFinite(Number(stop.lat)) && Number.isFinite(Number(stop.lng))) {
+                              bounds.extend({ lat: Number(stop.lat), lng: Number(stop.lng) });
+                              hasPoints = true;
+                          }
+                      });
                   }
               }
           });
@@ -821,132 +1352,154 @@ export default function Planificacion() {
       const validGroups = carpoolGroups.filter(g => g.employees.length > 0);
       if(validGroups.length === 0) return alert("No hay grupos para programar.");
 
-      for(let g of validGroups) {
-          if(!g.driverId) return alert("⚠️ Todos los grupos deben tener un conductor asignado.");
-          if(g.sharedMeetingPoint.active && !g.sharedMeetingPoint.lat) return alert("⚠️ Activaste un Punto de Reunión pero no seleccionaste ubicación en el mapa.");
+      for (const group of validGroups) {
+          if(!group.driverId) return alert("⚠️ Todos los grupos deben tener un conductor asignado.");
+
+          for (const point of getGroupMeetingPoints(group)) {
+              if (!point.address || !Number.isFinite(Number(point.lat)) || !Number.isFinite(Number(point.lng ?? point.lon))) {
+                  return alert("⚠️ Hay un punto de reunión sin ubicación válida.");
+              }
+              if (!Array.isArray(point.passengerNames) || point.passengerNames.length === 0) {
+                  return alert("⚠️ Asigna al menos un pasajero a cada punto de reunión.");
+              }
+          }
       }
 
       try {
-          for (let g of validGroups) {
-              const isShared = g.sharedMeetingPoint?.active && g.sharedMeetingPoint?.lat && ['Ambos', globalCarpool.mode].includes(g.sharedMeetingPoint.type || 'Ambos');
-              const allPassengersString = g.employees.map(e => e.assignedTo).join(', ');
-              const resolveEmployeePhone = (employee) => getClientUserPhone(selectedClientData, employee?.assignedTo, employee?.phone);
-              const routedPointAt = (index, fallback) => {
-                  const point = g.routedStopLocations?.[index];
-                  if (point && Number.isFinite(Number(point.lat)) && Number.isFinite(Number(point.lng))) return { lat: Number(point.lat), lng: Number(point.lng) };
-                  return { lat: parseFloat(fallback?.lat), lng: parseFloat(fallback?.lon || fallback?.lng) };
-              };
-
-              let startAddress, startLat, startLng, startContact, startPhone = '';
-              let endAddress, endLat, endLng, endContact, endPhone = '';
-              let waypointsData = [], waypoints = [];
-
-              if (globalCarpool.mode === 'Ida') {
-                  if (isShared) {
-                      const routedSharedStart = routedPointAt(0, g.sharedMeetingPoint); startAddress = g.sharedMeetingPoint.address; startLat = routedSharedStart.lat; startLng = routedSharedStart.lng; startContact = allPassengersString; startPhone = ''; 
-                  } else {
-                      const inicio = g.employees[0]; const intermedias = g.employees.slice(1);
-                      const routedStart = routedPointAt(0, inicio);
-                      startAddress = inicio.address; startLat = routedStart.lat; startLng = routedStart.lng; startContact = inicio.assignedTo; startPhone = resolveEmployeePhone(inicio);
-
-                      waypointsData = intermedias.map((w, idx) => {
-                          const routed = routedPointAt(idx + 1, w);
-                          return { address: w.address, lat: routed.lat, lng: routed.lng, contact: w.assignedTo, passengerName: w.assignedTo, phone: resolveEmployeePhone(w), contactPhone: resolveEmployeePhone(w) };
-                      });
-                      waypoints = intermedias.map(w => w.address);
-                  }
-                  const routedOffice = routedPointAt((isShared ? 1 : g.employees.length), oficina);
-                  endAddress = oficina.address; endLat = routedOffice.lat; endLng = routedOffice.lng; endContact = 'Oficina Central'; endPhone = '';
-              } else {
-                  const routedOfficeStart = routedPointAt(0, oficina);
-                  startAddress = oficina.address; startLat = routedOfficeStart.lat; startLng = routedOfficeStart.lng; startContact = 'Oficina Central'; startPhone = '';
-                  if (isShared) {
-                      const routedShared = routedPointAt(1, g.sharedMeetingPoint);
-                      endAddress = g.sharedMeetingPoint.address; endLat = routedShared.lat; endLng = routedShared.lng; endContact = allPassengersString; endPhone = '';
-                  } else {
-                      const finRegreso = g.employees[g.employees.length - 1]; const intermediasRegreso = g.employees.slice(0, -1);
-                      const routedEnd = routedPointAt(g.employees.length, finRegreso);
-                      endAddress = finRegreso.address; endLat = routedEnd.lat; endLng = routedEnd.lng; endContact = finRegreso.assignedTo; endPhone = resolveEmployeePhone(finRegreso);
-
-                      waypointsData = intermediasRegreso.map((w, idx) => {
-                          const routed = routedPointAt(idx + 1, w);
-                          return { address: w.address, lat: routed.lat, lng: routed.lng, contact: w.assignedTo, passengerName: w.assignedTo, phone: resolveEmployeePhone(w), contactPhone: resolveEmployeePhone(w) };
-                      });
-                      waypoints = intermediasRegreso.map(w => w.address);
-                  }
+          for (const g of validGroups) {
+              const passengerStops = buildPassengerStopsForGroup(g);
+              if (!passengerStops.length) {
+                  throw new Error(`La unidad de ${g.driverName || 'conductor'} no tiene puntos válidos.`);
               }
 
-              // Plan de tiempos avanzado para carpooling:
-              // - Llegar 10 minutos antes al destino final.
-              // - Agregar 5 minutos de margen por cada pasajero.
+              const resolveEmployeePhone = (employee) =>
+                  getClientUserPhone(selectedClientData, employee?.assignedTo, employee?.phone);
+
+              const hasSharedStops = passengerStops.some(stop => stop.employees.length > 1 || stop.stopType === 'shared_meeting');
+
               const timePlan = buildCarpoolTimePlan({
                   timeKey: g.timeKey,
                   totalDurationMins: g.totalDurationMins,
                   routeSegments: g.routeSegments || [],
                   mode: globalCarpool.mode,
                   passengerCount: g.employees.length,
-                  isShared
+                  isShared: hasSharedStops
               });
 
-              const finalStopIndex = waypointsData.length + 1;
-              const passengerSchedule = g.employees.map((emp, index) => {
-                  const exactPhone = resolveEmployeePhone(emp);
-                  const stopIndex = globalCarpool.mode === 'Ida'
-                      ? (isShared ? 0 : index)
-                      : (isShared ? finalStopIndex : index + 1);
+              const routePoints = globalCarpool.mode === 'Ida'
+                  ? [...passengerStops, {
+                      stopType: 'office',
+                      address: oficina.address,
+                      lat: Number(oficina.lat),
+                      lng: Number(oficina.lng ?? oficina.lon),
+                      employees: []
+                  }]
+                  : [{
+                      stopType: 'office',
+                      address: oficina.address,
+                      lat: Number(oficina.lat),
+                      lng: Number(oficina.lng ?? oficina.lon),
+                      employees: []
+                  }, ...passengerStops];
 
-                  return {
-                      stopIndex,
-                      passengerName: emp.assignedTo,
-                      phone: exactPhone,
-                      contactPhone: exactPhone,
-                      pickupTime: globalCarpool.mode === 'Ida'
-                          ? (timePlan.pickupTimes[index] || timePlan.startTime)
-                          : '',
-                      bufferMins: globalCarpool.mode === 'Ida' ? PASSENGER_PICKUP_BUFFER_MINS : 0
-                  };
-              });
-
-              const getPassengerPickupTime = (name) => {
-                  return passengerSchedule.find(p => p.passengerName === name)?.pickupTime || '';
-              };
-
-              if (globalCarpool.mode === 'Ida' && waypointsData.length > 0) {
-                  waypointsData = waypointsData.map(w => ({
-                      ...w,
-                      pickupTime: getPassengerPickupTime(w.contact),
-                      pickupBufferMins: PASSENGER_PICKUP_BUFFER_MINS
-                  }));
-              }
-
-              const startCoordsSave = {
-                  lat: startLat,
-                  lng: startLng,
-                  contact: startContact,
-                  passengerName: startContact,
-                  phone: normalizeContactPhone(startPhone),
-                  contactPhone: normalizeContactPhone(startPhone)
-              };
-
-              if (globalCarpool.mode === 'Ida') {
-                  startCoordsSave.pickupTime = isShared
-                      ? timePlan.startTime
-                      : getPassengerPickupTime(startContact);
-                  startCoordsSave.pickupBufferMins = PASSENGER_PICKUP_BUFFER_MINS;
-
-                  if (isShared) {
-                      startCoordsSave.passengersSchedule = passengerSchedule;
+              const routedPointAt = (index, fallback) => {
+                  const point = g.routedStopLocations?.[index];
+                  if (
+                      point &&
+                      Number.isFinite(Number(point.lat)) &&
+                      Number.isFinite(Number(point.lng))
+                  ) {
+                      return { lat: Number(point.lat), lng: Number(point.lng) };
                   }
+                  return {
+                      lat: Number(fallback?.lat),
+                      lng: Number(fallback?.lng ?? fallback?.lon)
+                  };
+              };
+
+              // Hora por punto: quienes comparten punto reciben la misma hora;
+              // los siguientes puntos avanzan con el tiempo de ruta + 5 min por pasajero.
+              const pickupTimeByPassenger = new Map();
+              if (globalCarpool.mode === 'Ida') {
+                  let pickupCursor = parseTimeKeyToDate(timePlan.startTime);
+                  passengerStops.forEach((stop, stopIndex) => {
+                      stop.employees.forEach(employee => {
+                          pickupTimeByPassenger.set(employee.assignedTo, formatHHMM(pickupCursor));
+                      });
+                      pickupCursor = addMinutesToDate(
+                          pickupCursor,
+                          (stop.employees.length * PASSENGER_PICKUP_BUFFER_MINS) +
+                          safeMinutes(g.routeSegments?.[stopIndex]?.duration)
+                      );
+                  });
               }
 
-              const endCoordsSave = {
-                  lat: endLat,
-                  lng: endLng,
-                  contact: endContact,
-                  passengerName: endContact,
-                  phone: normalizeContactPhone(endPhone),
-                  contactPhone: normalizeContactPhone(endPhone)
+              const passengerSchedule = [];
+              passengerStops.forEach((stop, stopIndexWithinPassengers) => {
+                  const routeStopIndex = globalCarpool.mode === 'Ida'
+                      ? stopIndexWithinPassengers
+                      : stopIndexWithinPassengers + 1;
+
+                  stop.employees.forEach(employee => {
+                      const exactPhone = resolveEmployeePhone(employee);
+                      passengerSchedule.push({
+                          stopIndex: routeStopIndex,
+                          passengerName: employee.assignedTo,
+                          phone: exactPhone,
+                          contactPhone: exactPhone,
+                          pickupTime: globalCarpool.mode === 'Ida'
+                              ? (pickupTimeByPassenger.get(employee.assignedTo) || timePlan.startTime)
+                              : '',
+                          bufferMins: globalCarpool.mode === 'Ida' ? PASSENGER_PICKUP_BUFFER_MINS : 0,
+                          meetingPointId: stop.stopType === 'shared_meeting' ? stop.id : ''
+                      });
+                  });
+              });
+
+              const buildSavedPoint = (routePoint, routeIndex) => {
+                  const snapped = routedPointAt(routeIndex, routePoint);
+                  const schedules = (routePoint.employees || []).map(employee => {
+                      return passengerSchedule.find(item => item.passengerName === employee.assignedTo);
+                  }).filter(Boolean);
+                  const contact = (routePoint.employees || []).map(employee => employee.assignedTo).join(', ');
+
+                  const saved = {
+                      address: routePoint.address,
+                      lat: snapped.lat,
+                      lng: snapped.lng,
+                      contact: routePoint.stopType === 'office' ? 'Oficina Central' : contact,
+                      passengerName: routePoint.stopType === 'office'
+                          ? 'Oficina Central'
+                          : (routePoint.employees.length === 1 ? routePoint.employees[0].assignedTo : contact),
+                      phone: routePoint.employees.length === 1
+                          ? resolveEmployeePhone(routePoint.employees[0])
+                          : '',
+                      contactPhone: routePoint.employees.length === 1
+                          ? resolveEmployeePhone(routePoint.employees[0])
+                          : '',
+                      stopType: routePoint.stopType
+                  };
+
+                  if (schedules.length > 1 || routePoint.stopType === 'shared_meeting') {
+                      saved.passengersSchedule = schedules;
+                      saved.sharedMeetingPoint = true;
+                  }
+
+                  if (globalCarpool.mode === 'Ida' && schedules.length) {
+                      saved.pickupTime = schedules
+                          .map(item => item.pickupTime)
+                          .filter(Boolean)
+                          .sort()[0] || timePlan.startTime;
+                      saved.pickupBufferMins = PASSENGER_PICKUP_BUFFER_MINS;
+                  }
+
+                  return saved;
               };
+
+              const savedRoutePoints = routePoints.map(buildSavedPoint);
+              const startCoordsSave = savedRoutePoints[0];
+              const endCoordsSave = savedRoutePoints[savedRoutePoints.length - 1];
+              const intermediateSaved = savedRoutePoints.slice(1, -1);
 
               if (globalCarpool.mode === 'Ida') {
                   endCoordsSave.targetArrivalTime = timePlan.targetFinalArrivalTime;
@@ -954,9 +1507,54 @@ export default function Planificacion() {
                   endCoordsSave.finalEarlyBufferMins = FINAL_DESTINATION_EARLY_MINS;
               }
 
-              if (globalCarpool.mode === 'Regreso' && isShared) {
-                  endCoordsSave.passengersSchedule = passengerSchedule;
-              }
+              const createdAt = new Date().toISOString();
+              const technicalData = {
+                  geometry: g.routeGeometry || [],
+                  routingProvider: 'google-directions',
+                  segments: g.routeSegments || [],
+                  totalDistance: g.totalDistanceKm || null,
+                  totalDuration: g.totalDurationMins || 0,
+                  totalDurationMins: g.totalDurationMins || 0,
+                  routedStopLocations: g.routedStopLocations || [],
+                  carpool: {
+                      mode: globalCarpool.mode,
+                      officialScheduledTime: g.timeKey,
+                      startTime: timePlan.startTime,
+                      targetArrivalTime: timePlan.targetFinalArrivalTime,
+                      estimatedFinalArrivalTime: timePlan.estimatedFinalArrivalTime,
+                      finalEarlyBufferMins: timePlan.finalEarlyBufferMins,
+                      passengerBufferMins: timePlan.passengerBufferMins,
+                      totalPassengerBufferMins: timePlan.totalPassengerBufferMins,
+                      passengerCount: g.employees.length,
+                      passengerSchedule,
+                      meetingPoints: getGroupMeetingPoints(g).map(point => ({
+                          id: point.id,
+                          address: point.address,
+                          lat: Number(point.lat),
+                          lng: Number(point.lng ?? point.lon),
+                          passengerNames: point.passengerNames || []
+                      }))
+                  }
+              };
+
+              const originalPlan = {
+                  version: 1,
+                  createdAt,
+                  geometry: [...(g.routeGeometry || [])],
+                  totalDistance: g.totalDistanceKm || null,
+                  totalDuration: g.totalDurationMins || 0,
+                  segments: [...(g.routeSegments || [])],
+                  start: startCoordsSave.address,
+                  startCoords: { lat: startCoordsSave.lat, lng: startCoordsSave.lng },
+                  waypoints: intermediateSaved.map(item => item.address),
+                  waypointsData: intermediateSaved.map(item => ({
+                      address: item.address,
+                      lat: item.lat,
+                      lng: item.lng
+                  })),
+                  end: endCoordsSave.address,
+                  endCoords: { lat: endCoordsSave.lat, lng: endCoordsSave.lng }
+              };
 
               const newTrip = {
                   client: newRoute.client,
@@ -971,15 +1569,8 @@ export default function Planificacion() {
                   pricingPolicy: 'dispatcher_hidden_during_trip',
                   chat: [],
                   scheduledDate: newRoute.scheduledDate,
-
-                  // Hora oficial del corporativo. Ejemplo: entrada 08:00.
                   scheduledTime: g.timeKey,
-
-                  // Hora real en la que el chofer debe iniciar.
-                  // Para Ida incluye: duración OSRM + 10 min final + 5 min por pasajero.
                   startTime: timePlan.startTime,
-
-                  // Campos adicionales para app del conductor, control y reportes.
                   targetArrivalTime: timePlan.targetFinalArrivalTime,
                   officialScheduledTime: g.timeKey,
                   estimatedFinalArrivalTime: timePlan.estimatedFinalArrivalTime,
@@ -987,45 +1578,27 @@ export default function Planificacion() {
                   passengerBufferMins: timePlan.passengerBufferMins,
                   totalPassengerBufferMins: timePlan.totalPassengerBufferMins,
                   passengerSchedule,
-
-                  start: startAddress,
+                  start: startCoordsSave.address,
                   startCoords: startCoordsSave,
-
-                  end: endAddress,
+                  end: endCoordsSave.address,
                   endCoords: endCoordsSave,
-
-                  waypointsData: waypointsData,
-                  waypoints: waypoints,
-
-                  technicalData: {
-                      geometry: g.routeGeometry || [],
-                      routingProvider: 'google-directions',
-                      segments: g.routeSegments || [],
-                      totalDistance: g.totalDistanceKm || null,
-                      totalDuration: g.totalDurationMins || 0,
-                      totalDurationMins: g.totalDurationMins || 0,
-                      carpool: {
-                          mode: globalCarpool.mode,
-                          officialScheduledTime: g.timeKey,
-                          startTime: timePlan.startTime,
-                          targetArrivalTime: timePlan.targetFinalArrivalTime,
-                          estimatedFinalArrivalTime: timePlan.estimatedFinalArrivalTime,
-                          finalEarlyBufferMins: timePlan.finalEarlyBufferMins,
-                          passengerBufferMins: timePlan.passengerBufferMins,
-                          totalPassengerBufferMins: timePlan.totalPassengerBufferMins,
-                          passengerCount: g.employees.length,
-                          passengerSchedule
-                      }
-                  },
-
+                  waypointsData: intermediateSaved,
+                  waypoints: intermediateSaved.map(item => item.address),
+                  technicalData,
+                  originalPlan,
                   finalDate: newRoute.scheduledDate,
-                  createdDate: new Date().toISOString()
+                  createdDate: createdAt
               };
+
               await addDoc(collection(db, "rutas"), newTrip);
           }
+
           alert(`✅ ¡Logística completada! Rutas de ${globalCarpool.mode} creadas con éxito.`);
           setShowCarpoolModal(false);
-      } catch(e) { alert("Error al generar las rutas."); }
+      } catch(e) {
+          console.error(e);
+          alert(e?.message || "Error al generar las rutas.");
+      }
   };
 
   const handleDeleteRoute = async (id, e) => { e.stopPropagation(); if(confirm("¿Eliminar ruta permanentemente?")) { await deleteDoc(doc(db, "rutas", id)); if(viewRoute?.id === id) setViewRoute(null); } };
@@ -1034,7 +1607,13 @@ export default function Planificacion() {
   const handlePreviewMapLoad = useCallback((map) => { previewMapRef.current = map; }, []);
   const routeToDisplay = viewRoute?.technicalData?.geometry ? viewRoute.technicalData.geometry : [];
   let mapCenter = centerMX; if(routeToDisplay.length > 0) mapCenter = routeToDisplay[0];
-  const activePlanRoutes = routesList.filter(r => r.status === 'Pendiente' || r.status === 'Aceptada' || r.status === 'En Ruta');
+  const activePlanRoutes = routesList
+      .filter(r => r.status === 'Pendiente' || r.status === 'Aceptada' || r.status === 'En Ruta')
+      .sort((a, b) => {
+          if (a.status === 'En Ruta' && b.status !== 'En Ruta') return -1;
+          if (b.status === 'En Ruta' && a.status !== 'En Ruta') return 1;
+          return getPlanSortTimestamp(a) - getPlanSortTimestamp(b);
+      });
 
   if (!isLoaded) return <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin w-8 h-8 text-slate-800"/></div>;
 
@@ -1044,7 +1623,7 @@ export default function Planificacion() {
           <div><h2 className="text-2xl font-bold text-slate-800">Planificador de Rutas</h2><p className="text-slate-500 text-sm">{activePlanRoutes.length} viajes pendientes o activos</p></div>
           <div className="flex gap-3">
               <button onClick={openCarpoolModal} className="bg-orange-100 text-orange-700 border border-orange-200 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-orange-200 transition"><Network className="w-4 h-4" /> Optimizar Grupos de Personal</button>
-              <button onClick={() => { setViewRoute(null); setShowModal(true); }} className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg hover:bg-slate-900 transition"><Plus className="w-4 h-4" /> Nueva Ruta Manual</button>
+              <button onClick={() => { setViewRoute(null); setEditingPlannedRouteId(null); setWalkUpMode(false); setShowModal(true); }} className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg hover:bg-slate-900 transition"><Plus className="w-4 h-4" /> Nueva Ruta Manual</button>
           </div>
       </div>
 
@@ -1056,9 +1635,28 @@ export default function Planificacion() {
                 <div key={ruta.id} onClick={() => setViewRoute(ruta)} className={`bg-white p-4 rounded-xl shadow-sm border transition cursor-pointer group ${viewRoute?.id === ruta.id ? 'border-orange-500 ring-1 ring-orange-500 shadow-md' : 'border-slate-200 hover:shadow-md'}`}>
                     <div className="flex justify-between items-start mb-2">
                           {ruta.serviceType === 'Prioritario' ? <span className="text-[10px] font-bold px-2 py-1 rounded bg-orange-100 text-orange-700 flex items-center gap-1"><Zap className="w-3 h-3"/> INMEDIATO</span> : <span className="text-[10px] font-bold px-2 py-1 rounded bg-slate-100 text-slate-700 flex items-center gap-1"><Calendar className="w-3 h-3"/> {ruta.scheduledDate} {ruta.scheduledTime}</span>}
-                          <div className="flex gap-1"><button onClick={(e) => handleDeleteRoute(ruta.id, e)} className="text-red-400 bg-red-50 p-1.5 rounded hover:bg-red-100 transition"><Trash2 className="w-4 h-4"/></button></div>
+                          <div className="flex gap-1">
+                              {['Pendiente', 'Aceptada'].includes(ruta.status) && (
+                                  <button
+                                      type="button"
+                                      onClick={(e) => openEditPlannedRoute(ruta, e)}
+                                      className="text-blue-600 bg-blue-50 px-2 py-1.5 rounded hover:bg-blue-100 transition text-[9px] font-black uppercase"
+                                      title="Modificar ruta planeada antes de iniciar"
+                                  >
+                                      EDITAR
+                                  </button>
+                              )}
+                              <button onClick={(e) => handleDeleteRoute(ruta.id, e)} className="text-red-400 bg-red-50 p-1.5 rounded hover:bg-red-100 transition"><Trash2 className="w-4 h-4"/></button>
+                          </div>
                     </div>
                     <h4 className="font-bold text-slate-800 text-sm mb-0.5 truncate">{ruta.client}</h4>
+                    {ruta.serviceModel === 'walk_up' && Number(ruta.pricing?.quotedTotal ?? ruta.pricing?.total) > 0 && (
+                        <div className="mt-1 mb-2 inline-flex items-center gap-1 rounded-lg bg-emerald-50 border border-emerald-200 px-2 py-1 text-[9px] font-black text-emerald-700">
+                            COTIZADO: {ruta.pricing?.currency || ruta.currency || 'MXN'} {Number(ruta.pricing?.quotedTotal ?? ruta.pricing?.total).toFixed(2)}
+                            {ruta.pricing?.recalculateAtEnd !== false && <span className="text-emerald-500">· RECÁLCULO FINAL</span>}
+                        </div>
+                    )}
+
                     
                     {(() => {
                         const passengers = [ ruta.startCoords?.contact, ...(ruta.waypointsData?.map(w => w.contact) || []), ruta.endCoords?.contact ].filter(Boolean);
@@ -1281,7 +1879,7 @@ export default function Planificacion() {
                                                   routeSegments: grupo.routeSegments || [],
                                                   mode: globalCarpool.mode,
                                                   passengerCount: grupo.employees.length,
-                                                  isShared: grupo.sharedMeetingPoint?.active && grupo.sharedMeetingPoint?.lat
+                                                  isShared: getGroupMeetingPoints(grupo).length > 0
                                               });
                                               
                                               return (
@@ -1301,14 +1899,14 @@ export default function Planificacion() {
                                                                       routeSegments: grupo.routeSegments || [],
                                                                       mode: 'Ida',
                                                                       passengerCount: grupo.employees.length,
-                                                                      isShared: grupo.sharedMeetingPoint?.active && grupo.sharedMeetingPoint?.lat
+                                                                      isShared: getGroupMeetingPoints(grupo).length > 0
                                                                   }).targetFinalArrivalTime}. Incluye 10 min de antelación final y 5 min por pasajero.`}
                                                               >
-                                                                  <Clock className="w-3 h-3 inline mr-1"/>Recoger a las {getCalculatedStartTime(grupo.timeKey, grupo.totalDurationMins, 'Ida', grupo.employees.length)}
+                                                                  <Clock className="w-3 h-3 inline mr-1"/>RECOGER: {getCalculatedStartTime(grupo.timeKey, grupo.totalDurationMins, 'Ida', grupo.employees.length)}
                                                               </span>
                                                           ) : (
                                                               <span className="ml-2 text-[10px] bg-slate-600 px-2 py-1 rounded font-bold border border-slate-500">
-                                                                  <Clock className="w-3 h-3 inline mr-1"/>Sale a las {grupo.timeKey}
+                                                                  <Clock className="w-3 h-3 inline mr-1"/>SALIDA: {grupo.timeKey}
                                                               </span>
                                                           )}
                                                       </div>
@@ -1351,10 +1949,10 @@ export default function Planificacion() {
                                                                       onDragStart={(e) => handleDragStart(e, grupo.id, eIdx)}
                                                                       onDragOver={(e) => e.preventDefault()}
                                                                       onDrop={(e) => handleDrop(e, grupo.id, eIdx)}
-                                                                      className={`flex items-center gap-2 bg-slate-50 border p-2 rounded cursor-grab active:cursor-grabbing hover:border-orange-300 transition ${grupo.sharedMeetingPoint.active ? 'border-orange-200 bg-orange-50/50' : 'border-slate-100'}`}
+                                                                      className={`flex items-center gap-2 bg-slate-50 border p-2 rounded cursor-grab active:cursor-grabbing hover:border-orange-300 transition ${getEmployeeMeetingPoint(grupo, emp.assignedTo) ? 'border-orange-200 bg-orange-50/50' : 'border-slate-100'}`}
                                                                   >
                                                                       <GripVertical className="w-4 h-4 text-slate-300 shrink-0"/>
-                                                                      {!grupo.sharedMeetingPoint.active && (
+                                                                      {!getEmployeeMeetingPoint(grupo, emp.assignedTo) && (
                                                                          <div className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0 bg-slate-400" style={{ backgroundColor: groupColor }}>
                                                                              {globalCarpool.mode === 'Ida' ? String.fromCharCode(65+eIdx) : String.fromCharCode(66+eIdx)}
                                                                          </div>
@@ -1386,15 +1984,84 @@ export default function Planificacion() {
                                                       </div>
 
                                                       <div className="pt-3 border-t border-slate-200 mt-2">
-                                                          <div className="flex items-center gap-2 mb-3">
-                                                              <input type="checkbox" checked={grupo.sharedMeetingPoint.active} onChange={(e) => { const st = e.target.checked; setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, active: st}} : g)); setTimeout(()=>fetchRealRoutesForGroups(carpoolGroups.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, active: st}} : g)), 100); }} className="w-4 h-4 text-orange-600 rounded cursor-pointer" />
-                                                              <label className="text-[10px] font-black text-slate-600 uppercase cursor-pointer">Punto de Reunión Compartido</label>
+                                                          <div className="flex items-center justify-between gap-3 mb-3">
+                                                              <div>
+                                                                  <p className="text-[10px] font-black text-slate-600 uppercase">Puntos de reunión compartidos</p>
+                                                                  <p className="text-[9px] text-slate-400 font-bold mt-0.5">Puedes usar varios puntos en la misma ruta, tanto de ida como de regreso.</p>
+                                                              </div>
+                                                              <button
+                                                                  type="button"
+                                                                  onClick={() => addGroupMeetingPoint(grupo.id)}
+                                                                  className="px-3 py-2 rounded-lg bg-orange-100 text-orange-700 border border-orange-200 text-[9px] font-black uppercase hover:bg-orange-200"
+                                                              >
+                                                                  + Agregar punto
+                                                              </button>
                                                           </div>
-                                                          {grupo.sharedMeetingPoint.active && (
-                                                              <div className="space-y-2 mb-2">
-                                                                  <AddressAutocomplete isLoaded={isLoaded} placeholder="Buscar plaza, metro, etc..." value={grupo.sharedMeetingPoint.address} onSelect={(loc) => { setCarpoolGroups(prev => prev.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, address: loc.address, lat: loc.lat, lng: loc.lon || loc.lng}} : g)); setTimeout(()=>fetchRealRoutesForGroups(carpoolGroups.map(g => g.id === grupo.id ? {...g, sharedMeetingPoint: {...g.sharedMeetingPoint, address: loc.address, lat: loc.lat, lng: loc.lon || loc.lng}} : g)), 100); }} iconColor="orange" zIndex={100 - idx} />
+
+                                                          {(grupo.sharedMeetingPoints || []).length === 0 && (
+                                                              <div className="rounded-xl border border-dashed border-slate-300 bg-slate-50 p-3 text-center">
+                                                                  <p className="text-[10px] font-bold text-slate-400">Sin puntos compartidos. Cada pasajero se recoge/entrega en su dirección.</p>
                                                               </div>
                                                           )}
+
+                                                          <div className="space-y-3">
+                                                              {(grupo.sharedMeetingPoints || []).map((meeting, meetingIndex) => (
+                                                                  <div key={meeting.id} className="rounded-xl border border-orange-200 bg-orange-50/40 p-3 space-y-3">
+                                                                      <div className="flex items-center justify-between gap-2">
+                                                                          <p className="text-[10px] font-black uppercase text-orange-700">Punto compartido {meetingIndex + 1}</p>
+                                                                          <button
+                                                                              type="button"
+                                                                              onClick={() => removeGroupMeetingPoint(grupo.id, meeting.id)}
+                                                                              className="p-1.5 bg-white border border-red-100 text-red-400 rounded-lg hover:text-red-600"
+                                                                              title="Eliminar punto compartido"
+                                                                          >
+                                                                              <X className="w-3.5 h-3.5"/>
+                                                                          </button>
+                                                                      </div>
+
+                                                                      <AddressAutocomplete
+                                                                          isLoaded={isLoaded}
+                                                                          placeholder="Buscar plaza, acceso, evento, centro de reunión..."
+                                                                          value={meeting.address}
+                                                                          onSelect={(loc) => updateGroupMeetingPoint(
+                                                                              grupo.id,
+                                                                              meeting.id,
+                                                                              { address: loc.address, lat: loc.lat, lng: loc.lon || loc.lng },
+                                                                              true
+                                                                          )}
+                                                                          iconColor="orange"
+                                                                          zIndex={150 - (idx * 10) - meetingIndex}
+                                                                      />
+
+                                                                      <div>
+                                                                          <p className="text-[9px] font-black uppercase tracking-widest text-slate-500 mb-2">Pasajeros en este punto</p>
+                                                                          <div className="flex flex-wrap gap-2">
+                                                                              {grupo.employees.map((emp) => {
+                                                                                  const assignedPoint = getEmployeeMeetingPoint(grupo, emp.assignedTo);
+                                                                                  const selectedHere = assignedPoint?.id === meeting.id;
+                                                                                  return (
+                                                                                      <button
+                                                                                          key={`${meeting.id}-${emp.assignedTo}`}
+                                                                                          type="button"
+                                                                                          onClick={() => toggleMeetingPassenger(grupo.id, meeting.id, emp.assignedTo)}
+                                                                                          className={`px-2.5 py-1.5 rounded-full border text-[9px] font-black transition ${
+                                                                                              selectedHere
+                                                                                                  ? 'bg-orange-500 border-orange-500 text-white'
+                                                                                                  : assignedPoint
+                                                                                                      ? 'bg-slate-100 border-slate-200 text-slate-400'
+                                                                                                      : 'bg-white border-slate-200 text-slate-600 hover:border-orange-300'
+                                                                                          }`}
+                                                                                          title={assignedPoint && !selectedHere ? 'Asignado a otro punto compartido' : ''}
+                                                                                      >
+                                                                                          {selectedHere ? '✓ ' : ''}{emp.assignedTo}
+                                                                                      </button>
+                                                                                  );
+                                                                              })}
+                                                                          </div>
+                                                                      </div>
+                                                                  </div>
+                                                              ))}
+                                                          </div>
                                                       </div>
                                                   </div>
                                               </div>
@@ -1416,18 +2083,28 @@ export default function Planificacion() {
                                               {carpoolGroups.map((g, idx) => {
                                                   if (previewGroupId !== 'all' && previewGroupId !== g.id) return null;
                                                   const gColor = PREVIEW_COLORS[idx % PREVIEW_COLORS.length];
-                                                  const isShared = g.sharedMeetingPoint.active && g.sharedMeetingPoint.lat;
-                                                  const oficina = selectedClientData?.locations?.find(l => l.assignedTo === 'General');
-                                                  const endPoint = oficina && oficina.lat ? { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng) } : null;
+                                                  const passengerStops = buildPassengerStopsForGroup(g);
 
-                                                  // RENDERIZAR RUTA REAL (OSRM)
+                                                  // RENDERIZAR RUTA REAL CALCULADA POR GOOGLE
                                                   if (g.routeGeometry && g.routeGeometry.length > 0) {
                                                       return (
                                                           <React.Fragment key={`real-route-${g.id}`}>
                                                               <Polyline path={g.routeGeometry} options={{ strokeColor: gColor, strokeOpacity: 0.8, strokeWeight: 5 }} />
-                                                              {isShared ? ( <Marker position={{ lat: parseFloat(g.sharedMeetingPoint.lat), lng: parseFloat(g.sharedMeetingPoint.lng) }} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: gColor, fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} /> ) : (
-                                                                  g.employees.map((emp, i) => emp.lat && ( <Marker key={`m-${g.id}-${i}`} position={{ lat: parseFloat(emp.lat), lng: parseFloat(emp.lon || emp.lng) }} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 5, fillColor: gColor, fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }} label={{ text: globalCarpool.mode === 'Ida' ? String.fromCharCode(65 + i) : String.fromCharCode(66 + i), color: 'white', fontSize: '10px' }} /> ))
-                                                              )}
+                                                              {passengerStops.map((stop, stopIndex) => (
+                                                                  <Marker
+                                                                      key={`stop-${g.id}-${stop.id}-${stopIndex}`}
+                                                                      position={{ lat: Number(stop.lat), lng: Number(stop.lng) }}
+                                                                      icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: stop.stopType === 'shared_meeting' ? 7 : 5, fillColor: gColor, fillOpacity: 1, strokeColor: "white", strokeWeight: 2 }}
+                                                                      label={{
+                                                                          text: String.fromCharCode(65 + stopIndex),
+                                                                          color: 'white',
+                                                                          fontSize: '10px'
+                                                                      }}
+                                                                      title={stop.stopType === 'shared_meeting'
+                                                                          ? `Punto compartido: ${stop.employees.map(item => item.assignedTo).join(', ')}`
+                                                                          : stop.employees[0]?.assignedTo || 'Pasajero'}
+                                                                  />
+                                                              ))}
                                                           </React.Fragment>
                                                       );
                                                   }
@@ -1456,20 +2133,183 @@ export default function Planificacion() {
         <div className="fixed inset-0 z-[9990] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
             <div className="bg-white w-full max-w-6xl h-[95vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
                 <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
-                    <div><h3 className="text-lg font-bold text-slate-800">Planificar Ruta de Personal</h3></div>
-                    <button onClick={() => setShowModal(false)}><X className="w-6 h-6 text-slate-400 hover:text-red-500 transition" /></button>
+                    <div><h3 className="text-lg font-bold text-slate-800">{editingPlannedRouteId ? 'Modificar Ruta Planeada' : walkUpMode ? 'Servicio Ocasional / Centro de Acopio' : 'Planificar Ruta de Personal'}</h3></div>
+                    <button onClick={resetManualRouteForm}><X className="w-6 h-6 text-slate-400 hover:text-red-500 transition" /></button>
                 </div>
                 <div className="flex-1 flex overflow-hidden">
                     <div className="w-[45%] p-6 overflow-y-auto border-r border-slate-100 bg-white z-10 shadow-[5px_0_15px_-5px_rgba(0,0,0,0.1)] relative scrollbar-thin">
                         <div className="space-y-6">
                             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                                <label className="block text-xs font-bold text-slate-500 uppercase mb-3">Configuración de Viaje</label>
-                                <div className="flex gap-3 mb-3"><button onClick={() => setNewRoute({...newRoute, serviceType: 'Prioritario'})} className={`flex-1 py-2.5 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-2 transition ${newRoute.serviceType === 'Prioritario' ? 'bg-orange-50 border-orange-300 text-orange-700 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}><Zap className="w-4 h-4" /> INMEDIATO</button><button onClick={() => setNewRoute({...newRoute, serviceType: 'Programado'})} className={`flex-1 py-2.5 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-2 transition ${newRoute.serviceType === 'Programado' ? 'bg-slate-800 border-slate-800 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}><Calendar className="w-4 h-4" /> PROGRAMADO</button></div>
-                                {isProgramado && (<div className="grid grid-cols-2 gap-3 mt-3"><input type="date" className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-orange-400" value={newRoute.scheduledDate} onChange={(e) => setNewRoute({...newRoute, scheduledDate: e.target.value})} /><input type="time" className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-orange-400" value={newRoute.scheduledTime} onChange={(e) => setNewRoute({...newRoute, scheduledTime: e.target.value})} /></div>)}
-                                <div className="mt-4">
-                                    <label className="text-xs font-bold text-slate-500 uppercase">Empresa / Cuenta Responsable</label>
-                                    <select className="w-full mt-1.5 bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-orange-400" value={newRoute.client} onChange={handleClientChange}><option value="">Selecciona la empresa...</option>{availableClients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}</select>
+                                <div className="flex items-center justify-between gap-3 mb-3">
+                                    <label className="block text-xs font-bold text-slate-500 uppercase">Configuración de Viaje</label>
+                                    {editingPlannedRouteId && (
+                                        <span className="text-[9px] font-black uppercase tracking-widest bg-blue-100 text-blue-700 border border-blue-200 px-2 py-1 rounded">
+                                            Editando ruta planeada
+                                        </span>
+                                    )}
                                 </div>
+
+                                <div className="grid grid-cols-2 gap-2 mb-4">
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setWalkUpMode(false);
+                                            if (newRoute.client === 'Servicio ocasional') setNewRoute({...newRoute, client: ''});
+                                        }}
+                                        className={`py-2.5 rounded-lg text-[10px] font-black uppercase border transition ${!walkUpMode ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-500 border-slate-200'}`}
+                                    >
+                                        Cuenta / Empresa
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setWalkUpMode(true);
+                                            setSelectedClientData(null);
+                                            setNewRoute({...newRoute, client: 'Servicio ocasional'});
+                                        }}
+                                        className={`py-2.5 rounded-lg text-[10px] font-black uppercase border transition ${walkUpMode ? 'bg-orange-500 text-white border-orange-500' : 'bg-white text-slate-500 border-slate-200'}`}
+                                    >
+                                        Servicio ocasional / acopio
+                                    </button>
+                                </div>
+
+                                <div className="flex gap-3 mb-3">
+                                    <button type="button" onClick={() => setNewRoute({...newRoute, serviceType: 'Prioritario'})} className={`flex-1 py-2.5 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-2 transition ${newRoute.serviceType === 'Prioritario' ? 'bg-orange-50 border-orange-300 text-orange-700 shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}><Zap className="w-4 h-4" /> INMEDIATO</button>
+                                    <button type="button" onClick={() => setNewRoute({...newRoute, serviceType: 'Programado'})} className={`flex-1 py-2.5 px-3 rounded-lg border text-xs font-bold flex items-center justify-center gap-2 transition ${newRoute.serviceType === 'Programado' ? 'bg-slate-800 border-slate-800 text-white shadow-sm' : 'bg-white border-slate-200 text-slate-400'}`}><Calendar className="w-4 h-4" /> PROGRAMADO</button>
+                                </div>
+
+                                {isProgramado && (
+                                    <div className="grid grid-cols-2 gap-3 mt-3">
+                                        <input type="date" className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-orange-400" value={newRoute.scheduledDate} onChange={(e) => setNewRoute({...newRoute, scheduledDate: e.target.value})} />
+                                        <input type="time" className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-orange-400" value={newRoute.scheduledTime} onChange={(e) => setNewRoute({...newRoute, scheduledTime: e.target.value})} />
+                                    </div>
+                                )}
+
+                                {!walkUpMode ? (
+                                    <div className="mt-4">
+                                        <label className="text-xs font-bold text-slate-500 uppercase">Empresa / Cuenta Responsable</label>
+                                        <select className="w-full mt-1.5 bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-orange-400" value={newRoute.client} onChange={handleClientChange}>
+                                            <option value="">Selecciona la empresa...</option>
+                                            {availableClients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
+                                        </select>
+                                    </div>
+                                ) : (
+                                    <div className="mt-4 space-y-4">
+                                        <div className="rounded-xl bg-orange-50 border border-orange-200 p-3">
+                                            <div className="flex items-center justify-between gap-3 mb-3">
+                                                <div>
+                                                    <p className="text-[10px] font-black uppercase tracking-widest text-orange-700">Pasajeros ocasionales</p>
+                                                    <p className="text-[9px] font-bold text-orange-500 mt-0.5">1 a 4 plazas sin crear usuarios permanentes.</p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    disabled={walkUpPassengers.length >= 4}
+                                                    onClick={() => setWalkUpPassengers(prev => [...prev, { name: '', phone: '' }])}
+                                                    className="px-2.5 py-1.5 rounded-lg bg-white border border-orange-200 text-orange-700 text-[9px] font-black disabled:opacity-40"
+                                                >
+                                                    + PLAZA
+                                                </button>
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                {walkUpPassengers.map((passenger, index) => (
+                                                    <div key={`walkup-${index}`} className="grid grid-cols-[1fr_0.8fr_auto] gap-2">
+                                                        <input
+                                                            type="text"
+                                                            value={passenger.name}
+                                                            onChange={(event) => setWalkUpPassengers(prev => prev.map((item, itemIndex) => itemIndex === index ? {...item, name: event.target.value} : item))}
+                                                            placeholder={`Pasajero ${index + 1}`}
+                                                            className="w-full p-2.5 rounded-lg border border-orange-200 bg-white text-xs outline-none focus:border-orange-500"
+                                                        />
+                                                        <input
+                                                            type="tel"
+                                                            value={passenger.phone}
+                                                            onChange={(event) => setWalkUpPassengers(prev => prev.map((item, itemIndex) => itemIndex === index ? {...item, phone: event.target.value} : item))}
+                                                            placeholder="WhatsApp"
+                                                            className="w-full p-2.5 rounded-lg border border-orange-200 bg-white text-xs outline-none focus:border-orange-500"
+                                                        />
+                                                        <button
+                                                            type="button"
+                                                            disabled={walkUpPassengers.length <= 1}
+                                                            onClick={() => setWalkUpPassengers(prev => prev.filter((_, itemIndex) => itemIndex !== index))}
+                                                            className="p-2.5 rounded-lg bg-white border border-red-100 text-red-400 disabled:opacity-30"
+                                                        >
+                                                            <X className="w-4 h-4"/>
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 space-y-3">
+                                            <div className="grid grid-cols-[0.7fr_1.3fr] gap-2">
+                                                <select
+                                                    value={walkUpPricing.currency}
+                                                    onChange={(event) => setWalkUpPricing(prev => ({
+                                                        ...prev,
+                                                        currency: event.target.value,
+                                                        ...(event.target.value === 'COP' ? {
+                                                            baseFare: '',
+                                                            perKm: '',
+                                                            perMinute: '',
+                                                            serviceFee: '',
+                                                            minimumFare: ''
+                                                        } : {})
+                                                    }))}
+                                                    className="p-2.5 rounded-lg border border-emerald-200 bg-white text-xs font-black"
+                                                >
+                                                    <option value="MXN">MXN</option>
+                                                    <option value="COP">COP</option>
+                                                </select>
+                                                <input
+                                                    type="number"
+                                                    min="0"
+                                                    step="0.01"
+                                                    value={walkUpPricing.quotedTotal}
+                                                    onChange={(event) => setWalkUpPricing(prev => ({...prev, quotedTotal: event.target.value}))}
+                                                    placeholder="Cotización inicial al usuario"
+                                                    className="p-2.5 rounded-lg border border-emerald-200 bg-white text-xs font-black outline-none focus:border-emerald-500"
+                                                />
+                                            </div>
+
+                                            <label className="flex items-start gap-2 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={walkUpPricing.recalculateAtEnd}
+                                                    onChange={(event) => setWalkUpPricing(prev => ({...prev, recalculateAtEnd: event.target.checked}))}
+                                                    className="mt-0.5 w-4 h-4"
+                                                />
+                                                <span className="text-[10px] font-bold text-emerald-800">
+                                                    Recalcular al finalizar con kilómetros y tiempo reales. Si se desactiva, la cotización queda fija.
+                                                </span>
+                                            </label>
+
+                                            {walkUpPricing.recalculateAtEnd && (
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    {[
+                                                        ['baseFare', 'Tarifa base'],
+                                                        ['perKm', 'Por km'],
+                                                        ['perMinute', 'Por minuto'],
+                                                        ['serviceFee', 'Cuota operativa'],
+                                                        ['minimumFare', 'Tarifa mínima']
+                                                    ].map(([field, label]) => (
+                                                        <label key={field} className="text-[9px] font-black uppercase text-emerald-700">
+                                                            {label}
+                                                            <input
+                                                                type="number"
+                                                                min="0"
+                                                                step="0.01"
+                                                                value={walkUpPricing[field]}
+                                                                onChange={(event) => setWalkUpPricing(prev => ({...prev, [field]: event.target.value}))}
+                                                                className="mt-1 w-full p-2 rounded-lg border border-emerald-200 bg-white text-xs text-slate-700 outline-none"
+                                                            />
+                                                        </label>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="relative pt-2 pb-6">
@@ -1570,8 +2410,8 @@ export default function Planificacion() {
                     </div>
                 </div>
                 <div className="p-4 border-t border-slate-200 flex justify-end gap-3 shrink-0 bg-white">
-                    <button onClick={() => setShowModal(false)} className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition">Cancelar</button>
-                    <button onClick={handleSaveRoute} className="px-6 py-2.5 text-sm font-black text-white bg-slate-800 rounded-lg hover:bg-slate-900 shadow-lg flex items-center gap-2 transition"><Navigation className="w-4 h-4"/> Confirmar Ruta</button>
+                    <button onClick={resetManualRouteForm} className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition">Cancelar</button>
+                    <button onClick={handleSaveRoute} className="px-6 py-2.5 text-sm font-black text-white bg-slate-800 rounded-lg hover:bg-slate-900 shadow-lg flex items-center gap-2 transition"><Navigation className="w-4 h-4"/> {editingPlannedRouteId ? 'Guardar Cambios' : 'Confirmar Ruta'}</button>
                 </div>
             </div>
         </div>

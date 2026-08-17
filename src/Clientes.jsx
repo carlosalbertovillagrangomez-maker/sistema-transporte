@@ -244,13 +244,68 @@ export default function Clientes() {
       }
 
       const normalizedPhone = normalizePhone(tempUser.phone);
-      const duplicateIndex = newClient.users.findIndex((item, index) =>
-          index !== editingUserIndex &&
-          normalizedPhone &&
-          normalizePhone(item.phone) === normalizedPhone
-      );
+      const normalizedName = normalizeText(tempUser.name).toLowerCase();
+      const normalizedEmail = normalizeText(tempUser.email).toLowerCase();
+
+      const globalDuplicate = clients
+          .flatMap(client => (client.users || []).map((user, userIndex) => ({ client, user, userIndex })))
+          .find(({ client, user, userIndex }) => {
+              const isSameRecord = client.id === editingId && userIndex === editingUserIndex;
+              if (isSameRecord) return false;
+              const phoneMatch = Boolean(
+                  normalizedPhone &&
+                  normalizePhone(user.phone) &&
+                  normalizePhone(user.phone) === normalizedPhone
+              );
+              const emailMatch = Boolean(
+                  normalizedEmail &&
+                  normalizeText(user.email).toLowerCase() === normalizedEmail
+              );
+              return phoneMatch || emailMatch;
+          });
+
+      if (globalDuplicate && globalDuplicate.client.id !== editingId) {
+          alert(
+              `Este usuario ya existe en la cuenta "${globalDuplicate.client.name}" ` +
+              `como "${globalDuplicate.user.name}". Revisa el registro antes de crear un duplicado.`
+          );
+          return;
+      }
+
+      const duplicateIndex = newClient.users.findIndex((item, index) => {
+          if (index === editingUserIndex) return false;
+          const samePhone = Boolean(
+              normalizedPhone &&
+              normalizePhone(item.phone) &&
+              normalizePhone(item.phone) === normalizedPhone
+          );
+          const sameEmail = Boolean(
+              normalizedEmail &&
+              normalizeText(item.email).toLowerCase() === normalizedEmail
+          );
+          const sameName = Boolean(
+              normalizedName &&
+              normalizeText(item.name).toLowerCase() === normalizedName
+          );
+          return samePhone || sameEmail || sameName;
+      });
+
       if (duplicateIndex >= 0) {
-          return alert(`El teléfono ya pertenece a ${newClient.users[duplicateIndex].name}`);
+          const existing = newClient.users[duplicateIndex];
+          setEditingUserIndex(duplicateIndex);
+          setTempUser({
+              name: existing?.name || '',
+              phone: existing?.phone || '',
+              email: existing?.email || '',
+              role: existing?.role || 'Usuario',
+              entrada: existing?.entrada || '08:00',
+              salida: existing?.salida || '17:00'
+          });
+          alert(
+              `Este usuario ya existe como "${existing?.name || 'usuario registrado'}". ` +
+              'Se cargó su registro para que lo edites en lugar de duplicarlo.'
+          );
+          return;
       }
 
       const users = [...newClient.users];

@@ -161,7 +161,11 @@ const getActualDistanceKm = (route) => {
             Math.cos(toRadians(current.lat)) *
             Math.sin(dLng / 2) ** 2;
         const segmentKm = 6371 * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-        if (Number.isFinite(segmentKm) && segmentKm >= 0.001 && segmentKm <= 1) {
+        const previousMs = getTimestampMs(previous?.recordedAt || previous?.timestamp);
+        const currentMs = getTimestampMs(current?.recordedAt || current?.timestamp);
+        const gapMs = previousMs && currentMs && currentMs > previousMs ? currentMs - previousMs : 0;
+        const segmentBreak = Boolean(current?.segmentStart || current?.routeBreak || current?.gpsGap || gapMs > 30000);
+        if (!segmentBreak && Number.isFinite(segmentKm) && segmentKm >= 0.001 && segmentKm <= 1) {
             totalKm += segmentKm;
         }
     }
@@ -170,7 +174,13 @@ const getActualDistanceKm = (route) => {
 };
 
 const getPlannedDistanceKm = (route) => {
-    const value = Number(route?.technicalData?.totalDistance ?? route?.distanceKm ?? 0);
+    const value = Number(
+        route?.originalPlan?.totalDistance ??
+        route?.originalPlan?.technicalData?.totalDistance ??
+        route?.technicalData?.totalDistance ??
+        route?.distanceKm ??
+        0
+    );
     return Number.isFinite(value) ? value : 0;
 };
 
@@ -192,6 +202,68 @@ const normalizePoint = (point) => {
 };
 
 const normalizePath = (path) => Array.isArray(path) ? path.map(normalizePoint).filter(Boolean) : [];
+
+const getPlannedGeometry = (route) => {
+    const candidates = [
+        route?.originalPlan?.geometry,
+        route?.originalPlan?.technicalData?.geometry,
+        route?.technicalData?.geometry
+    ];
+    for (const candidate of candidates) {
+        const path = normalizePath(candidate);
+        if (path.length > 1) return path;
+    }
+    return [];
+};
+
+const splitGpsTraceSegments = (path, options = {}) => {
+    const points = normalizePath(path);
+    if (!points.length) return [];
+    const maxGapMs = Number(options.maxGapMs) || 30000;
+    const maxBridgeKm = Number(options.maxBridgeKm) || 0.8;
+    const segments = [];
+    let current = [];
+
+    const distanceKm = (a, b) => {
+        const R = 6371;
+        const dLat = (b.lat - a.lat) * Math.PI / 180;
+        const dLng = (b.lng - a.lng) * Math.PI / 180;
+        const aa = Math.sin(dLat / 2) ** 2 +
+            Math.cos(a.lat * Math.PI / 180) *
+            Math.cos(b.lat * Math.PI / 180) *
+            Math.sin(dLng / 2) ** 2;
+        return R * 2 * Math.atan2(Math.sqrt(aa), Math.sqrt(1 - aa));
+    };
+
+    const flush = () => {
+        if (current.length > 1) segments.push(current);
+        current = [];
+    };
+
+    points.forEach((point, index) => {
+        if (index === 0) {
+            current = [point];
+            return;
+        }
+        const previous = points[index - 1];
+        const previousMs = getTimestampMs(previous?.recordedAt || previous?.timestamp);
+        const currentMs = getTimestampMs(point?.recordedAt || point?.timestamp);
+        const gapMs = previousMs && currentMs && currentMs > previousMs ? currentMs - previousMs : 0;
+        const bridgeKm = distanceKm(previous, point);
+        const gapSeconds = gapMs > 0 ? gapMs / 1000 : 0;
+        const impliedMetersPerSecond = gapSeconds > 0 ? (bridgeKm * 1000) / gapSeconds : 0;
+        const explicitBreak = Boolean(point?.segmentStart || point?.routeBreak || point?.gpsGap);
+
+        if (explicitBreak || gapMs > maxGapMs || bridgeKm > maxBridgeKm || (gapSeconds > 0 && impliedMetersPerSecond > 45)) {
+            flush();
+            current = [point];
+        } else {
+            current.push(point);
+        }
+    });
+    flush();
+    return segments;
+};
 
 const getRoutePointValue = (point, fallback = '') => {
     const normalized = normalizePoint(point);
@@ -327,7 +399,7 @@ export default function Historial() {
           let hasPoints = false;
 
           // 1. Añadir la ruta planeada a los límites.
-          const plannedPath = normalizePath(selectedRoute.technicalData?.geometry);
+          const plannedPath = getPlannedGeometry(selectedRoute);
           if (plannedPath.length > 0) {
               plannedPath.forEach(coord => bounds.extend(coord));
               hasPoints = true;
@@ -726,18 +798,22 @@ export default function Historial() {
                     <div className="w-full xl:w-1/2 min-h-[420px] xl:min-h-0 bg-slate-200 relative">
                         {isLoaded ? (
                             <GoogleMap mapContainerStyle={containerStyle} center={normalizePoint(selectedRoute?.startCoords) || localMapCenter} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false, mapTypeControl: false }}>
-                                {/* RUTA PLANEADA */}
-                                {normalizePath(selectedRoute.technicalData?.geometry).length > 1 && (
-                                    <Polyline path={normalizePath(selectedRoute.technicalData?.geometry)} options={{ strokeColor: "#3b82f6", strokeOpacity: 0.45, strokeWeight: 4 }} />
+                                {/* RUTA PLANEADA: INMUTABLE DESDE QUE SE CREÓ EL VIAJE */}
+                                {getPlannedGeometry(selectedRoute).length > 1 && (
+                                    <Polyline path={getPlannedGeometry(selectedRoute)} options={{ strokeColor: "#3b82f6", strokeOpacity: 0.5, strokeWeight: 4, zIndex: 1 }} />
                                 )}
                                 {/* ÚLTIMA RUTA RECALCULADA POR EL CONDUCTOR */}
                                 {normalizePath(selectedRoute.liveRouteGeometry || selectedRoute.liveNavigation?.geometry).length > 1 && (
                                     <Polyline path={normalizePath(selectedRoute.liveRouteGeometry || selectedRoute.liveNavigation?.geometry)} options={{ strokeColor: "#f97316", strokeOpacity: 0.9, strokeWeight: 5 }} />
                                 )}
-                                {/* RUTA REAL (GPS CHOFER) */}
-                                {normalizePath(selectedRoute.rutaReal).length > 1 && (
-                                    <Polyline path={normalizePath(selectedRoute.rutaReal)} options={{ strokeColor: "#a855f7", strokeOpacity: 1, strokeWeight: 5 }} />
-                                )}
+                                {/* RUTA REAL (GPS CHOFER). Los cortes de señal se dibujan como segmentos separados. */}
+                                {splitGpsTraceSegments(selectedRoute.rutaReal).map((segment, segmentIndex) => (
+                                    <Polyline
+                                        key={`audit-gps-${selectedRoute.id}-${segmentIndex}`}
+                                        path={segment}
+                                        options={{ strokeColor: "#a855f7", strokeOpacity: 1, strokeWeight: 5, zIndex: 3 }}
+                                    />
+                                ))}
 
                                 {normalizePoint(selectedRoute.startCoords) && <Marker position={normalizePoint(selectedRoute.startCoords)} label="A" />}
                                 {selectedRoute.waypointsData && selectedRoute.waypointsData.map((wp, idx) => {
@@ -748,7 +824,7 @@ export default function Historial() {
                             </GoogleMap>
                         ) : <div className="h-full flex items-center justify-center text-slate-500">Cargando Mapa...</div>}
 
-                        {selectedRoute.technicalData && (
+                        {(selectedRoute.technicalData || selectedRoute.originalPlan) && (
                             <div className="absolute bottom-4 md:bottom-6 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur px-4 md:px-6 py-4 rounded-2xl shadow-2xl border border-slate-200 flex flex-col gap-2 z-10 min-w-[280px] max-w-[90%]">
                                 <div className="flex justify-between items-center gap-4 border-b pb-2">
                                     <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full bg-blue-500"></div><p className="text-[10px] font-black uppercase text-slate-500">Ruta original creada</p></div>
@@ -769,6 +845,11 @@ export default function Historial() {
                                     </div>
                                 )}
                                 <p className="text-[8px] text-center text-slate-400 font-bold uppercase mt-1">Azul: ruta original · naranja: recálculo · morado: recorrido GPS final.</p>
+                                {splitGpsTraceSegments(selectedRoute.rutaReal).length > 1 && (
+                                    <p className="text-[8px] text-center text-amber-600 font-black uppercase">
+                                        Se detectaron cortes de señal: no se unieron en línea recta.
+                                    </p>
+                                )}
                             </div>
                         )}
                     </div>

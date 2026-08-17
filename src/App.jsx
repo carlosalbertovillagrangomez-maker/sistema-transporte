@@ -43,10 +43,10 @@ const normalizePoint = (point) => {
 
 const normalizePath = (path) => Array.isArray(path) ? path.map(normalizePoint).filter(Boolean) : [];
 
-const getLiveGeometry = (route) => {
+const getPlannedGeometry = (route) => {
     const candidates = [
-        route?.liveRouteGeometry,
-        route?.liveNavigation?.geometry,
+        route?.originalPlan?.geometry,
+        route?.originalPlan?.technicalData?.geometry,
         route?.technicalData?.geometry
     ];
 
@@ -56,6 +56,153 @@ const getLiveGeometry = (route) => {
     }
 
     return [];
+};
+
+const getLiveGeometry = (route) => {
+    // La ruta restante solo puede venir de navegación confirmada por el conductor.
+    // Nunca usamos el plan original como ruta "en vivo": si se pierde señal, eso
+    // puede fabricar un segmento visual que atraviese predios sin calles.
+    const candidates = [
+        route?.liveRouteGeometry,
+        route?.liveNavigation?.geometry
+    ];
+
+    for (const candidate of candidates) {
+        const path = normalizePath(candidate);
+        if (path.length > 1) return path;
+    }
+
+    return [];
+};
+
+const splitGpsTraceSegments = (path, options = {}) => {
+    const points = normalizePath(path);
+    if (!points.length) return [];
+
+    const maxGapMs = Number(options.maxGapMs) || 30000;
+    const maxBridgeKm = Number(options.maxBridgeKm) || 0.8;
+    const segments = [];
+    let current = [];
+
+    const flush = () => {
+        if (current.length > 1) segments.push(current);
+        current = [];
+    };
+
+    points.forEach((point, index) => {
+        if (index === 0) {
+            current = [point];
+            return;
+        }
+
+        const previous = points[index - 1];
+        const previousMs = getTimestampMs(previous?.recordedAt || previous?.timestamp);
+        const currentMs = getTimestampMs(point?.recordedAt || point?.timestamp);
+        const gapMs = previousMs && currentMs && currentMs > previousMs
+            ? currentMs - previousMs
+            : 0;
+        const bridgeKm = getDistance(previous, point);
+        const gapSeconds = gapMs > 0 ? gapMs / 1000 : 0;
+        const impliedMetersPerSecond = gapSeconds > 0 ? (bridgeKm * 1000) / gapSeconds : 0;
+        const explicitBreak = Boolean(point?.segmentStart || point?.routeBreak || point?.gpsGap);
+
+        if (
+            explicitBreak ||
+            gapMs > maxGapMs ||
+            (Number.isFinite(bridgeKm) && bridgeKm > maxBridgeKm) ||
+            (gapSeconds > 0 && impliedMetersPerSecond > 45)
+        ) {
+            flush();
+            current = [point];
+            return;
+        }
+
+        current.push(point);
+    });
+
+    flush();
+    return segments;
+};
+
+const getRoutePassengerNames = (route) => {
+    const names = [];
+
+    const pushName = (value) => {
+        const clean = String(value || '').trim();
+        if (!clean) return;
+        clean.split(',').map(item => item.trim()).filter(Boolean).forEach(item => {
+            if (!names.some(existing => existing.toLocaleLowerCase('es') === item.toLocaleLowerCase('es'))) {
+                names.push(item);
+            }
+        });
+    };
+
+    (Array.isArray(route?.passengerSchedule) ? route.passengerSchedule : []).forEach(item => {
+        pushName(item?.passengerName || item?.name);
+    });
+
+    [route?.startCoords, ...(Array.isArray(route?.waypointsData) ? route.waypointsData : []), route?.endCoords]
+        .filter(Boolean)
+        .forEach(point => {
+            (Array.isArray(point?.passengersSchedule) ? point.passengersSchedule : []).forEach(item => {
+                pushName(item?.passengerName || item?.name);
+            });
+            pushName(point?.passengerName || point?.contact);
+        });
+
+    return names.filter(name => !/^(oficina central|destino final)$/i.test(name));
+};
+
+const getScheduledRouteMs = (route) => {
+    if (String(route?.serviceType || '').toLowerCase().includes('prioritario')) {
+        return getTimestampMs(route?.createdDate) || Date.now();
+    }
+
+    const date = String(route?.scheduledDate || route?.pickupDate || route?.finalDate || '').trim();
+    const rawTime = String(
+        route?.startCoords?.pickupTime ||
+        route?.pickupTime ||
+        route?.startTime ||
+        route?.scheduledTime ||
+        '00:00'
+    ).trim();
+
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+        const normalizedTime = /^\d{1,2}:\d{2}$/.test(rawTime)
+            ? `${rawTime.split(':')[0].padStart(2, '0')}:${rawTime.split(':')[1]}`
+            : '00:00';
+        const parsed = new Date(`${date}T${normalizedTime}:00`).getTime();
+        if (Number.isFinite(parsed)) return parsed;
+    }
+
+    return getTimestampMs(route?.createdDate) || 0;
+};
+
+const getBestDriverLocation = (route, drivers = []) => {
+    if (!route) return null;
+    const driver = drivers.find(item =>
+        (route?.driverId && item?.id === route.driverId) ||
+        (route?.driver && item?.name === route.driver)
+    );
+
+    const routePoint = normalizePoint(route?.currentLocation);
+    const driverPoint = normalizePoint(driver?.currentLocation);
+    if (!driverPoint) return routePoint;
+    if (!routePoint) return driverPoint;
+
+    const routeMs = getTimestampMs(
+        route?.liveNavigation?.updatedAt ||
+        route?.lastUpdate ||
+        route?.liveRouteUpdatedAt
+    ) || 0;
+    const driverMs = getTimestampMs(
+        driver?.lastLocationUpdate ||
+        driver?.updatedAt ||
+        driver?.lastTripFinishedAt
+    ) || 0;
+
+    // Tras una reconexión, el documento del conductor suele ser el dato más fresco.
+    return driverMs >= routeMs - 5000 ? driverPoint : routePoint;
 };
 
 const getTimestampMs = (value) => {
@@ -588,7 +735,7 @@ function App() {
 
       programmaticCameraRef.current = true;
       try {
-          const currentLocation = normalizePoint(selectedRoute.currentLocation);
+          const currentLocation = getBestDriverLocation(selectedRoute, onlineDrivers);
           const path = getLiveGeometry(selectedRoute);
 
           if (followSelectedRoute && currentLocation && !forceFit) {
@@ -619,7 +766,7 @@ function App() {
       } finally {
           setTimeout(() => { programmaticCameraRef.current = false; }, 300);
       }
-  }, [isLoaded, selectedRoute, followSelectedRoute, manualMapInteraction]);
+  }, [isLoaded, selectedRoute, followSelectedRoute, manualMapInteraction, onlineDrivers]);
 
   useEffect(() => {
       if (activeTab !== 'monitoreo' || !mapRef.current || manualMapInteraction) return;
@@ -871,15 +1018,23 @@ function App() {
           if (b.status === 'En Ruta' && a.status !== 'En Ruta') return 1;
           if (a.serviceType === 'Prioritario' && b.serviceType !== 'Prioritario') return -1;
           if (b.serviceType === 'Prioritario' && a.serviceType !== 'Prioritario') return 1;
-          return (getTimestampMs(a.scheduledDate || a.createdDate) || 0) - (getTimestampMs(b.scheduledDate || b.createdDate) || 0);
+          const now = Date.now();
+          const aMs = getScheduledRouteMs(a);
+          const bMs = getScheduledRouteMs(b);
+          const aPast = aMs < now && a.status !== 'En Ruta';
+          const bPast = bMs < now && b.status !== 'En Ruta';
+          if (aPast !== bPast) return aPast ? 1 : -1;
+          return aMs - bMs;
       });
   };
 
   const rutasVisibles = getFilteredAndSortedRoutes();
   const visibleOnlineDrivers = onlineDrivers.filter(driver => driverCountryFilter === 'Todos' || getDriverCountry(driver) === driverCountryFilter);
   const selectedRouteGeometry = selectedRoute && !['Finalizado', 'Completado', 'Cancelado'].includes(selectedRoute.status) ? getLiveGeometry(selectedRoute) : [];
-  const selectedPlannedGeometry = selectedRoute ? normalizePath(selectedRoute?.technicalData?.geometry) : [];
-  const selectedTravelledGeometry = selectedRoute ? normalizePath(selectedRoute?.rutaReal) : [];
+  const selectedPlannedGeometry = selectedRoute ? getPlannedGeometry(selectedRoute) : [];
+  const selectedTravelledSegments = selectedRoute ? splitGpsTraceSegments(selectedRoute?.rutaReal) : [];
+  const selectedRouteDriverLocation = selectedRoute ? getBestDriverLocation(selectedRoute, onlineDrivers) : null;
+  const selectedPassengerNames = selectedRoute ? getRoutePassengerNames(selectedRoute) : [];
   const selectedLastUpdateMs = getLastRouteUpdateMs(selectedRoute);
   const selectedUpdateAgeSeconds = selectedLastUpdateMs ? Math.max(0, Math.floor((clockTick - selectedLastUpdateMs) / 1000)) : null;
   const selectedSignalState = selectedUpdateAgeSeconds === null
@@ -1008,12 +1163,13 @@ function App() {
                                             options={{ strokeColor: '#64748b', strokeOpacity: 0.45, strokeWeight: 4, zIndex: 1 }}
                                         />
                                     )}
-                                    {selectedTravelledGeometry.length > 1 && (
+                                    {selectedTravelledSegments.map((segment, segmentIndex) => (
                                         <Polyline
-                                            path={selectedTravelledGeometry}
+                                            key={`gps-trace-${selectedRoute.id}-${segmentIndex}`}
+                                            path={segment}
                                             options={{ strokeColor: '#2563eb', strokeOpacity: 0.9, strokeWeight: 6, zIndex: 3 }}
                                         />
-                                    )}
+                                    ))}
                                     {selectedRouteGeometry.length > 1 && (
                                         <Polyline
                                             path={selectedRouteGeometry}
@@ -1027,9 +1183,9 @@ function App() {
                                     })}
                                     {normalizePoint(selectedRoute.endCoords) && <Marker position={normalizePoint(selectedRoute.endCoords)} icon={ICON_END} />}
 
-                                    {normalizePoint(selectedRoute.currentLocation) && selectedRoute.status === 'En Ruta' && (
+                                    {selectedRouteDriverLocation && selectedRoute.status === 'En Ruta' && (
                                         <Marker
-                                            position={normalizePoint(selectedRoute.currentLocation)}
+                                            position={selectedRouteDriverLocation}
                                             icon={{
                                                 path: window.google.maps.SymbolPath.FORWARD_CLOSED_ARROW,
                                                 scale: 7,
@@ -1084,6 +1240,11 @@ function App() {
                         <div className="absolute top-[4.5rem] right-4 z-[700] bg-slate-900/90 text-white px-3 py-2 rounded-xl shadow-lg border border-white/10 max-w-[260px]">
                             <p className="text-[8px] font-black uppercase tracking-widest text-orange-300">Viendo conductor</p>
                             <p className="text-xs font-black truncate">{selectedRoute?.driver || selectedOnlineDriver?.name || 'Conductor'}</p>
+                            {selectedRoute && selectedPassengerNames.length > 0 && (
+                                <p className="text-[9px] font-bold text-slate-200 mt-1 line-clamp-2">
+                                    Lleva: {selectedPassengerNames.join(' · ')}
+                                </p>
+                            )}
                         </div>
                     )}
 
@@ -1107,7 +1268,7 @@ function App() {
                         <div className="absolute top-4 left-4 bg-white/90 backdrop-blur px-5 py-3 rounded-2xl shadow-sm z-[500] border border-slate-100 max-w-xs"><h5 className="font-black text-slate-800 text-sm mb-1">Radar en Vivo</h5><p className="text-[10px] text-slate-500 font-bold uppercase tracking-widest flex items-center gap-1.5"><span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span> {visibleOnlineDrivers.length} unidades activas</p></div>
                     )}
                     
-                    {selectedRoute?.status === 'En Ruta' && normalizePoint(selectedRoute?.currentLocation) && (
+                    {selectedRoute?.status === 'En Ruta' && selectedRouteDriverLocation && (
                         <>
                             <div className={`absolute top-16 right-4 bg-white/95 backdrop-blur px-4 py-2.5 rounded-2xl shadow-lg z-[500] border flex items-center gap-2 ${selectedSignalState === 'stale' ? 'border-red-300' : selectedSignalState === 'delayed' ? 'border-amber-300' : selectedRoute.proximityAlert?.active ? 'border-orange-300' : 'border-green-200'}`}>
                                 <div className={`w-2.5 h-2.5 rounded-full ${selectedSignalState === 'stale' ? 'bg-red-500' : selectedSignalState === 'delayed' ? 'bg-amber-500 animate-pulse' : selectedRoute.proximityAlert?.active ? 'bg-orange-500 animate-pulse' : 'bg-green-500 animate-pulse'}`}></div>
@@ -1205,6 +1366,11 @@ function App() {
                                         <div>
                                             {ruta.serviceType === 'Prioritario' ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest bg-orange-100 text-orange-700 mb-2"><Zap className="w-3 h-3 fill-orange-500 text-orange-600" /> INMEDIATO</span> : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest bg-slate-100 text-slate-600 mb-2"><Calendar className="w-3 h-3" /> PROGRAMADO: {ruta.scheduledDate}</span>}
                                             <h4 className="font-black text-slate-800 text-sm truncate">{ruta.client}</h4>
+                                            {getRoutePassengerNames(ruta).length > 0 && (
+                                                <p className="text-[9px] font-bold text-slate-500 mt-1 line-clamp-2">
+                                                    Pasajeros: {getRoutePassengerNames(ruta).join(' · ')}
+                                                </p>
+                                            )}
                                         </div>
                                         <button onClick={(e) => { e.stopPropagation(); setEditingRoute(ruta); }} className="text-slate-300 hover:text-orange-500 transition p-1 bg-slate-50 hover:bg-orange-50 rounded-lg"><Edit className="w-4 h-4" /></button>
                                     </div>

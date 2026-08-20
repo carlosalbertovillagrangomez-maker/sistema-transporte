@@ -121,7 +121,7 @@ const getFirstStopAttendedTime = (route) => String(
 const getBoardingEvents = (route) => {
     const evidences = Array.isArray(route?.evidenciasLlegada) ? route.evidenciasLlegada : [];
     const stopBoardings = (Array.isArray(route?.stopEvents) ? route.stopEvents : [])
-        .filter(item => item?.type === 'boarding' || item?.type === 'destination_arrival');
+        .filter(item => item?.type === 'boarding' || item?.type === 'destination_arrival' || item?.type === 'dropoff');
 
     const unique = new Map();
     [...evidences, ...stopBoardings].forEach((item, index) => {
@@ -219,8 +219,8 @@ const getPlannedGeometry = (route) => {
 const splitGpsTraceSegments = (path, options = {}) => {
     const points = normalizePath(path);
     if (!points.length) return [];
-    const maxGapMs = Number(options.maxGapMs) || 30000;
-    const maxBridgeKm = Number(options.maxBridgeKm) || 0.8;
+    const maxGapMs = Number(options.maxGapMs) || 18000;
+    const maxBridgeKm = Number(options.maxBridgeKm) || 0.12;
     const segments = [];
     let current = [];
 
@@ -694,7 +694,10 @@ export default function Historial() {
                                             <div className="flex justify-between text-xs"><span className="font-bold text-slate-500">Primer punto atendido</span><span className="font-black text-orange-700">{getFirstStopAttendedTime(selectedRoute) || '--:--'}</span></div>
                                             <div className="flex justify-between text-xs"><span className="font-bold text-slate-500">Resultado inicial</span><span className="font-black text-orange-700">{selectedRoute.firstStopAttendedStatus || '--'}</span></div>
                                             <div className="flex justify-between text-xs"><span className="font-bold text-slate-500">Fin real</span><span className="font-black text-slate-800">{getActualEndTime(selectedRoute) || '--:--'}</span></div>
-                                            <div className="flex justify-between text-xs"><span className="font-bold text-slate-500">Kilómetros GPS</span><span className="font-black text-green-700">{getActualDistanceKm(selectedRoute).toFixed(1)} km</span></div>
+                                            <div className="flex justify-between text-xs"><span className="font-bold text-slate-500">Kilómetros reales/estimados</span><span className="font-black text-green-700">{getActualDistanceKm(selectedRoute).toFixed(1)} km</span></div>
+                                            {Number(selectedRoute.gpsGapEstimatedDistanceKm || 0) > 0 && (
+                                                <div className="flex justify-between text-xs"><span className="font-bold text-slate-500">Completados por pérdida GPS</span><span className="font-black text-amber-700">{Number(selectedRoute.gpsGapEstimatedDistanceKm).toFixed(1)} km estimados por ruta conocida</span></div>
+                                            )}
                                             <div className="flex justify-between text-xs"><span className="font-bold text-slate-500">Diferencia</span><span className="font-black text-orange-600">{(getActualDistanceKm(selectedRoute) - getPlannedDistanceKm(selectedRoute)).toFixed(1)} km</span></div>
                                         </div>
                                     </div>
@@ -706,7 +709,7 @@ export default function Historial() {
                                         <div className="space-y-2">
                                             {getBoardingEvents(selectedRoute).map((event, index) => (
                                                 <div key={`boarding-${index}`} className="flex justify-between gap-3 text-xs border-b border-slate-100 pb-2 last:border-0 last:pb-0">
-                                                    <span className="font-bold text-slate-600">{event.label || event.passenger || `Punto ${index + 1}`}</span>
+                                                    <span className="font-bold text-slate-600">{event.type === 'dropoff' ? `Descarga: ${event.passenger || event.label || `Punto ${index + 1}`}` : (event.label || event.passenger || `Punto ${index + 1}`)}</span>
                                                     <span className="font-black text-blue-700">{event.time || formatMexicoTime(event.timestamp) || '--:--'}</span>
                                                 </div>
                                             ))}
@@ -800,18 +803,18 @@ export default function Historial() {
                             <GoogleMap mapContainerStyle={containerStyle} center={normalizePoint(selectedRoute?.startCoords) || localMapCenter} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false, mapTypeControl: false }}>
                                 {/* RUTA PLANEADA: INMUTABLE DESDE QUE SE CREÓ EL VIAJE */}
                                 {getPlannedGeometry(selectedRoute).length > 1 && (
-                                    <Polyline path={getPlannedGeometry(selectedRoute)} options={{ strokeColor: "#3b82f6", strokeOpacity: 0.5, strokeWeight: 4, zIndex: 1 }} />
+                                    <Polyline path={getPlannedGeometry(selectedRoute)} options={{ strokeColor: "#334155", strokeOpacity: 0.72, strokeWeight: 9, zIndex: 1 }} />
                                 )}
                                 {/* ÚLTIMA RUTA RECALCULADA POR EL CONDUCTOR */}
                                 {normalizePath(selectedRoute.liveRouteGeometry || selectedRoute.liveNavigation?.geometry).length > 1 && (
-                                    <Polyline path={normalizePath(selectedRoute.liveRouteGeometry || selectedRoute.liveNavigation?.geometry)} options={{ strokeColor: "#f97316", strokeOpacity: 0.9, strokeWeight: 5 }} />
+                                    <Polyline path={normalizePath(selectedRoute.liveRouteGeometry || selectedRoute.liveNavigation?.geometry)} options={{ strokeColor: "#f97316", strokeOpacity: 0.95, strokeWeight: 5, zIndex: 2 }} />
                                 )}
                                 {/* RUTA REAL (GPS CHOFER). Los cortes de señal se dibujan como segmentos separados. */}
                                 {splitGpsTraceSegments(selectedRoute.rutaReal).map((segment, segmentIndex) => (
                                     <Polyline
                                         key={`audit-gps-${selectedRoute.id}-${segmentIndex}`}
                                         path={segment}
-                                        options={{ strokeColor: "#a855f7", strokeOpacity: 1, strokeWeight: 5, zIndex: 3 }}
+                                        options={{ strokeColor: "#a855f7", strokeOpacity: 1, strokeWeight: 4, zIndex: 3 }}
                                     />
                                 ))}
 
@@ -844,7 +847,7 @@ export default function Historial() {
                                         <p className="font-black text-purple-700">{getAverageSpeedKmh(selectedRoute).toFixed(1)} km/h</p>
                                     </div>
                                 )}
-                                <p className="text-[8px] text-center text-slate-400 font-bold uppercase mt-1">Azul: ruta original · naranja: recálculo · morado: recorrido GPS final.</p>
+                                <p className="text-[8px] text-center text-slate-400 font-bold uppercase mt-1">Gris: plan original inmutable · naranja: recálculo vigente · morado: GPS real. Los cortes de señal no se unen con líneas rectas.</p>
                                 {splitGpsTraceSegments(selectedRoute.rutaReal).length > 1 && (
                                     <p className="text-[8px] text-center text-amber-600 font-black uppercase">
                                         Se detectaron cortes de señal: no se unieron en línea recta.

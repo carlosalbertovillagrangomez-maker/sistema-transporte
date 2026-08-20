@@ -365,6 +365,22 @@ export default function Planificacion() {
   const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries, language: 'es' });
   const mapRef = useRef(null);
   const previewMapRef = useRef(null);
+  const [localMapCenter, setLocalMapCenter] = useState(centerMX);
+
+  useEffect(() => {
+      if (!('geolocation' in navigator)) return undefined;
+      navigator.geolocation.getCurrentPosition(
+          position => setLocalMapCenter({ lat: position.coords.latitude, lng: position.coords.longitude }),
+          () => {
+              try {
+                  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+                  if (/Bogota|Colombia/i.test(timezone)) setLocalMapCenter({ lat: 4.7110, lng: -74.0721 });
+              } catch (_) {}
+          },
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 12000 }
+      );
+      return undefined;
+  }, []);
 
   const [availableDrivers, setAvailableDrivers] = useState([]);
   const [availableClients, setAvailableClients] = useState([]);
@@ -1417,20 +1433,48 @@ export default function Planificacion() {
                   };
               };
 
-              // Hora por punto: quienes comparten punto reciben la misma hora;
-              // los siguientes puntos avanzan con el tiempo de ruta + 5 min por pasajero.
+              // Hora por punto. Cada punto recibe una hora calculada según los
+              // segmentos de Google; no repetimos la misma hora para todos.
               const pickupTimeByPassenger = new Map();
+              const dropoffTimeByPassenger = new Map();
+              const pointTimeByRouteIndex = new Map();
+
               if (globalCarpool.mode === 'Ida') {
                   let pickupCursor = parseTimeKeyToDate(timePlan.startTime);
                   passengerStops.forEach((stop, stopIndex) => {
+                      const currentTime = formatHHMM(pickupCursor);
+                      pointTimeByRouteIndex.set(stopIndex, currentTime);
                       stop.employees.forEach(employee => {
-                          pickupTimeByPassenger.set(employee.assignedTo, formatHHMM(pickupCursor));
+                          pickupTimeByPassenger.set(employee.assignedTo, currentTime);
                       });
+
+                      // Tiempo de atención del punto + traslado REAL al siguiente punto.
                       pickupCursor = addMinutesToDate(
                           pickupCursor,
-                          (stop.employees.length * PASSENGER_PICKUP_BUFFER_MINS) +
+                          stop.employees.length * PASSENGER_PICKUP_BUFFER_MINS
+                      );
+                      pickupCursor = addMinutesToDate(
+                          pickupCursor,
                           safeMinutes(g.routeSegments?.[stopIndex]?.duration)
                       );
+                  });
+              } else {
+                  // SALIDA: la empresa es el ORIGEN. Cada pasajero tiene una hora estimada
+                  // de DESCARGA distinta a medida que el vehículo avanza por sus puntos.
+                  let dropoffCursor = parseTimeKeyToDate(g.timeKey);
+                  pointTimeByRouteIndex.set(0, formatHHMM(dropoffCursor));
+                  passengerStops.forEach((stop, stopIndex) => {
+                      dropoffCursor = addMinutesToDate(
+                          dropoffCursor,
+                          safeMinutes(g.routeSegments?.[stopIndex]?.duration)
+                      );
+                      const currentTime = formatHHMM(dropoffCursor);
+                      pointTimeByRouteIndex.set(stopIndex + 1, currentTime);
+                      stop.employees.forEach(employee => {
+                          dropoffTimeByPassenger.set(employee.assignedTo, currentTime);
+                      });
+                      // Margen breve para descenso antes de continuar al siguiente punto.
+                      dropoffCursor = addMinutesToDate(dropoffCursor, Math.max(1, stop.employees.length * 2));
                   });
               }
 
@@ -1450,6 +1494,13 @@ export default function Planificacion() {
                           pickupTime: globalCarpool.mode === 'Ida'
                               ? (pickupTimeByPassenger.get(employee.assignedTo) || timePlan.startTime)
                               : '',
+                          dropoffTime: globalCarpool.mode === 'Regreso'
+                              ? (dropoffTimeByPassenger.get(employee.assignedTo) || '')
+                              : '',
+                          plannedTime: globalCarpool.mode === 'Ida'
+                              ? (pickupTimeByPassenger.get(employee.assignedTo) || timePlan.startTime)
+                              : (dropoffTimeByPassenger.get(employee.assignedTo) || ''),
+                          movementType: globalCarpool.mode === 'Regreso' ? 'dropoff' : 'pickup',
                           bufferMins: globalCarpool.mode === 'Ida' ? PASSENGER_PICKUP_BUFFER_MINS : 0,
                           meetingPointId: stop.stopType === 'shared_meeting' ? stop.id : ''
                       });
@@ -1485,12 +1536,28 @@ export default function Planificacion() {
                       saved.sharedMeetingPoint = true;
                   }
 
+                  const pointPlannedTime = pointTimeByRouteIndex.get(routeIndex) || '';
+                  saved.plannedTime = pointPlannedTime;
+
                   if (globalCarpool.mode === 'Ida' && schedules.length) {
                       saved.pickupTime = schedules
                           .map(item => item.pickupTime)
                           .filter(Boolean)
                           .sort()[0] || timePlan.startTime;
                       saved.pickupBufferMins = PASSENGER_PICKUP_BUFFER_MINS;
+                  }
+
+                  if (globalCarpool.mode === 'Regreso') {
+                      if (routePoint.stopType === 'office') {
+                          saved.departureTime = g.timeKey;
+                          saved.pickupTime = g.timeKey;
+                      } else if (schedules.length) {
+                          saved.dropoffTime = schedules
+                              .map(item => item.dropoffTime)
+                              .filter(Boolean)
+                              .sort()[0] || pointPlannedTime;
+                          saved.movementType = 'dropoff';
+                      }
                   }
 
                   return saved;
@@ -1501,10 +1568,17 @@ export default function Planificacion() {
               const endCoordsSave = savedRoutePoints[savedRoutePoints.length - 1];
               const intermediateSaved = savedRoutePoints.slice(1, -1);
 
+              const finalOperationalArrivalTime = globalCarpool.mode === 'Regreso'
+                  ? (endCoordsSave.dropoffTime || endCoordsSave.plannedTime || '')
+                  : timePlan.targetFinalArrivalTime;
+
               if (globalCarpool.mode === 'Ida') {
                   endCoordsSave.targetArrivalTime = timePlan.targetFinalArrivalTime;
                   endCoordsSave.officialScheduledTime = g.timeKey;
                   endCoordsSave.finalEarlyBufferMins = FINAL_DESTINATION_EARLY_MINS;
+              } else {
+                  endCoordsSave.targetArrivalTime = finalOperationalArrivalTime;
+                  endCoordsSave.officialScheduledTime = g.timeKey;
               }
 
               const createdAt = new Date().toISOString();
@@ -1520,8 +1594,9 @@ export default function Planificacion() {
                       mode: globalCarpool.mode,
                       officialScheduledTime: g.timeKey,
                       startTime: timePlan.startTime,
-                      targetArrivalTime: timePlan.targetFinalArrivalTime,
-                      estimatedFinalArrivalTime: timePlan.estimatedFinalArrivalTime,
+                      targetArrivalTime: finalOperationalArrivalTime,
+                      estimatedFinalArrivalTime: finalOperationalArrivalTime || timePlan.estimatedFinalArrivalTime,
+                      direction: globalCarpool.mode,
                       finalEarlyBufferMins: timePlan.finalEarlyBufferMins,
                       passengerBufferMins: timePlan.passengerBufferMins,
                       totalPassengerBufferMins: timePlan.totalPassengerBufferMins,
@@ -1561,6 +1636,12 @@ export default function Planificacion() {
                   driver: g.driverName,
                   driverId: g.driverId,
                   status: 'Aceptada',
+                  assignmentRequestedAt: createdAt,
+                  assignedAt: createdAt,
+                  ofertaPara: g.driverId,
+                  ofertaNombre: g.driverName,
+                  ofertaEstado: 'Pendiente',
+                  ofertaTiempo: Date.now(),
                   serviceType: 'Programado',
                   tripSource: 'dispatcher',
                   createdBy: 'dispatcher',
@@ -1571,9 +1652,11 @@ export default function Planificacion() {
                   scheduledDate: newRoute.scheduledDate,
                   scheduledTime: g.timeKey,
                   startTime: timePlan.startTime,
-                  targetArrivalTime: timePlan.targetFinalArrivalTime,
+                  targetArrivalTime: finalOperationalArrivalTime,
                   officialScheduledTime: g.timeKey,
-                  estimatedFinalArrivalTime: timePlan.estimatedFinalArrivalTime,
+                  estimatedFinalArrivalTime: finalOperationalArrivalTime || timePlan.estimatedFinalArrivalTime,
+                  carpoolMode: globalCarpool.mode,
+                  tripDirection: globalCarpool.mode,
                   finalEarlyBufferMins: timePlan.finalEarlyBufferMins,
                   passengerBufferMins: timePlan.passengerBufferMins,
                   totalPassengerBufferMins: timePlan.totalPassengerBufferMins,
@@ -1602,11 +1685,33 @@ export default function Planificacion() {
   };
 
   const handleDeleteRoute = async (id, e) => { e.stopPropagation(); if(confirm("¿Eliminar ruta permanentemente?")) { await deleteDoc(doc(db, "rutas", id)); if(viewRoute?.id === id) setViewRoute(null); } };
-  const confirmAssignDriver = async () => { if (!newRoute.driver) return alert("Selecciona un conductor primero."); try { await updateDoc(doc(db, "rutas", routeToAssign.id), { driver: newRoute.driver, driverId: newRoute.driverId, status: 'Aceptada' }); setShowAssignModal(false); setRouteToAssign(null); setNewRoute({ ...newRoute, driver: '', driverId: '' }); } catch (e) {} };
+  const confirmAssignDriver = async () => {
+      if (!newRoute.driver) return alert("Selecciona un conductor primero.");
+      try {
+          const assignedAt = new Date().toISOString();
+          await updateDoc(doc(db, "rutas", routeToAssign.id), {
+              driver: newRoute.driver,
+              driverId: newRoute.driverId,
+              status: 'Aceptada',
+              assignmentRequestedAt: assignedAt,
+              assignedAt,
+              ofertaPara: newRoute.driverId,
+              ofertaNombre: newRoute.driver,
+              ofertaEstado: 'Pendiente',
+              ofertaTiempo: Date.now()
+          });
+          setShowAssignModal(false);
+          setRouteToAssign(null);
+          setNewRoute({ ...newRoute, driver: '', driverId: '' });
+      } catch (e) {
+          console.error('No se pudo asignar el conductor:', e);
+          alert('No fue posible asignar la unidad.');
+      }
+  };
   const handleMapLoad = useCallback((map) => { mapRef.current = map; }, []);
   const handlePreviewMapLoad = useCallback((map) => { previewMapRef.current = map; }, []);
   const routeToDisplay = viewRoute?.technicalData?.geometry ? viewRoute.technicalData.geometry : [];
-  let mapCenter = centerMX; if(routeToDisplay.length > 0) mapCenter = routeToDisplay[0];
+  let mapCenter = localMapCenter; if(routeToDisplay.length > 0) mapCenter = routeToDisplay[0];
   const activePlanRoutes = routesList
       .filter(r => r.status === 'Pendiente' || r.status === 'Aceptada' || r.status === 'En Ruta')
       .sort((a, b) => {
@@ -2072,10 +2177,10 @@ export default function Planificacion() {
                                   <div className="flex-1 bg-slate-300 relative">
                                       {fetchingRealRoutes && ( <div className="absolute top-4 right-4 bg-slate-900/80 text-white px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 z-20 backdrop-blur"><Loader2 className="animate-spin w-4 h-4"/> Trazando Rutas Reales...</div> )}
                                       {!isLoaded ? ( <div className="h-full flex items-center justify-center text-slate-500 font-bold"><Loader2 className="animate-spin mr-2"/> Cargando Mapas...</div> ) : (
-                                          <GoogleMap mapContainerStyle={containerStyle} center={centerMX} zoom={11} onLoad={handlePreviewMapLoad} options={{ streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy" }}>
+                                          <GoogleMap mapContainerStyle={containerStyle} center={localMapCenter} zoom={11} onLoad={handlePreviewMapLoad} options={{ streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy" }}>
                                               {selectedClientData && (
                                                   <Marker 
-                                                      position={{ lat: parseFloat(selectedClientData.locations.find(l => l.assignedTo === 'General')?.lat || centerMX.lat), lng: parseFloat(selectedClientData.locations.find(l => l.assignedTo === 'General')?.lon || selectedClientData.locations.find(l => l.assignedTo === 'General')?.lng || centerMX.lng) }} 
+                                                      position={{ lat: parseFloat(selectedClientData.locations.find(l => l.assignedTo === 'General')?.lat || localMapCenter.lat), lng: parseFloat(selectedClientData.locations.find(l => l.assignedTo === 'General')?.lon || selectedClientData.locations.find(l => l.assignedTo === 'General')?.lng || localMapCenter.lng) }} 
                                                       icon="http://maps.google.com/mapfiles/kml/pal3/icon21.png" title="Oficina Central"
                                                   />
                                               )}
@@ -2399,7 +2504,7 @@ export default function Planificacion() {
                         </div>
                     </div>
                     <div className="flex-1 bg-slate-200 relative">
-                        <GoogleMap mapContainerStyle={containerStyle} center={centerMX} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false }}>
+                        <GoogleMap mapContainerStyle={containerStyle} center={localMapCenter} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false }}>
                             {startPoint?.lat && <Marker position={startPoint} label="A" />}
                             {waypoints.map((wp, idx) => (
                                 wp.lat && wp.lng && <Marker key={idx} position={{lat: wp.lat, lng: wp.lng}} label={getMarkerLabel(idx + 1)} />

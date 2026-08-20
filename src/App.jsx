@@ -17,7 +17,19 @@ import { collection, onSnapshot, query, orderBy, updateDoc, doc, arrayUnion } fr
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
 const containerStyle = { width: '100%', height: '100%' };
-const DEFAULT_MAP_CENTER = { lat: 19.4326, lng: -99.1332 }; 
+const DEFAULT_MAP_CENTER = { lat: 19.4326, lng: -99.1332 };
+const COLOMBIA_MAP_CENTER = { lat: 4.7110, lng: -74.0721 };
+
+const getCountryFromTimezone = () => {
+    try {
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        if (/Bogota|Colombia/i.test(timezone)) return 'Colombia';
+        if (/Mexico|Monterrey|Chihuahua|Tijuana|Hermosillo|Mazatlan|Merida|Cancun/i.test(timezone)) return 'México';
+    } catch (_) {}
+    return '';
+};
+
+const getCountryDefaultCenter = (country) => country === 'Colombia' ? COLOMBIA_MAP_CENTER : DEFAULT_MAP_CENTER; 
 
 // Agregamos 'geometry' para calcular la rotación del coche en vivo
 const libraries = ['places', 'geometry']; 
@@ -79,8 +91,8 @@ const splitGpsTraceSegments = (path, options = {}) => {
     const points = normalizePath(path);
     if (!points.length) return [];
 
-    const maxGapMs = Number(options.maxGapMs) || 30000;
-    const maxBridgeKm = Number(options.maxBridgeKm) || 0.8;
+    const maxGapMs = Number(options.maxGapMs) || 18000;
+    const maxBridgeKm = Number(options.maxBridgeKm) || 0.12;
     const segments = [];
     let current = [];
 
@@ -360,9 +372,13 @@ const buildLiveTimeline = (route) => {
 
     const stopEvents = Array.isArray(route.stopEvents) ? route.stopEvents : [];
     stopEvents.forEach((item, index) => {
-        if (item?.type === 'boarding' || item?.type === 'destination_arrival') {
+        if (item?.type === 'boarding' || item?.type === 'destination_arrival' || item?.type === 'dropoff') {
             push(
-                item.type === 'destination_arrival' ? 'Llegada al destino final' : `Pasajero abordó en ${item.label || `punto ${Number(item.stopIndex) + 1 || index + 1}`}`,
+                item.type === 'dropoff'
+                    ? `Pasajero descargado / en destino en ${item.label || `punto ${Number(item.stopIndex) + 1 || index + 1}`}`
+                    : item.type === 'destination_arrival'
+                        ? 'Llegada al destino final'
+                        : `Pasajero abordó en ${item.label || `punto ${Number(item.stopIndex) + 1 || index + 1}`}`,
                 item.timestamp || item.time,
                 item.passenger || item.response || '',
                 'green',
@@ -391,7 +407,7 @@ const buildLiveTimeline = (route) => {
         push(item.evento || 'Evento de bitácora', item.timestamp || item.time, item.motivo || item.punto || '', 'orange', item.eventId || `${route.id}-log-${index}-${item.timestamp || item.time || ''}`);
     });
 
-    if (route.proximityAlert?.timestamp) {
+    if (isCurrentProximityAlert(route) && route.proximityAlert?.timestamp) {
         push('Conductor próximo al punto', route.proximityAlert.timestamp, `${route.proximityAlert.passenger || getRouteCurrentStopLabel(route)} · ${route.proximityAlert.etaMins ?? '--'} min`, 'orange', `${route.id}-proximity-${route.proximityAlert.stopIndex}-${route.proximityAlert.timestamp}`);
     }
 
@@ -403,18 +419,34 @@ const buildLiveTimeline = (route) => {
 };
 
 // === HELPER PARA CALCULAR DISTANCIA ===
-const getDriverCountry = (driver) => {
-    const point = normalizePoint(driver?.currentLocation);
+const getPointCountry = (rawPoint) => {
+    const point = normalizePoint(rawPoint);
     if (!point) return 'Sin ubicación';
-
-    // Rangos geográficos amplios. Se usan únicamente como filtro visual del monitor.
     if (point.lat >= 14 && point.lat <= 33.5 && point.lng >= -119 && point.lng <= -86) return 'México';
     if (point.lat >= -5 && point.lat <= 13.8 && point.lng >= -82 && point.lng <= -66) return 'Colombia';
     return 'Otros';
 };
 
-const isDispatcherNotificationUnread = (route) => {
+const getDriverCountry = (driver) => getPointCountry(driver?.currentLocation);
+
+const getRouteCountry = (route) => {
+    const candidates = [route?.currentLocation, route?.startCoords, route?.endCoords];
+    for (const candidate of candidates) {
+        const country = getPointCountry(candidate);
+        if (country !== 'Sin ubicación') return country;
+    }
+    return 'Sin ubicación';
+};
+
+const isCurrentProximityAlert = (route) => {
     if (!route?.proximityAlert?.active) return false;
+    const currentStop = Number(route?.currentStopIndex ?? route?.nextStopIdx ?? route?.liveNavigation?.stopIndex ?? 0);
+    const alertStop = Number(route?.proximityAlert?.stopIndex ?? currentStop);
+    return alertStop === currentStop;
+};
+
+const isDispatcherNotificationUnread = (route) => {
+    if (!isCurrentProximityAlert(route)) return false;
     const alertMs = getTimestampMs(route?.proximityAlert?.timestamp) || 0;
     const readMs = getTimestampMs(route?.dispatcherNotificationReadAt) || 0;
     return alertMs === 0 ? !route?.dispatcherNotificationReadAt : alertMs > readMs;
@@ -522,7 +554,7 @@ function App() {
   const selectedRouteListenerRef = useRef(null);
   const programmaticCameraRef = useRef(true);
   const previousIncomingChatRef = useRef(new Map());
-  const [localMapCenter, setLocalMapCenter] = useState(DEFAULT_MAP_CENTER);
+  const [localMapCenter, setLocalMapCenter] = useState(() => getCountryDefaultCenter(getCountryFromTimezone()));
   const [manualMapInteraction, setManualMapInteraction] = useState(false);
 
   const [liveRoutes, setLiveRoutes] = useState([]);
@@ -533,12 +565,14 @@ function App() {
   const [historyDateFilter, setHistoryDateFilter] = useState('');
   const [selectedRoute, setSelectedRoute] = useState(null);
   const [activeAlertsCount, setActiveAlertsCount] = useState(0);
+  const [unreadChatRouteIds, setUnreadChatRouteIds] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [evidencePreview, setEvidencePreview] = useState(null);
   const [selectedDriverId, setSelectedDriverId] = useState(null);
   const [followSelectedRoute, setFollowSelectedRoute] = useState(true);
   const [clockTick, setClockTick] = useState(Date.now());
-  const [driverCountryFilter, setDriverCountryFilter] = useState('Todos');
+  const [detectedLocalCountry, setDetectedLocalCountry] = useState(() => getCountryFromTimezone());
+  const [driverCountryFilter, setDriverCountryFilter] = useState('Local');
   const [mapExpanded, setMapExpanded] = useState(false);
 
   const [chatModalRoute, setChatModalRoute] = useState(null);
@@ -593,7 +627,11 @@ function App() {
       navigator.geolocation.getCurrentPosition(
           position => {
               const point = normalizePoint({ lat: position.coords.latitude, lng: position.coords.longitude });
-              if (point) setLocalMapCenter(point);
+              if (point) {
+                  setLocalMapCenter(point);
+                  const country = getPointCountry(point);
+                  if (country !== 'Sin ubicación') setDetectedLocalCountry(country);
+              }
           },
           () => {},
           { enableHighAccuracy: true, maximumAge: 0, timeout: 12000 }
@@ -613,6 +651,7 @@ function App() {
             const previousKey = previousIncomingChatRef.current.get(route.id);
             if (previousKey && lastKey && previousKey !== lastKey && !['Despacho', 'Sistema'].includes(lastMessage?.sender)) {
                 playControlRoomAlert(`Nuevo mensaje de ${lastMessage?.sender === 'Conductor' ? 'conductor' : 'cliente'}`);
+                setUnreadChatRouteIds(prev => prev.includes(route.id) ? prev : [...prev, route.id]);
             }
             previousIncomingChatRef.current.set(route.id, lastKey);
         });
@@ -631,6 +670,12 @@ function App() {
     return () => { unsubRoutes(); unsubDrivers(); };
   }, []);
 
+
+
+  useEffect(() => {
+      const proximityIds = liveRoutes.filter(isDispatcherNotificationUnread).map(route => route.id);
+      setActiveAlertsCount(new Set([...proximityIds, ...unreadChatRouteIds]).size);
+  }, [liveRoutes, unreadChatRouteIds]);
 
   useEffect(() => {
       const interval = setInterval(() => setClockTick(Date.now()), 5000);
@@ -803,7 +848,8 @@ function App() {
 
   useEffect(() => {
       if (!isLoaded || selectedRoute || !mapRef.current || !window.google?.maps || onlineDrivers.length === 0) return;
-      const countryDrivers = onlineDrivers.filter(driver => driverCountryFilter === 'Todos' || getDriverCountry(driver) === driverCountryFilter);
+      const effectiveCountry = driverCountryFilter === 'Local' ? detectedLocalCountry : driverCountryFilter;
+      const countryDrivers = onlineDrivers.filter(driver => !effectiveCountry || effectiveCountry === 'Todos' || getDriverCountry(driver) === effectiveCountry);
       const points = countryDrivers.map(driver => normalizePoint(driver.currentLocation)).filter(Boolean);
       if (!points.length) return;
       programmaticCameraRef.current = true;
@@ -819,7 +865,7 @@ function App() {
       } finally {
           setTimeout(() => { programmaticCameraRef.current = false; }, 300);
       }
-  }, [isLoaded, selectedRoute?.id, onlineDrivers, driverCountryFilter]);
+  }, [isLoaded, selectedRoute?.id, onlineDrivers, driverCountryFilter, detectedLocalCountry]);
 
   // Seguimiento independiente del viaje: permite seguir a un conductor que ya terminó
   // mientras conserve la app encendida y su estado En Línea.
@@ -1012,6 +1058,14 @@ function App() {
           filtered = filtered.filter(ruta => getHistoryRouteDateKey(ruta) === historyDateFilter);
       }
 
+      const effectiveCountry = driverCountryFilter === 'Local' ? detectedLocalCountry : driverCountryFilter;
+      if (effectiveCountry && effectiveCountry !== 'Todos') {
+          filtered = filtered.filter(ruta => {
+              const routeCountry = getRouteCountry(ruta);
+              return routeCountry === effectiveCountry || routeCountry === 'Sin ubicación';
+          });
+      }
+
       return filtered.sort((a, b) => {
           if (viewHistory) return getRouteAuditSortMs(b) - getRouteAuditSortMs(a);
           if (a.status === 'En Ruta' && b.status !== 'En Ruta') return -1;
@@ -1029,7 +1083,8 @@ function App() {
   };
 
   const rutasVisibles = getFilteredAndSortedRoutes();
-  const visibleOnlineDrivers = onlineDrivers.filter(driver => driverCountryFilter === 'Todos' || getDriverCountry(driver) === driverCountryFilter);
+  const effectiveDriverCountry = driverCountryFilter === 'Local' ? detectedLocalCountry : driverCountryFilter;
+  const visibleOnlineDrivers = onlineDrivers.filter(driver => !effectiveDriverCountry || effectiveDriverCountry === 'Todos' || getDriverCountry(driver) === effectiveDriverCountry);
   const selectedRouteGeometry = selectedRoute && !['Finalizado', 'Completado', 'Cancelado'].includes(selectedRoute.status) ? getLiveGeometry(selectedRoute) : [];
   const selectedPlannedGeometry = selectedRoute ? getPlannedGeometry(selectedRoute) : [];
   const selectedTravelledSegments = selectedRoute ? splitGpsTraceSegments(selectedRoute?.rutaReal) : [];
@@ -1044,7 +1099,7 @@ function App() {
           : selectedUpdateAgeSeconds > 30
               ? 'delayed'
               : 'live';
-  const activeNotificationRoutes = liveRoutes.filter(isDispatcherNotificationUnread);
+  const activeNotificationRoutes = liveRoutes.filter(route => isDispatcherNotificationUnread(route) || unreadChatRouteIds.includes(route.id));
   const selectedOnlineDriver = onlineDrivers.find(driver => driver.id === selectedDriverId) || null;
 
   if (!currentUser) return <Login onLogin={handleDispatcherLogin} />;
@@ -1102,21 +1157,26 @@ function App() {
                         {activeNotificationRoutes.map(route => (
                             <button key={route.id} type="button" onClick={async () => {
                                 const readAt = new Date().toISOString();
+                                const hasUnreadChat = unreadChatRouteIds.includes(route.id);
                                 try {
-                                    await updateDoc(doc(db, 'rutas', route.id), { dispatcherNotificationReadAt: readAt });
+                                    if (isDispatcherNotificationUnread(route)) {
+                                        await updateDoc(doc(db, 'rutas', route.id), { dispatcherNotificationReadAt: readAt });
+                                    }
                                 } catch (error) {
                                     console.warn('No se pudo marcar la alerta como leída:', error);
                                 }
+                                setUnreadChatRouteIds(prev => prev.filter(id => id !== route.id));
                                 setActiveTab('monitoreo');
                                 setSelectedDriverId(route.driverId || null);
                                 setSelectedRoute({ ...route, dispatcherNotificationReadAt: readAt });
+                                if (hasUnreadChat) setChatModalRoute(route);
                                 setManualMapInteraction(false);
                                 setFollowSelectedRoute(true);
                                 setShowNotifications(false);
                             }} className="w-full text-left p-3 rounded-xl border border-orange-100 bg-orange-50 hover:bg-orange-100 transition">
-                                <p className="text-[10px] font-black uppercase text-orange-600">{route.proximityAlert?.passenger || 'Conductor próximo'}</p>
+                                <p className="text-[10px] font-black uppercase text-orange-600">{unreadChatRouteIds.includes(route.id) ? 'Nuevo mensaje' : (route.proximityAlert?.passenger || 'Conductor próximo')}</p>
                                 <p className="text-xs font-bold text-slate-800 mt-1">{route.driver || 'Conductor'} · {route.client || 'Servicio'}</p>
-                                <p className="text-[10px] font-bold text-slate-500 mt-1">Llegada estimada: {route.proximityAlert?.etaMins ?? '--'} min</p>
+                                <p className="text-[10px] font-bold text-slate-500 mt-1">{unreadChatRouteIds.includes(route.id) ? 'Toca para abrir el monitor/chat' : `Llegada estimada: ${route.proximityAlert?.etaMins ?? '--'} min`}</p>
                             </button>
                         ))}
                     </div>
@@ -1138,7 +1198,7 @@ function App() {
                             onZoomChanged={handleUserMapInteraction}
                             options={{ mapId: "73f56298887c80075f6fc648", streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy", fullscreenControl: false, zoomControl: true }}
                         >
-                            {visibleOnlineDrivers.map(d => d.currentLocation && <Marker key={d.id} position={d.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: 6, fillColor: "#22c55e", fillOpacity: 0.8, strokeWeight: 2, strokeColor: "white" }} title={`Operador: ${d.name}`} onClick={() => {
+                            {visibleOnlineDrivers.map(d => d.currentLocation && <Marker key={d.id} position={d.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: mapExpanded ? 9 : 7, fillColor: "#22c55e", fillOpacity: 0.8, strokeWeight: 2, strokeColor: "white" }} title={`Operador: ${d.name}`} onClick={() => {
                                 setSelectedDriverId(d.id);
                                 setManualMapInteraction(false);
                                 const driverRoute = liveRoutes.find(r => !["Finalizado", "Completado", "Cancelado"].includes(r.status) && (r.driverId === d.id || r.driver === d.name));
@@ -1160,20 +1220,20 @@ function App() {
                                     {selectedPlannedGeometry.length > 1 && (
                                         <Polyline
                                             path={selectedPlannedGeometry}
-                                            options={{ strokeColor: '#64748b', strokeOpacity: 0.45, strokeWeight: 4, zIndex: 1 }}
+                                            options={{ strokeColor: '#475569', strokeOpacity: 0.72, strokeWeight: 9, zIndex: 1 }}
                                         />
                                     )}
                                     {selectedTravelledSegments.map((segment, segmentIndex) => (
                                         <Polyline
                                             key={`gps-trace-${selectedRoute.id}-${segmentIndex}`}
                                             path={segment}
-                                            options={{ strokeColor: '#2563eb', strokeOpacity: 0.9, strokeWeight: 6, zIndex: 3 }}
+                                            options={{ strokeColor: '#2563eb', strokeOpacity: 0.95, strokeWeight: 5, zIndex: 3 }}
                                         />
                                     ))}
                                     {selectedRouteGeometry.length > 1 && (
                                         <Polyline
                                             path={selectedRouteGeometry}
-                                            options={{ strokeColor: '#f97316', strokeOpacity: 0.95, strokeWeight: 6, zIndex: 2 }}
+                                            options={{ strokeColor: '#f97316', strokeOpacity: 0.98, strokeWeight: 5, zIndex: 2 }}
                                         />
                                     )}
                                     {normalizePoint(selectedRoute.startCoords) && <Marker position={normalizePoint(selectedRoute.startCoords)} icon={ICON_START} />}
@@ -1204,6 +1264,33 @@ function App() {
                     ) : <div className="h-full flex flex-col items-center justify-center text-slate-400 gap-2"><Loader2 className="animate-spin w-8 h-8 text-orange-500"/><span className="text-xs font-bold uppercase tracking-widest">Cargando Mapas...</span></div>}
 
                     <div className="absolute top-4 right-4 z-[800] flex items-center gap-2">
+                        {mapExpanded && (
+                            <select
+                                value={selectedDriverId || ''}
+                                onChange={(event) => {
+                                    const driverId = event.target.value;
+                                    setSelectedDriverId(driverId || null);
+                                    setManualMapInteraction(false);
+                                    const driver = onlineDrivers.find(item => item.id === driverId);
+                                    if (!driver) { setSelectedRoute(null); return; }
+                                    const driverRoute = liveRoutes.find(r => !['Finalizado', 'Completado', 'Cancelado'].includes(r.status) && (r.driverId === driver.id || r.driver === driver.name));
+                                    setSelectedRoute(driverRoute || null);
+                                    setFollowSelectedRoute(Boolean(driverRoute));
+                                    const point = normalizePoint(driver.currentLocation);
+                                    if (!driverRoute && point && mapRef.current) {
+                                        mapRef.current.panTo(point);
+                                        mapRef.current.setZoom(16);
+                                    }
+                                }}
+                                className="bg-white/95 border border-slate-200 rounded-xl px-3 py-2.5 text-[10px] font-black text-slate-700 shadow-lg outline-none max-w-[250px]"
+                                aria-label="Seleccionar conductor en pantalla completa"
+                            >
+                                <option value="">Seleccionar conductor...</option>
+                                {visibleOnlineDrivers.slice().sort((a,b) => String(a.name || '').localeCompare(String(b.name || ''), 'es')).map(driver => (
+                                    <option key={driver.id} value={driver.id}>{driver.name}</option>
+                                ))}
+                            </select>
+                        )}
                         <select
                             value={driverCountryFilter}
                             onChange={(event) => {
@@ -1216,6 +1303,7 @@ function App() {
                             className="bg-white/95 border border-slate-200 rounded-xl px-3 py-2.5 text-[10px] font-black uppercase tracking-widest text-slate-700 shadow-lg outline-none"
                             aria-label="Filtrar conductores por país"
                         >
+                            <option value="Local">Mi país{detectedLocalCountry ? ` (${detectedLocalCountry})` : ''}</option>
                             <option value="Todos">Todos los países</option>
                             <option value="México">México</option>
                             <option value="Colombia">Colombia</option>
@@ -1359,10 +1447,10 @@ function App() {
                             const liveDuration = Number(ruta.liveNavigation?.durationMinutes);
                             
                             return (
-                                <div key={ruta.id} onClick={() => { setSelectedRoute(ruta); setManualMapInteraction(false); setFollowSelectedRoute(ruta.status === 'En Ruta'); }} className={`border-2 rounded-2xl p-4 transition-all shadow-sm cursor-pointer relative overflow-hidden ${selectedRoute?.id === ruta.id ? 'border-orange-500 bg-orange-50/30 shadow-orange-500/10' : 'bg-white border-slate-100 hover:border-slate-200 hover:shadow-md'} ${ruta.proximityAlert?.active ? 'border-orange-400 bg-orange-50/50' : ''}`}>
-                                    {ruta.proximityAlert?.active && <div className="absolute top-0 left-0 right-0 bg-orange-500 text-white text-[10px] font-black text-center py-1 flex items-center justify-center gap-1 animate-pulse"><BellRing className="w-3 h-3"/> ¡LLEGANDO A: {ruta.proximityAlert.passenger.toUpperCase()}!</div>}
+                                <div key={ruta.id} onClick={() => { setSelectedRoute(ruta); setManualMapInteraction(false); setFollowSelectedRoute(ruta.status === 'En Ruta'); }} className={`border-2 rounded-2xl p-4 transition-all shadow-sm cursor-pointer relative overflow-hidden ${selectedRoute?.id === ruta.id ? 'border-orange-500 bg-orange-50/30 shadow-orange-500/10' : 'bg-white border-slate-100 hover:border-slate-200 hover:shadow-md'} ${isCurrentProximityAlert(ruta) ? 'border-orange-400 bg-orange-50/50' : ''}`}>
+                                    {isCurrentProximityAlert(ruta) && <div className="absolute top-0 left-0 right-0 bg-orange-500 text-white text-[10px] font-black text-center py-1 flex items-center justify-center gap-1 animate-pulse"><BellRing className="w-3 h-3"/> ¡LLEGANDO A: {ruta.proximityAlert.passenger.toUpperCase()}!</div>}
 
-                                    <div className={`flex justify-between items-start mb-3 ${ruta.proximityAlert?.active ? 'mt-4' : ''}`}>
+                                    <div className={`flex justify-between items-start mb-3 ${isCurrentProximityAlert(ruta) ? 'mt-4' : ''}`}>
                                         <div>
                                             {ruta.serviceType === 'Prioritario' ? <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest bg-orange-100 text-orange-700 mb-2"><Zap className="w-3 h-3 fill-orange-500 text-orange-600" /> INMEDIATO</span> : <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-black uppercase tracking-widest bg-slate-100 text-slate-600 mb-2"><Calendar className="w-3 h-3" /> PROGRAMADO: {ruta.scheduledDate}</span>}
                                             <h4 className="font-black text-slate-800 text-sm truncate">{ruta.client}</h4>
@@ -1403,7 +1491,7 @@ function App() {
                                             <div className="flex justify-between text-[10px] gap-3"><span className="text-slate-400 uppercase font-black tracking-widest">Fin real:</span><span className="font-mono font-bold text-slate-800">{getActualEndTime(ruta) || '--:--'}</span></div>
                                         </div>
                                         {(ruta.status === 'En Ruta' || hasChatOrEvidence || ruta.bitacora?.length > 0) && (
-                                            <button onClick={(e) => { e.stopPropagation(); setChatModalRoute(ruta); }} className={`flex flex-col items-center justify-center px-4 rounded-xl border transition-colors ${hasChatOrEvidence ? 'bg-orange-100 text-orange-700 border-orange-200 hover:bg-orange-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'} relative`}>
+                                            <button onClick={(e) => { e.stopPropagation(); setUnreadChatRouteIds(prev => prev.filter(id => id !== ruta.id)); setChatModalRoute(ruta); }} className={`flex flex-col items-center justify-center px-4 rounded-xl border transition-colors ${hasChatOrEvidence ? 'bg-orange-100 text-orange-700 border-orange-200 hover:bg-orange-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'} relative`}>
                                                 <Monitor className="w-5 h-5"/>
                                                 <span className="text-[9px] font-black uppercase tracking-widest mt-1">Monitor</span>
                                                 {ruta.chat && ruta.chat.length > 0 && ruta.chat[ruta.chat.length-1].sender !== 'Despacho' && ruta.chat[ruta.chat.length-1].sender !== 'Sistema' && <div className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full animate-pulse border-2 border-white"></div>}
@@ -1411,7 +1499,7 @@ function App() {
                                         )}
                                     </div>
 
-                                    {ruta.status === 'En Ruta' && ruta.proximityAlert?.etaMins && (
+                                    {ruta.status === 'En Ruta' && isCurrentProximityAlert(ruta) && ruta.proximityAlert?.etaMins && (
                                         <div className="mb-3 px-3 py-2 bg-green-50 border border-green-200 rounded-xl text-center">
                                             <p className="text-[10px] font-black text-green-700 uppercase tracking-widest flex items-center justify-center gap-1.5">
                                                 <Clock className="w-3.5 h-3.5"/> LLEGADA ESTIMADA: {ruta.proximityAlert.etaMins} MIN A {(ruta.proximityAlert.passenger || getRouteCurrentStopLabel(ruta)).split(' ')[0].toUpperCase()}

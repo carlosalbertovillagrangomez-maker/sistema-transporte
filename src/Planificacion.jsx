@@ -6,6 +6,8 @@ import { GoogleMap, useJsApiLoader, Marker, Polyline, Autocomplete } from '@reac
 // FIREBASE
 import { db } from './firebase';
 import { collection, addDoc, onSnapshot, doc, query, orderBy, deleteDoc, updateDoc } from 'firebase/firestore';
+import TripLogixExcelImporter from './TripLogixExcelImporter';
+import TripLogixWhatsAppActions from './TripLogixWhatsAppActions';
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
 
@@ -88,6 +90,8 @@ const getCalculatedStartTime = (timeKey, durationMins, mode, passengerCount = 0)
 };
 
 // --- HELPER: PLAN COMPLETO DE TIEMPOS PARA CARPOOLING ---
+// En ENTRADAS, timeKey representa la hora oficial de llegada a la empresa.
+// Calculamos HACIA ATRÁS para que cada pasajero tenga una hora distinta.
 const buildCarpoolTimePlan = ({
     timeKey,
     totalDurationMins,
@@ -111,52 +115,31 @@ const buildCarpoolTimePlan = ({
 
     const officialArrivalDate = parseTimeKeyToDate(timeKey);
     const targetFinalArrivalDate = addMinutesToDate(officialArrivalDate, -FINAL_DESTINATION_EARLY_MINS);
-    const totalPassengerBufferMins = safeMinutes(passengerCount) * PASSENGER_PICKUP_BUFFER_MINS;
-
-    const startDate = addMinutesToDate(
-        targetFinalArrivalDate,
-        -(safeMinutes(totalDurationMins) + totalPassengerBufferMins)
-    );
-
-    let pickupTimes = [];
-
-    if (isShared) {
-        pickupTimes = Array.from({ length: passengerCount }, () => formatHHMM(startDate));
-
-        const estimatedFinalArrivalDate = addMinutesToDate(
-            startDate,
-            safeMinutes(totalDurationMins) + totalPassengerBufferMins
-        );
-
-        return {
-            officialScheduledTime: timeKey,
-            startTime: formatHHMM(startDate),
-            targetFinalArrivalTime: formatHHMM(targetFinalArrivalDate),
-            estimatedFinalArrivalTime: formatHHMM(estimatedFinalArrivalDate),
-            finalEarlyBufferMins: FINAL_DESTINATION_EARLY_MINS,
-            passengerBufferMins: PASSENGER_PICKUP_BUFFER_MINS,
-            totalPassengerBufferMins,
-            pickupTimes
-        };
-    }
-
-    let cursor = new Date(startDate);
     const safeSegments = Array.isArray(routeSegments) ? routeSegments : [];
+    const pickupTimes = Array(Math.max(0, passengerCount)).fill('');
+    let cursor = new Date(targetFinalArrivalDate);
 
-    for (let i = 0; i < passengerCount; i++) {
-        pickupTimes.push(formatHHMM(cursor));
-        cursor = addMinutesToDate(cursor, PASSENGER_PICKUP_BUFFER_MINS);
-        cursor = addMinutesToDate(cursor, safeMinutes(safeSegments[i]?.duration));
+    // Un único punto compartido: todos comparten horario de recogida.
+    if (isShared && safeSegments.length <= 1) {
+        cursor = addMinutesToDate(cursor, -safeMinutes(safeSegments[0]?.duration ?? totalDurationMins));
+        cursor = addMinutesToDate(cursor, -(Math.max(1, passengerCount) * PASSENGER_PICKUP_BUFFER_MINS));
+        pickupTimes.fill(formatHHMM(cursor));
+    } else {
+        for (let i = passengerCount - 1; i >= 0; i -= 1) {
+            cursor = addMinutesToDate(cursor, -safeMinutes(safeSegments[i]?.duration));
+            cursor = addMinutesToDate(cursor, -PASSENGER_PICKUP_BUFFER_MINS);
+            pickupTimes[i] = formatHHMM(cursor);
+        }
     }
 
     return {
         officialScheduledTime: timeKey,
-        startTime: formatHHMM(startDate),
+        startTime: pickupTimes[0] || formatHHMM(cursor),
         targetFinalArrivalTime: formatHHMM(targetFinalArrivalDate),
-        estimatedFinalArrivalTime: formatHHMM(cursor),
+        estimatedFinalArrivalTime: formatHHMM(targetFinalArrivalDate),
         finalEarlyBufferMins: FINAL_DESTINATION_EARLY_MINS,
         passengerBufferMins: PASSENGER_PICKUP_BUFFER_MINS,
-        totalPassengerBufferMins,
+        totalPassengerBufferMins: passengerCount * PASSENGER_PICKUP_BUFFER_MINS,
         pickupTimes
     };
 };
@@ -857,7 +840,7 @@ export default function Planificacion() {
   const openEditPlannedRoute = (route, event) => {
       event?.stopPropagation?.();
       if (!route?.id) return;
-      if (!['Pendiente', 'Aceptada'].includes(route.status)) {
+      if (route.actualStartTimestamp || ['En Ruta', 'Finalizado', 'Completado', 'Cancelado'].includes(route.status)) {
           alert("Solo se pueden editar rutas que todavía no han iniciado.");
           return;
       }
@@ -1440,24 +1423,25 @@ export default function Planificacion() {
               const pointTimeByRouteIndex = new Map();
 
               if (globalCarpool.mode === 'Ida') {
-                  let pickupCursor = parseTimeKeyToDate(timePlan.startTime);
-                  passengerStops.forEach((stop, stopIndex) => {
-                      const currentTime = formatHHMM(pickupCursor);
+                  const targetArrival = parseTimeKeyToDate(timePlan.targetFinalArrivalTime || g.timeKey);
+                  let backwardsCursor = new Date(targetArrival);
+
+                  for (let stopIndex = passengerStops.length - 1; stopIndex >= 0; stopIndex -= 1) {
+                      backwardsCursor = addMinutesToDate(
+                          backwardsCursor,
+                          -safeMinutes(g.routeSegments?.[stopIndex]?.duration)
+                      );
+                      backwardsCursor = addMinutesToDate(
+                          backwardsCursor,
+                          -(Math.max(1, passengerStops[stopIndex]?.employees?.length || 1) * PASSENGER_PICKUP_BUFFER_MINS)
+                      );
+
+                      const currentTime = formatHHMM(backwardsCursor);
                       pointTimeByRouteIndex.set(stopIndex, currentTime);
-                      stop.employees.forEach(employee => {
+                      passengerStops[stopIndex].employees.forEach(employee => {
                           pickupTimeByPassenger.set(employee.assignedTo, currentTime);
                       });
-
-                      // Tiempo de atención del punto + traslado REAL al siguiente punto.
-                      pickupCursor = addMinutesToDate(
-                          pickupCursor,
-                          stop.employees.length * PASSENGER_PICKUP_BUFFER_MINS
-                      );
-                      pickupCursor = addMinutesToDate(
-                          pickupCursor,
-                          safeMinutes(g.routeSegments?.[stopIndex]?.duration)
-                      );
-                  });
+                  }
               } else {
                   // SALIDA: la empresa es el ORIGEN. Cada pasajero tiene una hora estimada
                   // de DESCARGA distinta a medida que el vehículo avanza por sus puntos.
@@ -1726,7 +1710,8 @@ export default function Planificacion() {
     <div className="flex-1 p-6 bg-slate-50 h-full flex flex-col overflow-hidden relative">
       <div className="flex justify-between items-center mb-6 shrink-0">
           <div><h2 className="text-2xl font-bold text-slate-800">Planificador de Rutas</h2><p className="text-slate-500 text-sm">{activePlanRoutes.length} viajes pendientes o activos</p></div>
-          <div className="flex gap-3">
+          <div className="flex gap-3 flex-wrap justify-end">
+              <TripLogixExcelImporter />
               <button onClick={openCarpoolModal} className="bg-orange-100 text-orange-700 border border-orange-200 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-orange-200 transition"><Network className="w-4 h-4" /> Optimizar Grupos de Personal</button>
               <button onClick={() => { setViewRoute(null); setEditingPlannedRouteId(null); setWalkUpMode(false); setShowModal(true); }} className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg hover:bg-slate-900 transition"><Plus className="w-4 h-4" /> Nueva Ruta Manual</button>
           </div>
@@ -1741,7 +1726,8 @@ export default function Planificacion() {
                     <div className="flex justify-between items-start mb-2">
                           {ruta.serviceType === 'Prioritario' ? <span className="text-[10px] font-bold px-2 py-1 rounded bg-orange-100 text-orange-700 flex items-center gap-1"><Zap className="w-3 h-3"/> INMEDIATO</span> : <span className="text-[10px] font-bold px-2 py-1 rounded bg-slate-100 text-slate-700 flex items-center gap-1"><Calendar className="w-3 h-3"/> {ruta.scheduledDate} {ruta.scheduledTime}</span>}
                           <div className="flex gap-1">
-                              {['Pendiente', 'Aceptada'].includes(ruta.status) && (
+                              <TripLogixWhatsAppActions route={ruta} />
+                              {!ruta.actualStartTimestamp && !['En Ruta', 'Finalizado', 'Completado', 'Cancelado'].includes(ruta.status) && (
                                   <button
                                       type="button"
                                       onClick={(e) => openEditPlannedRoute(ruta, e)}

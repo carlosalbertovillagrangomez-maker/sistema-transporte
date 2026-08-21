@@ -134,6 +134,8 @@ const getBoardingEvents = (route) => {
 
 const getActualDistanceKm = (route) => {
     const candidates = [
+        route?.officialGoogleDistanceKm,
+        route?.googleMatchedDistanceKm,
         route?.finalDistanceKm,
         route?.realDistanceDriven,
         route?.receipt?.distanceKm,

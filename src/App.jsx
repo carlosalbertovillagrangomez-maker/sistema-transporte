@@ -19,6 +19,7 @@ const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0";
 const containerStyle = { width: '100%', height: '100%' };
 const DEFAULT_MAP_CENTER = { lat: 19.4326, lng: -99.1332 };
 const COLOMBIA_MAP_CENTER = { lat: 4.7110, lng: -74.0721 };
+const CONTROL_ROOM_FORWARD_PHONE = '62142479068';
 
 const getCountryFromTimezone = () => {
     try {
@@ -320,6 +321,8 @@ const calculatePathDistanceKm = (path = []) => {
 
 const getActualDistanceKm = (route) => {
     const candidates = [
+        route?.officialGoogleDistanceKm,
+        route?.googleMatchedDistanceKm,
         route?.finalDistanceKm,
         route?.realDistanceDriven,
         route?.receipt?.distanceKm,
@@ -1007,6 +1010,20 @@ function App() {
       }
   };
 
+  const forwardLatestToSupervisor = () => {
+      if (!chatModalRoute) return;
+      const chat = Array.isArray(chatModalRoute.chat) ? chatModalRoute.chat : [];
+      const lastIncoming = [...chat].reverse().find(item => !['Despacho', 'Sistema'].includes(item?.sender));
+      const text = [
+          'TripLogix - Torre de Control',
+          chatModalRoute.driver ? `Conductor: ${chatModalRoute.driver}` : '',
+          chatModalRoute.client ? `Servicio: ${chatModalRoute.client}` : '',
+          lastIncoming ? `Mensaje: ${lastIncoming.text || ''}` : 'Revisar viaje en Torre de Control.',
+          `Viaje: ${chatModalRoute.id}`
+      ].filter(Boolean).join('\n');
+      window.open(`https://wa.me/${CONTROL_ROOM_FORWARD_PHONE}?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer');
+  };
+
   const sendDispatchMessage = async () => {
       if (!chatInput.trim() || !chatModalRoute || !currentUser) return;
       const msg = { sender: 'Despacho', text: chatInput.trim(), time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}), timestamp: new Date().toISOString(), sentBy: currentUser.name };
@@ -1582,6 +1599,7 @@ function App() {
                       </div>
                       <div className="sticky bottom-0 z-20 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] bg-white border-t border-slate-200 flex items-center gap-3 shrink-0 shadow-[0_-8px_20px_rgba(15,23,42,0.08)]">
                           <input type="text" value={chatInput} onChange={e=>setChatInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && sendDispatchMessage()} placeholder="Escribe al conductor o cliente..." className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-sm outline-none focus:border-orange-500 focus:bg-white transition-colors" />
+                          <button type="button" onClick={forwardLatestToSupervisor} title="Reenviar al celular de supervisión" className="px-3 py-3 bg-emerald-600 text-white rounded-xl text-[10px] font-black uppercase shadow-md hover:bg-emerald-700">WhatsApp supervisor</button>
                           <button onClick={sendDispatchMessage} className="p-3 bg-orange-500 text-white rounded-xl shadow-md hover:bg-orange-600 active:scale-95 transition-transform"><Send className="w-5 h-5"/></button>
                       </div>
                   </div>

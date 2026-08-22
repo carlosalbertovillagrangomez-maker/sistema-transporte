@@ -191,6 +191,27 @@ const getScheduledRouteMs = (route) => {
     return getTimestampMs(route?.createdDate) || 0;
 };
 
+const isRouteActivelyInProgress = (route) => {
+    if (!route || ['Finalizado', 'Completado', 'Cancelado'].includes(route.status)) return false;
+    if (route.status === 'En Ruta') return true;
+    return Boolean(route.actualStartTimestamp || route.navigationStartedAt || route.startedAt);
+};
+
+const findActiveRouteForDriver = (routes = [], driver = null) => {
+    if (!driver) return null;
+
+    return routes
+        .filter(route =>
+            isRouteActivelyInProgress(route) &&
+            ((route?.driverId && route.driverId === driver.id) || (route?.driver && route.driver === driver.name))
+        )
+        .sort((a, b) => (
+            getTimestampMs(b?.actualStartTimestamp || b?.navigationStartedAt || b?.startedAt) || 0
+        ) - (
+            getTimestampMs(a?.actualStartTimestamp || a?.navigationStartedAt || a?.startedAt) || 0
+        ))[0] || null;
+};
+
 const getBestDriverLocation = (route, drivers = []) => {
     if (!route) return null;
     const driver = drivers.find(item =>
@@ -849,6 +870,38 @@ function App() {
       setFollowSelectedRoute(false);
   }, []);
 
+  const selectDriverOnMonitor = useCallback((driver) => {
+      setSelectedDriverId(driver?.id || null);
+      // Limpiamos primero la selección anterior para que nunca sobreviva
+      // visualmente la ruta de otro conductor.
+      setSelectedRoute(null);
+      setManualMapInteraction(false);
+
+      if (!driver) {
+          setFollowSelectedRoute(false);
+          return;
+      }
+
+      const activeDriverRoute = findActiveRouteForDriver(liveRoutes, driver);
+      if (activeDriverRoute) {
+          setSelectedRoute(activeDriverRoute);
+          setFollowSelectedRoute(true);
+          return;
+      }
+
+      setFollowSelectedRoute(false);
+      const point = normalizePoint(driver.currentLocation);
+      if (point && mapRef.current) {
+          programmaticCameraRef.current = true;
+          try {
+              mapRef.current.panTo(point);
+              mapRef.current.setZoom(16);
+          } finally {
+              setTimeout(() => { programmaticCameraRef.current = false; }, 250);
+          }
+      }
+  }, [liveRoutes]);
+
   useEffect(() => {
       if (!isLoaded || selectedRoute || !mapRef.current || !window.google?.maps || onlineDrivers.length === 0) return;
       const effectiveCountry = driverCountryFilter === 'Local' ? detectedLocalCountry : driverCountryFilter;
@@ -1215,23 +1268,7 @@ function App() {
                             onZoomChanged={handleUserMapInteraction}
                             options={{ mapId: "73f56298887c80075f6fc648", streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy", fullscreenControl: false, zoomControl: true }}
                         >
-                            {visibleOnlineDrivers.map(d => d.currentLocation && <Marker key={d.id} position={d.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: mapExpanded ? 9 : 7, fillColor: "#22c55e", fillOpacity: 0.8, strokeWeight: 2, strokeColor: "white" }} title={`Operador: ${d.name}`} onClick={() => {
-                                setSelectedDriverId(d.id);
-                                setManualMapInteraction(false);
-                                const driverRoute = liveRoutes.find(r => !["Finalizado", "Completado", "Cancelado"].includes(r.status) && (r.driverId === d.id || r.driver === d.name));
-                                if (driverRoute) {
-                                    setFollowSelectedRoute(true);
-                                    setSelectedRoute(driverRoute);
-                                } else {
-                                    setFollowSelectedRoute(false);
-                                    setSelectedRoute(null);
-                                    const point = normalizePoint(d.currentLocation);
-                                    if (point && mapRef.current) {
-                                        mapRef.current.panTo(point);
-                                        mapRef.current.setZoom(16);
-                                    }
-                                }
-                            }} />)}
+                            {visibleOnlineDrivers.map(d => d.currentLocation && <Marker key={d.id} position={d.currentLocation} icon={{ path: window.google.maps.SymbolPath.CIRCLE, scale: mapExpanded ? 9 : 7, fillColor: "#22c55e", fillOpacity: 0.8, strokeWeight: 2, strokeColor: "white" }} title={`Operador: ${d.name}`} onClick={() => selectDriverOnMonitor(d)} />)}
                             {selectedRoute && (
                                 <>
                                     {selectedPlannedGeometry.length > 1 && (
@@ -1285,19 +1322,8 @@ function App() {
                             <select
                                 value={selectedDriverId || ''}
                                 onChange={(event) => {
-                                    const driverId = event.target.value;
-                                    setSelectedDriverId(driverId || null);
-                                    setManualMapInteraction(false);
-                                    const driver = onlineDrivers.find(item => item.id === driverId);
-                                    if (!driver) { setSelectedRoute(null); return; }
-                                    const driverRoute = liveRoutes.find(r => !['Finalizado', 'Completado', 'Cancelado'].includes(r.status) && (r.driverId === driver.id || r.driver === driver.name));
-                                    setSelectedRoute(driverRoute || null);
-                                    setFollowSelectedRoute(Boolean(driverRoute));
-                                    const point = normalizePoint(driver.currentLocation);
-                                    if (!driverRoute && point && mapRef.current) {
-                                        mapRef.current.panTo(point);
-                                        mapRef.current.setZoom(16);
-                                    }
+                                    const driver = onlineDrivers.find(item => item.id === event.target.value) || null;
+                                    selectDriverOnMonitor(driver);
                                 }}
                                 className="bg-white/95 border border-slate-200 rounded-xl px-3 py-2.5 text-[10px] font-black text-slate-700 shadow-lg outline-none max-w-[250px]"
                                 aria-label="Seleccionar conductor en pantalla completa"

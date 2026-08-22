@@ -368,6 +368,11 @@ export default function Planificacion() {
   const [availableDrivers, setAvailableDrivers] = useState([]);
   const [availableClients, setAvailableClients] = useState([]);
   const [routesList, setRoutesList] = useState([]);
+  const [planDriverSearch, setPlanDriverSearch] = useState('');
+  const [planDriverFilter, setPlanDriverFilter] = useState('');
+  const [planDateFilter, setPlanDateFilter] = useState('');
+  const [planTimeFrom, setPlanTimeFrom] = useState('');
+  const [planTimeTo, setPlanTimeTo] = useState('');
 
   const [viewRoute, setViewRoute] = useState(null);
   const [newRoute, setNewRoute] = useState({ client: '', requestUser: '', driver: '', driverId: '', status: 'Pendiente', serviceType: 'Programado', scheduledDate: '', scheduledTime: '' });
@@ -1704,12 +1709,72 @@ export default function Planificacion() {
           return getPlanSortTimestamp(a) - getPlanSortTimestamp(b);
       });
 
+  const normalizeFilterText = (value) => String(value || '').trim().toLocaleLowerCase('es');
+  const getRouteFilterDate = (route) => String(route?.scheduledDate || route?.pickupDate || route?.finalDate || '').slice(0, 10);
+  const getRouteFilterTime = (route) => String(
+      route?.scheduledTime ||
+      route?.officialScheduledTime ||
+      route?.pickupTime ||
+      route?.startTime ||
+      route?.startCoords?.pickupTime ||
+      ''
+  ).slice(0, 5);
+  const timeToMinutes = (value) => {
+      const match = String(value || '').match(/^(\d{1,2}):(\d{2})/);
+      if (!match) return null;
+      const hours = Number(match[1]);
+      const minutes = Number(match[2]);
+      if (!Number.isFinite(hours) || !Number.isFinite(minutes)) return null;
+      return (hours * 60) + minutes;
+  };
+
+  const normalizedDriverSearch = normalizeFilterText(planDriverSearch);
+  const selectedDriverFilter = normalizeFilterText(planDriverFilter);
+  const fromMinutes = timeToMinutes(planTimeFrom);
+  const toMinutes = timeToMinutes(planTimeTo);
+
+  const filteredPlanRoutes = activePlanRoutes.filter(route => {
+      const driverName = normalizeFilterText(route?.driver || route?.ofertaNombre);
+      if (normalizedDriverSearch && !driverName.includes(normalizedDriverSearch)) return false;
+      if (selectedDriverFilter && driverName !== selectedDriverFilter) return false;
+      if (planDateFilter && getRouteFilterDate(route) !== planDateFilter) return false;
+
+      if (fromMinutes !== null || toMinutes !== null) {
+          const routeMinutes = timeToMinutes(getRouteFilterTime(route));
+          if (routeMinutes === null) return false;
+          if (fromMinutes !== null && routeMinutes < fromMinutes) return false;
+          if (toMinutes !== null && routeMinutes > toMinutes) return false;
+      }
+
+      return true;
+  });
+
+  const planDriverOptions = Array.from(new Set(
+      activePlanRoutes
+          .map(route => String(route?.driver || route?.ofertaNombre || '').trim())
+          .filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+
+  const hasPlanFilters = Boolean(planDriverSearch || planDriverFilter || planDateFilter || planTimeFrom || planTimeTo);
+  const clearPlanFilters = () => {
+      setPlanDriverSearch('');
+      setPlanDriverFilter('');
+      setPlanDateFilter('');
+      setPlanTimeFrom('');
+      setPlanTimeTo('');
+  };
+
   if (!isLoaded) return <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin w-8 h-8 text-slate-800"/></div>;
 
   return (
     <div className="flex-1 p-6 bg-slate-50 h-full flex flex-col overflow-hidden relative">
       <div className="flex justify-between items-center mb-6 shrink-0">
-          <div><h2 className="text-2xl font-bold text-slate-800">Planificador de Rutas</h2><p className="text-slate-500 text-sm">{activePlanRoutes.length} viajes pendientes o activos</p></div>
+          <div>
+              <h2 className="text-2xl font-bold text-slate-800">Planificador de Rutas</h2>
+              <p className="text-slate-500 text-sm">
+                  {hasPlanFilters ? `${filteredPlanRoutes.length} de ${activePlanRoutes.length}` : activePlanRoutes.length} viajes pendientes o activos
+              </p>
+          </div>
           <div className="flex gap-3 flex-wrap justify-end">
               <TripLogixExcelImporter />
               <button onClick={openCarpoolModal} className="bg-orange-100 text-orange-700 border border-orange-200 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-orange-200 transition"><Network className="w-4 h-4" /> Optimizar Grupos de Personal</button>
@@ -1720,8 +1785,65 @@ export default function Planificacion() {
       <div className="flex-1 flex gap-6 overflow-hidden">
           {/* LISTA DE RUTAS MANUALES */}
           <div className="w-1/3 flex flex-col gap-4 overflow-y-auto pr-2 pb-4 scrollbar-thin">
+              <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border border-slate-200 rounded-2xl p-3 shadow-sm space-y-3">
+                  <div className="relative">
+                      <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                      <input
+                          type="search"
+                          value={planDriverSearch}
+                          onChange={(e) => setPlanDriverSearch(e.target.value)}
+                          placeholder="Buscar por nombre de conductor..."
+                          className="w-full bg-slate-50 border border-slate-200 rounded-xl py-2.5 pl-9 pr-3 text-xs font-bold text-slate-700 outline-none focus:border-orange-400 focus:bg-white"
+                      />
+                  </div>
+
+                  <select
+                      value={planDriverFilter}
+                      onChange={(e) => setPlanDriverFilter(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-700 outline-none focus:border-orange-400"
+                  >
+                      <option value="">Todos los conductores</option>
+                      {planDriverOptions.map(driverName => <option key={driverName} value={driverName}>{driverName}</option>)}
+                  </select>
+
+                  <div className="grid grid-cols-1 2xl:grid-cols-2 gap-2">
+                      <label className="text-[9px] font-black uppercase tracking-wider text-slate-500">
+                          Día / fecha
+                          <input
+                              type="date"
+                              value={planDateFilter}
+                              onChange={(e) => setPlanDateFilter(e.target.value)}
+                              className="mt-1 w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-bold text-slate-700 outline-none focus:border-orange-400"
+                          />
+                      </label>
+                      <div className="grid grid-cols-2 gap-2">
+                          <label className="text-[9px] font-black uppercase tracking-wider text-slate-500">
+                              Desde
+                              <input type="time" value={planTimeFrom} onChange={(e) => setPlanTimeFrom(e.target.value)} className="mt-1 w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-2 text-[11px] font-bold text-slate-700 outline-none focus:border-orange-400" />
+                          </label>
+                          <label className="text-[9px] font-black uppercase tracking-wider text-slate-500">
+                              Hasta
+                              <input type="time" value={planTimeTo} onChange={(e) => setPlanTimeTo(e.target.value)} className="mt-1 w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-2 text-[11px] font-bold text-slate-700 outline-none focus:border-orange-400" />
+                          </label>
+                      </div>
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-bold text-slate-400">{filteredPlanRoutes.length} ruta{filteredPlanRoutes.length === 1 ? '' : 's'} visible{filteredPlanRoutes.length === 1 ? '' : 's'}</span>
+                      <button
+                          type="button"
+                          onClick={clearPlanFilters}
+                          disabled={!hasPlanFilters}
+                          className={`text-[10px] font-black uppercase tracking-wider px-3 py-2 rounded-lg transition ${hasPlanFilters ? 'bg-slate-800 text-white hover:bg-slate-900' : 'bg-slate-100 text-slate-300 cursor-not-allowed'}`}
+                      >
+                          Limpiar filtros
+                      </button>
+                  </div>
+              </div>
+
               {activePlanRoutes.length === 0 && <div className="text-center text-slate-400 mt-10">No hay viajes programados.</div>}
-              {activePlanRoutes.map((ruta) => (
+              {activePlanRoutes.length > 0 && filteredPlanRoutes.length === 0 && <div className="text-center text-slate-400 mt-6 bg-white border border-dashed border-slate-300 rounded-xl p-5">No hay rutas que coincidan con los filtros.</div>}
+              {filteredPlanRoutes.map((ruta) => (
                 <div key={ruta.id} onClick={() => setViewRoute(ruta)} className={`bg-white p-4 rounded-xl shadow-sm border transition cursor-pointer group ${viewRoute?.id === ruta.id ? 'border-orange-500 ring-1 ring-orange-500 shadow-md' : 'border-slate-200 hover:shadow-md'}`}>
                     <div className="flex justify-between items-start mb-2">
                           {ruta.serviceType === 'Prioritario' ? <span className="text-[10px] font-bold px-2 py-1 rounded bg-orange-100 text-orange-700 flex items-center gap-1"><Zap className="w-3 h-3"/> INMEDIATO</span> : <span className="text-[10px] font-bold px-2 py-1 rounded bg-slate-100 text-slate-700 flex items-center gap-1"><Calendar className="w-3 h-3"/> {ruta.scheduledDate} {ruta.scheduledTime}</span>}
@@ -1860,6 +1982,19 @@ export default function Planificacion() {
                                           <h2 className="text-xl font-black text-slate-800 flex items-center gap-2 mb-2"><Users className="w-6 h-6 text-orange-500"/> Confirmación de Asistencia y Horarios</h2>
                                           <p className="text-sm text-slate-500">Selecciona los empleados que <b>SÍ</b> asistirán y ajusta su horario si es necesario. Luego presiona Siguiente para armar las rutas.</p>
                                       </div>
+
+                                      {employeeRoster.length > 0 && (
+                                          <div className="sticky top-0 z-30 mb-4 flex justify-end">
+                                              <button
+                                                  type="button"
+                                                  onClick={handleGenerateStep2}
+                                                  className="pointer-events-auto px-5 py-3 bg-orange-500 text-white rounded-2xl font-black shadow-xl shadow-orange-500/30 hover:bg-orange-600 active:scale-[0.98] transition flex items-center gap-2 uppercase tracking-widest text-xs border border-orange-400"
+                                              >
+                                                  <span className="bg-white/20 rounded-full px-2 py-1 text-[10px]">{employeeRoster.filter(emp => emp.included).length} seleccionados</span>
+                                                  Siguiente Paso <ArrowRight className="w-4 h-4"/>
+                                              </button>
+                                          </div>
+                                      )}
 
                                       {employeeRoster.length === 0 ? (
                                           <div className="text-center p-12 text-slate-400 font-bold border-2 border-dashed border-slate-300 rounded-2xl">

@@ -1828,7 +1828,7 @@ export default function Planificacion() {
   if (!isLoaded) return <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin w-8 h-8 text-slate-800"/></div>;
 
   return (
-    <div className="flex-1 p-3 sm:p-4 md:p-6 bg-slate-50 h-full flex flex-col overflow-y-auto xl:overflow-hidden relative">
+    <div className="flex-1 min-h-0 p-3 sm:p-4 md:p-6 bg-slate-50 h-full flex flex-col overflow-y-auto overscroll-y-contain touch-pan-y xl:overflow-hidden relative">
       <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-4 mb-5 md:mb-6 shrink-0">
           <div>
               <h2 className="text-2xl font-bold text-slate-800">Planificador de Rutas</h2>

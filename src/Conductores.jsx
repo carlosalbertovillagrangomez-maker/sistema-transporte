@@ -117,7 +117,7 @@ export default function Conductores() {
   const filteredList = driversList.filter(d => filterStatus === 'Todos' || d.status === filterStatus);
 
   return (
-    <div className="flex-1 p-4 md:p-6 xl:p-8 bg-slate-50 overflow-y-auto h-full relative font-sans">
+    <div className="flex-1 min-h-0 p-4 md:p-6 xl:p-8 bg-slate-50 overflow-y-auto overscroll-y-contain touch-pan-y h-full relative font-sans">
       
       {/* HEADER */}
       <div className="flex flex-col xl:flex-row xl:justify-between xl:items-center gap-4 mb-6 md:mb-8">

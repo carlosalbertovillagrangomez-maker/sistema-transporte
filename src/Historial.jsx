@@ -551,7 +551,7 @@ export default function Historial() {
   };
 
   return (
-    <div className="flex-1 p-4 md:p-6 xl:p-8 overflow-y-auto bg-slate-50 h-full">
+    <div className="flex-1 min-h-0 p-4 md:p-6 xl:p-8 overflow-y-auto overscroll-y-contain touch-pan-y bg-slate-50 h-full">
       
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-3 mb-6">
           <div>

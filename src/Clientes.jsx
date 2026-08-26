@@ -560,7 +560,7 @@ export default function Clientes() {
   if (!isLoaded) return <div className="flex items-center justify-center h-full text-slate-400">Cargando módulos...</div>;
 
   return (
-    <div className="flex-1 p-4 md:p-6 xl:p-8 bg-slate-50 overflow-y-auto h-full relative">
+    <div className="flex-1 min-h-0 p-4 md:p-6 xl:p-8 bg-slate-50 overflow-y-auto overscroll-y-contain touch-pan-y h-full relative">
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
         <div>
             <h2 className="text-2xl font-bold text-slate-800">Cartera de Clientes</h2>

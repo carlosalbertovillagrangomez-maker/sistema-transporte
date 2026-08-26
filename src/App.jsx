@@ -1239,7 +1239,7 @@ function App() {
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col min-w-0 relative pb-16 md:pb-0">
+      <main className="flex-1 flex flex-col min-w-0 min-h-0 relative overflow-hidden pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
         <header className="h-14 md:h-16 bg-white border-b border-slate-200 flex items-center justify-between px-3 sm:px-4 md:px-6 xl:px-8 shadow-sm z-10 shrink-0">
           <h1 className="text-base md:text-xl font-black text-slate-800 tracking-tight">{activeTab === 'monitoreo' && 'Torre de Control'}{activeTab === 'planificacion' && 'Planificación de Rutas'}{activeTab === 'clientes' && 'Cartera de Clientes'}{activeTab === 'conductores' && 'Directorio de Conductores'}{activeTab === 'reportes' && 'Historial y Reportes'}</h1>
           <div className="flex items-center gap-6">
@@ -1307,7 +1307,7 @@ function App() {
         )}
 
         {activeTab === 'monitoreo' && (
-            <div className="flex-1 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_24rem] overflow-y-auto xl:overflow-hidden p-2 sm:p-3 md:p-4 xl:p-6 gap-3 sm:gap-4 xl:gap-6 animate-[fadeIn_0.3s_ease-out]">
+            <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_24rem] overflow-y-auto overscroll-y-contain touch-pan-y xl:overflow-hidden p-2 sm:p-3 md:p-4 xl:p-6 gap-3 sm:gap-4 xl:gap-6 animate-[fadeIn_0.3s_ease-out]">
                 {/* MAPA GOOGLE */}
                 <div className={mapExpanded ? "fixed inset-0 z-[2400] bg-slate-200 overflow-hidden" : "relative h-[42vh] min-h-[300px] sm:h-[48vh] sm:min-h-[360px] xl:h-auto xl:min-h-0 bg-slate-200 rounded-2xl sm:rounded-3xl shadow-sm overflow-hidden border border-slate-200"}>
                     {isLoaded ? (

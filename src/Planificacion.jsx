@@ -145,9 +145,30 @@ const buildCarpoolTimePlan = ({
 };
 
 // --- COMPONENTES AUXILIARES ---
+const RECENT_ADDRESS_STORAGE_KEY = 'triplogix_recent_addresses_v1';
+
+const readRecentAddresses = () => {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(RECENT_ADDRESS_STORAGE_KEY) || '[]');
+        return Array.isArray(parsed) ? parsed.filter(item => item?.address).slice(0, 6) : [];
+    } catch (_) {
+        return [];
+    }
+};
+
+const rememberRecentAddress = (place) => {
+    if (!place?.address) return readRecentAddresses();
+    const current = readRecentAddresses();
+    const normalized = String(place.address).trim().toLocaleLowerCase('es');
+    const next = [place, ...current.filter(item => String(item.address || '').trim().toLocaleLowerCase('es') !== normalized)].slice(0, 6);
+    try { localStorage.setItem(RECENT_ADDRESS_STORAGE_KEY, JSON.stringify(next)); } catch (_) {}
+    return next;
+};
+
 const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor = "text-slate-400", zIndex = 50, favorites = [] }) => {
     const [inputValue, setInputValue] = useState(value || '');
     const autocompleteRef = useRef(null);
+    const [recentAddresses, setRecentAddresses] = useState(() => readRecentAddresses());
     useEffect(() => { setInputValue(value || ''); }, [value]);
     const generalFavs = favorites.filter(f => !f.assignedTo || f.assignedTo === 'General');
     const options = { fields: ["address_components", "geometry", "formatted_address"] };
@@ -160,11 +181,22 @@ const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor
                 const lat = place.geometry.location.lat();
                 const lng = place.geometry.location.lng();
                 setInputValue(address);
+                setRecentAddresses(rememberRecentAddress({ address, lat, lng }));
                 onSelect({ address, lat, lng });
             }
         }
     };
-    const handleFavoriteClick = (fav) => { setInputValue(fav.address); onSelect({ address: fav.address, lat: parseFloat(fav.lat), lng: parseFloat(fav.lon || fav.lng) }); };
+    const handleFavoriteClick = (fav) => {
+        const place = { address: fav.address, lat: parseFloat(fav.lat), lng: parseFloat(fav.lon || fav.lng) };
+        setInputValue(fav.address);
+        setRecentAddresses(rememberRecentAddress(place));
+        onSelect(place);
+    };
+    const handleRecentClick = (place) => {
+        setInputValue(place.address);
+        setRecentAddresses(rememberRecentAddress(place));
+        onSelect({ address: place.address, lat: Number(place.lat), lng: Number(place.lng ?? place.lon) });
+    };
 
     return (
         <div className="relative" style={{ zIndex: zIndex }}> 
@@ -180,6 +212,24 @@ const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor
                     ) : ( <input type="text" placeholder="Cargando mapas..." className="w-full bg-slate-100 border border-slate-200 text-sm rounded-lg p-2.5 outline-none animate-pulse" disabled /> )}
                 </div>
             </div>
+            {recentAddresses.length > 0 && (
+                <div className="pl-0 sm:pl-[52px] mt-2">
+                    <p className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-1">Búsquedas recientes</p>
+                    <div className="flex gap-2 overflow-x-auto pb-1">
+                        {recentAddresses.map((place, index) => (
+                            <button
+                                type="button"
+                                key={`${place.address}-${index}`}
+                                onClick={() => handleRecentClick(place)}
+                                className="shrink-0 max-w-[220px] truncate text-[10px] bg-white text-slate-600 border border-slate-200 px-2.5 py-1.5 rounded-lg hover:border-orange-300 hover:bg-orange-50 transition shadow-sm"
+                                title={place.address}
+                            >
+                                🕘 {place.address}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+            )}
             {favorites && favorites.length > 0 && (
                 <div className="pl-[52px] mt-2 space-y-2">
                     {generalFavs.length > 0 && ( <div><p className="text-[9px] font-bold text-slate-400 uppercase mb-1 ml-1 mt-1">🏢 Sedes de la Empresa</p><div className="flex flex-wrap gap-2">{generalFavs.map((fav, i) => (<button type="button" key={i} onClick={() => handleFavoriteClick(fav)} className="text-[10px] bg-yellow-50 text-slate-600 border border-yellow-200 px-2 py-1 rounded-lg hover:bg-yellow-100 flex items-center gap-1 transition shadow-sm whitespace-nowrap"><Star className="w-3 h-3 fill-yellow-400 text-yellow-500"/> <span className="font-bold">{fav.alias}</span></button>))}</div></div> )}
@@ -1127,14 +1177,25 @@ export default function Planificacion() {
               if (mode === 'Ida' && hour >= 7) isShared = true;
               if (mode === 'Regreso' && hour < 20) isShared = true;
 
+              // ENTRADA se conserva intacta. En SALIDA el vehículo parte de la empresa,
+              // por lo que el primer descenso debe ser el pasajero más cercano a la sede
+              // y después avanzar progresivamente hacia los más lejanos.
+              const orderedEmployees = mode === 'Regreso'
+                  ? [...currentGrp].sort((a, b) => {
+                      const distA = Math.pow(parseFloat(a.lat) - ofiCoords.lat, 2) + Math.pow(parseFloat(a.lon || a.lng) - ofiCoords.lng, 2);
+                      const distB = Math.pow(parseFloat(b.lat) - ofiCoords.lat, 2) + Math.pow(parseFloat(b.lon || b.lng) - ofiCoords.lng, 2);
+                      return distA - distB;
+                  })
+                  : currentGrp;
+
               newGroups.push({
                   id: `group_${groupIdx++}`,
-                  employees: currentGrp,
+                  employees: orderedEmployees,
                   timeKey: tKey, 
                   driverId: '',
                   driverName: '',
                   sharedMeetingPoint: { active: false, address: '', lat: null, lng: null },
-                  sharedMeetingPoints: isShared ? [{ id: `meeting_${groupIdx}_1`, active: true, address: '', lat: null, lng: null, passengerNames: currentGrp.map(emp => emp.assignedTo) }] : [],
+                  sharedMeetingPoints: isShared ? [{ id: `meeting_${groupIdx}_1`, active: true, address: '', lat: null, lng: null, passengerNames: orderedEmployees.map(emp => emp.assignedTo) }] : [],
                   routeGeometry: [],
                   routeSegments: [],
                   totalDistanceKm: null,
@@ -1767,24 +1828,24 @@ export default function Planificacion() {
   if (!isLoaded) return <div className="flex h-full items-center justify-center"><Loader2 className="animate-spin w-8 h-8 text-slate-800"/></div>;
 
   return (
-    <div className="flex-1 p-6 bg-slate-50 h-full flex flex-col overflow-hidden relative">
-      <div className="flex justify-between items-center mb-6 shrink-0">
+    <div className="flex-1 p-3 sm:p-4 md:p-6 bg-slate-50 h-full flex flex-col overflow-y-auto xl:overflow-hidden relative">
+      <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center gap-4 mb-5 md:mb-6 shrink-0">
           <div>
               <h2 className="text-2xl font-bold text-slate-800">Planificador de Rutas</h2>
               <p className="text-slate-500 text-sm">
                   {hasPlanFilters ? `${filteredPlanRoutes.length} de ${activePlanRoutes.length}` : activePlanRoutes.length} viajes pendientes o activos
               </p>
           </div>
-          <div className="flex gap-3 flex-wrap justify-end">
+          <div className="grid grid-cols-1 sm:flex gap-2 sm:gap-3 flex-wrap sm:justify-end w-full lg:w-auto">
               <TripLogixExcelImporter />
               <button onClick={openCarpoolModal} className="bg-orange-100 text-orange-700 border border-orange-200 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-orange-200 transition"><Network className="w-4 h-4" /> Optimizar Grupos de Personal</button>
               <button onClick={() => { setViewRoute(null); setEditingPlannedRouteId(null); setWalkUpMode(false); setShowModal(true); }} className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg hover:bg-slate-900 transition"><Plus className="w-4 h-4" /> Nueva Ruta Manual</button>
           </div>
       </div>
 
-      <div className="flex-1 flex gap-6 overflow-hidden">
+      <div className="flex-1 flex flex-col xl:flex-row gap-4 xl:gap-6 overflow-visible xl:overflow-hidden min-h-0">
           {/* LISTA DE RUTAS MANUALES */}
-          <div className="w-1/3 flex flex-col gap-4 overflow-y-auto pr-2 pb-4 scrollbar-thin">
+          <div className="w-full xl:w-1/3 flex flex-col gap-4 overflow-visible xl:overflow-y-auto xl:pr-2 pb-4 scrollbar-thin shrink-0">
               <div className="sticky top-0 z-20 bg-white/95 backdrop-blur border border-slate-200 rounded-2xl p-3 shadow-sm space-y-3">
                   <div className="relative">
                       <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
@@ -1893,7 +1954,7 @@ export default function Planificacion() {
               ))}
           </div>
 
-          <div className="flex-1 bg-slate-200 rounded-xl border border-slate-300 relative overflow-hidden flex items-center justify-center shadow-inner">
+          <div className="flex-none xl:flex-1 h-[42vh] min-h-[300px] xl:h-auto bg-slate-200 rounded-xl border border-slate-300 relative overflow-hidden flex items-center justify-center shadow-inner">
              <GoogleMap mapContainerStyle={containerStyle} center={mapCenter} zoom={12} onLoad={handleMapLoad} options={{ streetViewControl: false, mapTypeControl: false }}>
                  {routeToDisplay.length > 0 && (
                      <>
@@ -1931,16 +1992,16 @@ export default function Planificacion() {
 
       {/* --- MODAL 2: CARPOOLING INTELIGENTE (WIZARD ETAPAS) --- */}
       {showCarpoolModal && (
-          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
-              <div className="bg-white w-full max-w-[95vw] h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+          <div className="fixed inset-0 z-[9999] flex items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm animate-[fadeIn_0.2s_ease-out]">
+              <div className="bg-white w-full max-w-[95vw] h-[100dvh] sm:h-[92vh] rounded-none sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
                   <div className="px-6 py-4 border-b border-orange-300 flex justify-between items-center bg-slate-900 text-white shrink-0">
                       <div><h3 className="text-lg font-bold flex items-center gap-2"><Network className="w-5 h-5 text-orange-500"/> Optimizador Logístico por Turnos</h3></div>
                       <button onClick={() => setShowCarpoolModal(false)}><X className="w-6 h-6 text-slate-400 hover:text-white transition" /></button>
                   </div>
                   
-                  <div className="flex-1 flex overflow-hidden">
+                  <div className="flex-1 flex flex-col xl:flex-row overflow-y-auto xl:overflow-hidden min-h-0">
                       {/* COLUMNA 1: CONFIGURACIÓN MAESTRA (SIEMPRE VISIBLE) */}
-                      <div className="w-1/4 bg-slate-50 border-r border-slate-200 p-6 overflow-y-auto min-w-[280px]">
+                      <div className="w-full xl:w-1/4 bg-slate-50 border-b xl:border-b-0 xl:border-r border-slate-200 p-4 sm:p-6 overflow-visible xl:overflow-y-auto min-w-0 xl:min-w-[280px] shrink-0">
                           <div className="space-y-5">
                               <div>
                                   <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1.5 mb-2"><Building2 className="w-4 h-4"/> Empresa Corporativa</label>
@@ -1972,11 +2033,11 @@ export default function Planificacion() {
                       </div>
 
                       {/* AREA PRINCIPAL: CAMBIA SEGÚN LA ETAPA */}
-                      <div className="flex-1 flex overflow-hidden">
+                      <div className="flex-1 flex flex-col xl:flex-row overflow-visible xl:overflow-hidden min-h-0">
                           
                           {/* === ETAPA 1: FILTRO Y AJUSTE DE ASISTENCIA === */}
                           {carpoolStep === 1 && (
-                              <div className="flex-1 bg-slate-100 p-8 overflow-y-auto animate-[fadeIn_0.3s_ease-out]">
+                              <div className="flex-1 bg-slate-100 p-4 sm:p-6 xl:p-8 overflow-visible xl:overflow-y-auto animate-[fadeIn_0.3s_ease-out]">
                                   <div className="max-w-3xl mx-auto">
                                       <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mb-6">
                                           <h2 className="text-xl font-black text-slate-800 flex items-center gap-2 mb-2"><Users className="w-6 h-6 text-orange-500"/> Confirmación de Asistencia y Horarios</h2>
@@ -2086,7 +2147,7 @@ export default function Planificacion() {
                           {/* === ETAPA 2: CUADRILLAS Y MAPA REAL === */}
                           {carpoolStep === 2 && (
                               <>
-                                  <div className="w-[45%] bg-slate-100 p-6 overflow-y-auto border-r border-slate-200 shadow-inner animate-[slideIn_0.3s_ease-out]">
+                                  <div className="w-full xl:w-[45%] bg-slate-100 p-3 sm:p-6 overflow-visible xl:overflow-y-auto border-b xl:border-b-0 xl:border-r border-slate-200 shadow-inner animate-[slideIn_0.3s_ease-out]">
                                       <div className="flex justify-between items-center bg-white p-3 rounded-xl border border-slate-200 shadow-sm sticky top-0 z-10 mb-6">
                                           <div className="flex items-center gap-3">
                                               <button onClick={() => setCarpoolStep(1)} className="text-slate-400 hover:text-orange-500 transition"><ChevronLeft className="w-5 h-5"/></button>
@@ -2110,25 +2171,20 @@ export default function Planificacion() {
                                               
                                               return (
                                               <div key={grupo.id} className={`bg-white rounded-2xl shadow-sm border overflow-hidden transition-all ${isPreviewing ? 'border-orange-500 ring-2 ring-orange-500/20' : 'border-slate-200'}`}>
-                                                  <div className="bg-slate-800 text-white px-4 py-3 flex justify-between items-center">
+                                                  <div className="bg-slate-800 text-white px-3 sm:px-4 py-3 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
                                                       <div className="flex items-center gap-2">
                                                           <div className="w-3 h-3 rounded-full" style={{ backgroundColor: groupColor }}></div>
                                                           <h4 className="font-black text-sm">Vehículo {idx + 1}</h4>
                                                           
-                                                          {/* --- MOSTRAR HORA DE RECOLECCIÓN O SALIDA --- */}
-                                                          {globalCarpool.mode === 'Ida' && grupo.totalDurationMins != null ? (
+                                                          {/* --- ETIQUETA COHERENTE CON EL MODO DE PLANIFICACIÓN --- */}
+                                                          {globalCarpool.mode === 'Ida' ? (
                                                               <span
                                                                   className="ml-2 text-[10px] bg-slate-700 px-2 py-1 rounded font-bold border border-slate-600 text-green-400"
-                                                                  title={`Entrada oficial ${grupo.timeKey}. Llegada objetivo: ${buildCarpoolTimePlan({
-                                                                      timeKey: grupo.timeKey,
-                                                                      totalDurationMins: grupo.totalDurationMins,
-                                                                      routeSegments: grupo.routeSegments || [],
-                                                                      mode: 'Ida',
-                                                                      passengerCount: grupo.employees.length,
-                                                                      isShared: getGroupMeetingPoints(grupo).length > 0
-                                                                  }).targetFinalArrivalTime}. Incluye 10 min de antelación final y 5 min por pasajero.`}
+                                                                  title={grupo.totalDurationMins != null
+                                                                      ? `Entrada oficial ${grupo.timeKey}. Recogida estimada ${getCalculatedStartTime(grupo.timeKey, grupo.totalDurationMins, 'Ida', grupo.employees.length)}.`
+                                                                      : `Entrada oficial ${grupo.timeKey}`}
                                                               >
-                                                                  <Clock className="w-3 h-3 inline mr-1"/>RECOGER: {getCalculatedStartTime(grupo.timeKey, grupo.totalDurationMins, 'Ida', grupo.employees.length)}
+                                                                  <Clock className="w-3 h-3 inline mr-1"/>ENTRADA: {grupo.timeKey}
                                                               </span>
                                                           ) : (
                                                               <span className="ml-2 text-[10px] bg-slate-600 px-2 py-1 rounded font-bold border border-slate-500">
@@ -2295,7 +2351,7 @@ export default function Planificacion() {
                                       </div>
                                   </div>
 
-                                  <div className="flex-1 bg-slate-300 relative">
+                                  <div className="flex-none xl:flex-1 h-[45vh] min-h-[320px] xl:h-auto bg-slate-300 relative">
                                       {fetchingRealRoutes && ( <div className="absolute top-4 right-4 bg-slate-900/80 text-white px-4 py-2 rounded-full text-xs font-bold flex items-center gap-2 z-20 backdrop-blur"><Loader2 className="animate-spin w-4 h-4"/> Trazando Rutas Reales...</div> )}
                                       {!isLoaded ? ( <div className="h-full flex items-center justify-center text-slate-500 font-bold"><Loader2 className="animate-spin mr-2"/> Cargando Mapas...</div> ) : (
                                           <GoogleMap mapContainerStyle={containerStyle} center={localMapCenter} zoom={11} onLoad={handlePreviewMapLoad} options={{ streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy" }}>
@@ -2344,7 +2400,7 @@ export default function Planificacion() {
                       </div>
                   </div>
 
-                  <div className="p-4 border-t border-slate-100 bg-white flex justify-end gap-3 shrink-0 shadow-[0_-10px_15px_rgba(0,0,0,0.05)] z-10">
+                  <div className="p-3 sm:p-4 border-t border-slate-100 bg-white flex flex-wrap justify-end gap-2 sm:gap-3 shrink-0 shadow-[0_-10px_15px_rgba(0,0,0,0.05)] z-10">
                       <button onClick={() => setShowCarpoolModal(false)} className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition">Cancelar</button>
                       {carpoolStep === 2 && (
                           <button onClick={handleConfirmAndDispatch} className="px-8 py-2.5 text-sm font-black text-white bg-orange-500 hover:bg-orange-600 rounded-lg shadow-xl shadow-orange-500/30 transition flex items-center gap-2"><Wand2 className="w-4 h-4"/> Confirmar y Despachar</button>
@@ -2356,14 +2412,14 @@ export default function Planificacion() {
 
       {/* --- MODAL 3: NUEVA RUTA MANUAL (SE MANTIENE INTACTO) --- */}
       {showModal && (
-        <div className="fixed inset-0 z-[9990] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-            <div className="bg-white w-full max-w-6xl h-[95vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+        <div className="fixed inset-0 z-[9990] flex items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm">
+            <div className="bg-white w-full max-w-6xl h-[100dvh] sm:h-[95vh] rounded-none sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
                 <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50 shrink-0">
                     <div><h3 className="text-lg font-bold text-slate-800">{editingPlannedRouteId ? 'Modificar Ruta Planeada' : walkUpMode ? 'Servicio Ocasional / Centro de Acopio' : 'Planificar Ruta de Personal'}</h3></div>
                     <button onClick={resetManualRouteForm}><X className="w-6 h-6 text-slate-400 hover:text-red-500 transition" /></button>
                 </div>
-                <div className="flex-1 flex overflow-hidden">
-                    <div className="w-[45%] p-6 overflow-y-auto border-r border-slate-100 bg-white z-10 shadow-[5px_0_15px_-5px_rgba(0,0,0,0.1)] relative scrollbar-thin">
+                <div className="flex-1 flex flex-col xl:flex-row overflow-y-auto xl:overflow-hidden min-h-0">
+                    <div className="w-full xl:w-[45%] p-4 sm:p-6 overflow-visible xl:overflow-y-auto border-b xl:border-b-0 xl:border-r border-slate-100 bg-white z-10 shadow-[5px_0_15px_-5px_rgba(0,0,0,0.1)] relative scrollbar-thin shrink-0">
                         <div className="space-y-6">
                             <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                                 <div className="flex items-center justify-between gap-3 mb-3">

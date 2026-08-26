@@ -301,6 +301,7 @@ const getLastRouteUpdateMs = (route) => getTimestampMs(
 );
 
 const getRouteAuditSortMs = (route) => (
+    (route?.status === 'Cancelado' ? getTimestampMs(getCancellationTimestamp(route)) : null) ||
     getTimestampMs(route?.actualEndTimestamp) ||
     getTimestampMs(route?.finishedAt) ||
     getTimestampMs(route?.completedAt) ||
@@ -476,6 +477,40 @@ const isDispatcherNotificationUnread = (route) => {
     return alertMs === 0 ? !route?.dispatcherNotificationReadAt : alertMs > readMs;
 };
 
+const getCancellationReason = (route) => String(
+    route?.cancellation?.reasonText ||
+    route?.cancellationReason ||
+    route?.cancelReason ||
+    route?.cancellation?.reason ||
+    route?.cancellationDetail ||
+    'Sin motivo'
+).trim();
+
+const getCancellationTimestamp = (route) => (
+    route?.cancelledAt ||
+    route?.canceledAt ||
+    route?.cancellation?.timestamp ||
+    route?.lastUpdate ||
+    route?.updatedAt ||
+    route?.createdDate
+);
+
+const getCancellationActor = (route) => String(
+    route?.cancelledByDriverName ||
+    route?.cancellation?.driverName ||
+    route?.cancellationBy ||
+    route?.canceledBy ||
+    route?.cancelledBy ||
+    'Conductor'
+).trim();
+
+const isDispatcherCancellationUnread = (route) => {
+    if (route?.status !== 'Cancelado') return false;
+    const cancelMs = getTimestampMs(getCancellationTimestamp(route)) || 0;
+    const readMs = getTimestampMs(route?.dispatcherCancellationReadAt) || 0;
+    return cancelMs === 0 ? !route?.dispatcherCancellationReadAt : cancelMs > readMs;
+};
+
 const getDistance = (p1, p2) => {
     if (!p1 || !p2 || !p1.lat || !p2.lat) return Infinity;
     const R = 6371; 
@@ -578,6 +613,7 @@ function App() {
   const selectedRouteListenerRef = useRef(null);
   const programmaticCameraRef = useRef(true);
   const previousIncomingChatRef = useRef(new Map());
+  const previousRouteStatusRef = useRef(new Map());
   const [localMapCenter, setLocalMapCenter] = useState(() => getCountryDefaultCenter(getCountryFromTimezone()));
   const [manualMapInteraction, setManualMapInteraction] = useState(false);
 
@@ -590,6 +626,7 @@ function App() {
   const [selectedRoute, setSelectedRoute] = useState(null);
   const [activeAlertsCount, setActiveAlertsCount] = useState(0);
   const [unreadChatRouteIds, setUnreadChatRouteIds] = useState([]);
+  const [unreadCancellationRouteIds, setUnreadCancellationRouteIds] = useState([]);
   const [showNotifications, setShowNotifications] = useState(false);
   const [evidencePreview, setEvidencePreview] = useState(null);
   const [selectedDriverId, setSelectedDriverId] = useState(null);
@@ -678,6 +715,13 @@ function App() {
                 setUnreadChatRouteIds(prev => prev.includes(route.id) ? prev : [...prev, route.id]);
             }
             previousIncomingChatRef.current.set(route.id, lastKey);
+
+            const previousStatus = previousRouteStatusRef.current.get(route.id);
+            if (previousStatus && previousStatus !== 'Cancelado' && route.status === 'Cancelado') {
+                playControlRoomAlert('Viaje cancelado por conductor');
+                setUnreadCancellationRouteIds(prev => prev.includes(route.id) ? prev : [...prev, route.id]);
+            }
+            previousRouteStatusRef.current.set(route.id, route.status || '');
         });
         setLiveRoutes(routesArr);
         setActiveAlertsCount(routesArr.filter(isDispatcherNotificationUnread).length);
@@ -698,8 +742,9 @@ function App() {
 
   useEffect(() => {
       const proximityIds = liveRoutes.filter(isDispatcherNotificationUnread).map(route => route.id);
-      setActiveAlertsCount(new Set([...proximityIds, ...unreadChatRouteIds]).size);
-  }, [liveRoutes, unreadChatRouteIds]);
+      const cancellationIds = liveRoutes.filter(isDispatcherCancellationUnread).map(route => route.id);
+      setActiveAlertsCount(new Set([...proximityIds, ...cancellationIds, ...unreadChatRouteIds, ...unreadCancellationRouteIds]).size);
+  }, [liveRoutes, unreadChatRouteIds, unreadCancellationRouteIds]);
 
   useEffect(() => {
       const interval = setInterval(() => setClockTick(Date.now()), 5000);
@@ -1093,6 +1138,7 @@ function App() {
       if (/^\d{4}-\d{2}-\d{2}/.test(explicitDate)) return explicitDate.slice(0, 10);
 
       const timestamp = getTimestampMs(
+          (ruta?.status === 'Cancelado' ? getCancellationTimestamp(ruta) : null) ||
           ruta?.actualStartTimestamp ||
           ruta?.actualEndTimestamp ||
           ruta?.finishedAt ||
@@ -1169,14 +1215,14 @@ function App() {
           : selectedUpdateAgeSeconds > 30
               ? 'delayed'
               : 'live';
-  const activeNotificationRoutes = liveRoutes.filter(route => isDispatcherNotificationUnread(route) || unreadChatRouteIds.includes(route.id));
+  const activeNotificationRoutes = liveRoutes.filter(route => isDispatcherNotificationUnread(route) || isDispatcherCancellationUnread(route) || unreadChatRouteIds.includes(route.id) || unreadCancellationRouteIds.includes(route.id));
   const selectedOnlineDriver = onlineDrivers.find(driver => driver.id === selectedDriverId) || null;
 
   if (!currentUser) return <Login onLogin={handleDispatcherLogin} />;
 
   return (
-    <div className="flex h-[100dvh] bg-slate-50 font-sans overflow-hidden">
-      <aside className="w-20 xl:w-64 bg-slate-900 text-slate-300 flex flex-col shrink-0 transition-all duration-300">
+    <div className="flex flex-col md:flex-row h-[100dvh] bg-slate-50 font-sans overflow-hidden">
+      <aside className="hidden md:flex w-20 xl:w-64 bg-slate-900 text-slate-300 flex-col shrink-0 transition-all duration-300">
         <div className="h-16 flex items-center justify-center px-3 xl:px-6 border-b border-slate-800 bg-slate-950">
            <img src="/logo.png" alt="TripLogix" className="h-8 w-auto mr-2" />
            <span className="hidden xl:inline text-white font-black text-lg uppercase tracking-wider">Trip<span className="text-orange-500">Logix</span></span>
@@ -1193,8 +1239,8 @@ function App() {
         </div>
       </aside>
 
-      <main className="flex-1 flex flex-col min-w-0 relative">
-        <header className="h-16 bg-white border-b border-slate-200 flex items-center justify-between px-4 md:px-6 xl:px-8 shadow-sm z-10 shrink-0">
+      <main className="flex-1 flex flex-col min-w-0 relative pb-16 md:pb-0">
+        <header className="h-14 md:h-16 bg-white border-b border-slate-200 flex items-center justify-between px-3 sm:px-4 md:px-6 xl:px-8 shadow-sm z-10 shrink-0">
           <h1 className="text-base md:text-xl font-black text-slate-800 tracking-tight">{activeTab === 'monitoreo' && 'Torre de Control'}{activeTab === 'planificacion' && 'Planificación de Rutas'}{activeTab === 'clientes' && 'Cartera de Clientes'}{activeTab === 'conductores' && 'Directorio de Conductores'}{activeTab === 'reportes' && 'Historial y Reportes'}</h1>
           <div className="flex items-center gap-6">
               <button type="button" onClick={() => setShowNotifications(value => !value)} className="relative cursor-pointer p-2 rounded-xl hover:bg-slate-100 transition" aria-label="Ver notificaciones">
@@ -1203,7 +1249,7 @@ function App() {
               </button>
               <div className="flex items-center gap-3 cursor-pointer hover:bg-slate-50 p-2 rounded-xl transition border border-transparent hover:border-slate-200">
                   <div className="w-9 h-9 rounded-xl bg-orange-100 flex items-center justify-center text-orange-600 font-black text-xs border border-orange-200">{currentUser.name.substring(0, 2).toUpperCase()}</div>
-                  <div className="leading-tight">
+                  <div className="hidden sm:block leading-tight">
                       <p className="text-slate-800 font-bold text-sm">{currentUser.name}</p>
                       <p className="text-[10px] text-green-500 font-bold uppercase tracking-widest">● En Línea</p>
                   </div>
@@ -1216,7 +1262,7 @@ function App() {
                 <div className="flex items-center justify-between px-2 py-2 border-b border-slate-100">
                     <div>
                         <p className="text-[10px] font-black uppercase tracking-widest text-orange-500">Notificaciones activas</p>
-                        <p className="text-xs font-bold text-slate-500 mt-1">Alertas de llegada que requieren atención.</p>
+                        <p className="text-xs font-bold text-slate-500 mt-1">Llegadas, mensajes y cancelaciones que requieren atención.</p>
                     </div>
                     <button type="button" onClick={() => setShowNotifications(false)} className="p-2 rounded-lg hover:bg-slate-100 text-slate-400"><X className="w-4 h-4"/></button>
                 </div>
@@ -1228,14 +1274,20 @@ function App() {
                             <button key={route.id} type="button" onClick={async () => {
                                 const readAt = new Date().toISOString();
                                 const hasUnreadChat = unreadChatRouteIds.includes(route.id);
+                                const hasUnreadCancellation = isDispatcherCancellationUnread(route) || unreadCancellationRouteIds.includes(route.id);
                                 try {
-                                    if (isDispatcherNotificationUnread(route)) {
-                                        await updateDoc(doc(db, 'rutas', route.id), { dispatcherNotificationReadAt: readAt });
+                                    const readUpdates = {};
+                                    if (isDispatcherNotificationUnread(route)) readUpdates.dispatcherNotificationReadAt = readAt;
+                                    if (hasUnreadCancellation) readUpdates.dispatcherCancellationReadAt = readAt;
+                                    if (Object.keys(readUpdates).length > 0) {
+                                        await updateDoc(doc(db, 'rutas', route.id), readUpdates);
                                     }
                                 } catch (error) {
                                     console.warn('No se pudo marcar la alerta como leída:', error);
                                 }
                                 setUnreadChatRouteIds(prev => prev.filter(id => id !== route.id));
+                                setUnreadCancellationRouteIds(prev => prev.filter(id => id !== route.id));
+                                if (hasUnreadCancellation || route.status === 'Cancelado') setViewHistory(true);
                                 setActiveTab('monitoreo');
                                 setSelectedDriverId(route.driverId || null);
                                 setSelectedRoute({ ...route, dispatcherNotificationReadAt: readAt });
@@ -1243,10 +1295,10 @@ function App() {
                                 setManualMapInteraction(false);
                                 setFollowSelectedRoute(true);
                                 setShowNotifications(false);
-                            }} className="w-full text-left p-3 rounded-xl border border-orange-100 bg-orange-50 hover:bg-orange-100 transition">
-                                <p className="text-[10px] font-black uppercase text-orange-600">{unreadChatRouteIds.includes(route.id) ? 'Nuevo mensaje' : (route.proximityAlert?.passenger || 'Conductor próximo')}</p>
+                            }} className={`w-full text-left p-3 rounded-xl border transition ${(isDispatcherCancellationUnread(route) || unreadCancellationRouteIds.includes(route.id)) ? 'border-red-200 bg-red-50 hover:bg-red-100' : 'border-orange-100 bg-orange-50 hover:bg-orange-100'}`}>
+                                <p className={`text-[10px] font-black uppercase ${(isDispatcherCancellationUnread(route) || unreadCancellationRouteIds.includes(route.id)) ? 'text-red-600' : 'text-orange-600'}`}>{(isDispatcherCancellationUnread(route) || unreadCancellationRouteIds.includes(route.id)) ? 'Viaje cancelado' : unreadChatRouteIds.includes(route.id) ? 'Nuevo mensaje' : (route.proximityAlert?.passenger || 'Conductor próximo')}</p>
                                 <p className="text-xs font-bold text-slate-800 mt-1">{route.driver || 'Conductor'} · {route.client || 'Servicio'}</p>
-                                <p className="text-[10px] font-bold text-slate-500 mt-1">{unreadChatRouteIds.includes(route.id) ? 'Toca para abrir el monitor/chat' : `Llegada estimada: ${route.proximityAlert?.etaMins ?? '--'} min`}</p>
+                                <p className="text-[10px] font-bold text-slate-500 mt-1">{(isDispatcherCancellationUnread(route) || unreadCancellationRouteIds.includes(route.id)) ? `Motivo: ${getCancellationReason(route)} · ${getCancellationActor(route)}` : unreadChatRouteIds.includes(route.id) ? 'Toca para abrir el monitor/chat' : `Llegada estimada: ${route.proximityAlert?.etaMins ?? '--'} min`}</p>
                             </button>
                         ))}
                     </div>
@@ -1255,9 +1307,9 @@ function App() {
         )}
 
         {activeTab === 'monitoreo' && (
-            <div className="flex-1 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_24rem] overflow-y-auto xl:overflow-hidden p-3 md:p-4 xl:p-6 gap-4 xl:gap-6 animate-[fadeIn_0.3s_ease-out]">
+            <div className="flex-1 grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_24rem] overflow-y-auto xl:overflow-hidden p-2 sm:p-3 md:p-4 xl:p-6 gap-3 sm:gap-4 xl:gap-6 animate-[fadeIn_0.3s_ease-out]">
                 {/* MAPA GOOGLE */}
-                <div className={mapExpanded ? "fixed inset-0 z-[2400] bg-slate-200 overflow-hidden" : "relative h-[48vh] min-h-[360px] xl:h-auto xl:min-h-0 bg-slate-200 rounded-3xl shadow-sm overflow-hidden border border-slate-200"}>
+                <div className={mapExpanded ? "fixed inset-0 z-[2400] bg-slate-200 overflow-hidden" : "relative h-[42vh] min-h-[300px] sm:h-[48vh] sm:min-h-[360px] xl:h-auto xl:min-h-0 bg-slate-200 rounded-2xl sm:rounded-3xl shadow-sm overflow-hidden border border-slate-200"}>
                     {isLoaded ? (
                         <GoogleMap 
                             mapContainerStyle={containerStyle} 
@@ -1577,7 +1629,7 @@ function App() {
                                         {ruta.status !== 'En Ruta' && !['Finalizado', 'Completado', 'Cancelado'].includes(ruta.status) && (<button onClick={(e) => { e.stopPropagation(); handleStartTrip(ruta.id); }} className="flex-1 bg-slate-800 hover:bg-slate-900 text-white py-2.5 rounded-xl text-[10px] uppercase tracking-widest font-black flex items-center justify-center gap-2 transition shadow-sm"><Play className="w-3 h-3 fill-current" /> INICIAR</button>)}
                                         {ruta.status === 'En Ruta' && (<button onClick={(e) => { e.stopPropagation(); handleEndTrip(ruta.id); }} className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2.5 rounded-xl text-[10px] uppercase tracking-widest font-black flex items-center justify-center gap-2 transition shadow-sm animate-pulse shadow-red-500/20"><CheckSquare className="w-3 h-3" /> FINALIZAR</button>)}
                                         {['Finalizado', 'Completado'].includes(ruta.status) && <div className="w-full text-center text-[10px] tracking-widest font-black text-green-600 py-2.5 bg-green-50 rounded-xl border border-green-100 uppercase">✅ FINALIZADO</div>}
-                                        {ruta.status === 'Cancelado' && <div className="w-full text-center text-[10px] tracking-widest font-black text-red-600 py-2.5 bg-red-50 rounded-xl border border-red-100 uppercase">✕ CANCELADO · {ruta.cancelReason || 'Sin motivo'}</div>}
+                                        {ruta.status === 'Cancelado' && <div className="w-full text-center text-[10px] tracking-widest font-black text-red-600 py-2.5 bg-red-50 rounded-xl border border-red-100 uppercase">✕ CANCELADO · {getCancellationReason(ruta)} · {getCancellationActor(ruta)}</div>}
                                     </div>
                                 </div>
                             );
@@ -1592,6 +1644,26 @@ function App() {
         {activeTab === 'conductores' && <SectionErrorBoundary><Conductores /></SectionErrorBoundary>}
         {activeTab === 'reportes' && <SectionErrorBoundary><Historial /></SectionErrorBoundary>}
       </main>
+
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-[2100] grid grid-cols-5 bg-slate-950 border-t border-slate-800 pb-[max(0.35rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.28)]">
+          {[
+              ['monitoreo', Monitor, 'Monitor'],
+              ['planificacion', MapIcon, 'Planear'],
+              ['clientes', Briefcase, 'Clientes'],
+              ['conductores', Users, 'Choferes'],
+              ['reportes', FileText, 'Reportes']
+          ].map(([tab, Icon, label]) => (
+              <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  className={`min-w-0 px-1 py-2 flex flex-col items-center justify-center gap-1 text-[9px] font-black ${activeTab === tab ? 'text-orange-400 bg-slate-900' : 'text-slate-400'}`}
+              >
+                  <Icon className="w-4 h-4"/>
+                  <span className="truncate w-full text-center">{label}</span>
+              </button>
+          ))}
+      </nav>
 
       {/* MODAL CHAT Y EVIDENCIAS */}
       {chatModalRoute && (

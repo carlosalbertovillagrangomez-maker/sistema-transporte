@@ -39,7 +39,35 @@ const getTimestampMs = (value) => {
     }
 };
 
+const getCancellationReason = (route) => String(
+    route?.cancellation?.reasonText ||
+    route?.cancellationReason ||
+    route?.cancelReason ||
+    route?.cancellation?.reason ||
+    route?.cancellationDetail ||
+    'Sin motivo'
+).trim();
+
+const getCancellationTimestamp = (route) => (
+    route?.cancelledAt ||
+    route?.canceledAt ||
+    route?.cancellation?.timestamp ||
+    route?.lastUpdate ||
+    route?.updatedAt ||
+    route?.createdDate
+);
+
+const getCancellationActor = (route) => String(
+    route?.cancelledByDriverName ||
+    route?.cancellation?.driverName ||
+    route?.cancellationBy ||
+    route?.canceledBy ||
+    route?.cancelledBy ||
+    'Conductor'
+).trim();
+
 const getRouteAuditTimestamp = (route) => (
+    (route?.status === 'Cancelado' ? getTimestampMs(getCancellationTimestamp(route)) : null) ||
     getTimestampMs(route?.actualEndTimestamp) ||
     getTimestampMs(route?.finishedAt) ||
     getTimestampMs(route?.completedAt) ||
@@ -57,6 +85,7 @@ const getDateKey = (value) => {
 
 const getSafeDate = (route) => {
     const value =
+        (route?.status === 'Cancelado' ? getCancellationTimestamp(route) : null) ||
         route?.actualEndTimestamp ||
         route?.finishedAt ||
         route?.completedAt ||
@@ -367,11 +396,11 @@ export default function Historial() {
     if (serviceTab === 'Programados') result = result.filter(route => route.serviceType === 'Programado');
 
     if (filterDateStart) result = result.filter(route => getDateKey(
-        route.actualEndTimestamp || route.finishedAt || route.completedAt || route.finalDate || route.scheduledDate || route.createdDate
+        (route.status === 'Cancelado' ? getCancellationTimestamp(route) : null) || route.actualEndTimestamp || route.finishedAt || route.completedAt || route.finalDate || route.scheduledDate || route.createdDate
     ) >= filterDateStart);
 
     if (filterDateEnd) result = result.filter(route => getDateKey(
-        route.actualEndTimestamp || route.finishedAt || route.completedAt || route.finalDate || route.scheduledDate || route.createdDate
+        (route.status === 'Cancelado' ? getCancellationTimestamp(route) : null) || route.actualEndTimestamp || route.finishedAt || route.completedAt || route.finalDate || route.scheduledDate || route.createdDate
     ) <= filterDateEnd);
 
     if (filterDriver) result = result.filter(route => route.driver === filterDriver);
@@ -387,6 +416,8 @@ export default function Historial() {
         route.scheduledDate,
         getSafeDate(route),
         route.id,
+        route.status === 'Cancelado' ? getCancellationReason(route) : '',
+        route.status === 'Cancelado' ? getCancellationActor(route) : '',
         ...(Array.isArray(route.waypoints) ? route.waypoints : [])
       ].filter(Boolean).join(' ').toLowerCase().includes(normalizedSearch));
     }
@@ -722,8 +753,13 @@ export default function Historial() {
                                 </div>
                             </div>
                         ) : (
-                            <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-center">
-                                <p className="font-black text-red-600">VIAJE CANCELADO</p>
+                            <div className="bg-red-50 border border-red-200 rounded-xl p-4">
+                                <p className="font-black text-red-600 text-center">VIAJE CANCELADO</p>
+                                <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                                    <div className="bg-white/80 border border-red-100 rounded-lg p-3"><p className="text-[9px] font-black uppercase text-red-400">Motivo</p><p className="font-bold text-slate-700 mt-1">{getCancellationReason(selectedRoute)}</p></div>
+                                    <div className="bg-white/80 border border-red-100 rounded-lg p-3"><p className="text-[9px] font-black uppercase text-red-400">Cancelado por</p><p className="font-bold text-slate-700 mt-1">{getCancellationActor(selectedRoute)}</p></div>
+                                    <div className="bg-white/80 border border-red-100 rounded-lg p-3"><p className="text-[9px] font-black uppercase text-red-400">Fecha / hora</p><p className="font-bold text-slate-700 mt-1">{getCancellationTimestamp(selectedRoute) ? new Date(getTimestampMs(getCancellationTimestamp(selectedRoute))).toLocaleString('es-MX') : 'Sin registro'}</p></div>
+                                </div>
                             </div>
                         )}
 

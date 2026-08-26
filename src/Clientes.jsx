@@ -560,13 +560,13 @@ export default function Clientes() {
   if (!isLoaded) return <div className="flex items-center justify-center h-full text-slate-400">Cargando módulos...</div>;
 
   return (
-    <div className="flex-1 p-8 bg-slate-50 overflow-y-auto h-full relative">
-      <div className="flex justify-between items-center mb-6">
+    <div className="flex-1 p-4 md:p-6 xl:p-8 bg-slate-50 overflow-y-auto h-full relative">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
         <div>
             <h2 className="text-2xl font-bold text-slate-800">Cartera de Clientes</h2>
             <p className="text-slate-500">{clients.length} registrados en Nube</p>
         </div>
-        <div className="flex flex-wrap gap-2 justify-end">
+        <div className="flex flex-wrap gap-2 justify-start md:justify-end w-full md:w-auto">
             <button onClick={() => { setShowBulkModal(true); setBulkRows([]); setBulkResult(null); }} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-emerald-700 transition shadow-lg">
                 <Upload className="w-4 h-4" /> Carga masiva
             </button>
@@ -578,7 +578,7 @@ export default function Clientes() {
 
       {/* FILTROS */}
       <div className="flex flex-col xl:flex-row gap-3 mb-6">
-          <div className="flex gap-2 bg-white p-2 rounded-lg border border-slate-200 w-fit shadow-sm">
+          <div className="flex gap-2 bg-white p-2 rounded-lg border border-slate-200 w-full xl:w-fit shadow-sm overflow-x-auto">
               <button onClick={() => setFilterType('Todos')} className={`px-4 py-1.5 rounded-md text-xs font-bold transition ${filterType === 'Todos' ? 'bg-slate-800 text-white' : 'text-slate-500 hover:bg-slate-50'}`}>Todos</button>
               <button onClick={() => setFilterType('Empresa')} className={`px-4 py-1.5 rounded-md text-xs font-bold transition flex items-center gap-2 ${filterType === 'Empresa' ? 'bg-blue-100 text-blue-700' : 'text-slate-500 hover:bg-slate-50'}`}><Building className="w-3 h-3"/> Empresas</button>
               <button onClick={() => setFilterType('Individual')} className={`px-4 py-1.5 rounded-md text-xs font-bold transition flex items-center gap-2 ${filterType === 'Individual' ? 'bg-purple-100 text-purple-700' : 'text-slate-500 hover:bg-slate-50'}`}><User className="w-3 h-3"/> Individuales</button>
@@ -605,7 +605,7 @@ export default function Clientes() {
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center ${client.type === 'Empresa' ? 'bg-blue-100 text-blue-600' : 'bg-purple-100 text-purple-600'}`}>
                           {client.type === 'Empresa' ? <Building className="w-5 h-5"/> : <User className="w-5 h-5"/>}
                       </div>
-                      <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition">
+                      <div className="flex gap-2 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition">
                           <button onClick={() => handleEdit(client)} className="text-slate-400 hover:text-blue-600 bg-slate-50 p-1.5 rounded hover:bg-blue-50 transition"><Pencil className="w-4 h-4"/></button>
                           <button onClick={() => handleDelete(client.id)} className="text-slate-400 hover:text-red-500 bg-slate-50 p-1.5 rounded hover:bg-red-50 transition"><Trash2 className="w-4 h-4"/></button>
                       </div>
@@ -635,16 +635,16 @@ export default function Clientes() {
 
       {/* MODAL */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-            <div className="bg-white w-full max-w-5xl h-[85vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm">
+            <div className="bg-white w-full max-w-5xl h-[100dvh] sm:h-[85vh] rounded-none sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
                 <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
                     <h3 className="font-bold text-slate-800">{editingId ? 'Editar Cliente' : 'Alta de Cliente'}</h3>
                     <button onClick={() => setShowModal(false)}><X className="w-5 h-5 text-slate-400 hover:text-red-500"/></button>
                 </div>
                 
-                <div className="flex-1 flex overflow-hidden">
+                <div className="flex-1 flex flex-col xl:flex-row overflow-y-auto xl:overflow-hidden min-h-0">
                     {/* COLUMNA IZQUIERDA */}
-                    <div className="w-1/3 p-6 border-r border-slate-100 overflow-y-auto bg-slate-50/50">
+                    <div className="w-full xl:w-1/3 p-4 sm:p-6 border-b xl:border-b-0 xl:border-r border-slate-100 overflow-visible xl:overflow-y-auto bg-slate-50/50 shrink-0">
                         <h4 className="text-xs font-bold text-slate-500 uppercase mb-4">Información General</h4>
                         <div className="space-y-4">
                             <div>
@@ -661,7 +661,7 @@ export default function Clientes() {
                     </div>
 
                     {/* COLUMNA DERECHA */}
-                    <div className="flex-1 p-6 overflow-y-auto">
+                    <div className="flex-1 p-4 sm:p-6 overflow-visible xl:overflow-y-auto">
                         {/* SECCIÓN USUARIOS (SOLO EMPRESAS) */}
                         {newClient.type === 'Empresa' && (
                             <div className="mb-8">
@@ -775,8 +775,8 @@ export default function Clientes() {
 
 
       {showBulkModal && (
-          <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
-              <div className="bg-white w-full max-w-5xl h-[88vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden">
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-0 sm:p-4 bg-slate-900/60 backdrop-blur-sm">
+              <div className="bg-white w-full max-w-5xl h-[100dvh] sm:h-[88vh] rounded-none sm:rounded-2xl shadow-2xl flex flex-col overflow-hidden">
                   <div className="px-6 py-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                       <div>
                           <h3 className="font-black text-slate-800 flex items-center gap-2"><FileSpreadsheet className="w-5 h-5 text-emerald-600"/> Carga masiva de usuarios</h3>

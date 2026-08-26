@@ -117,21 +117,21 @@ export default function Conductores() {
   const filteredList = driversList.filter(d => filterStatus === 'Todos' || d.status === filterStatus);
 
   return (
-    <div className="flex-1 p-8 bg-slate-50 overflow-y-auto h-full relative font-sans">
+    <div className="flex-1 p-4 md:p-6 xl:p-8 bg-slate-50 overflow-y-auto h-full relative font-sans">
       
       {/* HEADER */}
-      <div className="flex justify-between items-center mb-8">
+      <div className="flex flex-col xl:flex-row xl:justify-between xl:items-center gap-4 mb-6 md:mb-8">
         <div>
             <h2 className="text-3xl font-black text-slate-800 tracking-tight">Control de Operadores</h2>
             <p className="text-slate-500 text-sm">Base de datos centralizada de flota</p>
         </div>
-        <div className="flex gap-3">
-            <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm">
+        <div className="flex flex-col sm:flex-row gap-3 w-full xl:w-auto">
+            <div className="flex bg-white p-1 rounded-xl border border-slate-200 shadow-sm overflow-x-auto max-w-full">
                 {['Todos', 'Pendiente', 'Aprobado', 'Suspendido'].map((s) => (
                     <button key={s} onClick={() => setFilterStatus(s)} className={`px-4 py-1.5 rounded-lg text-xs font-bold transition ${filterStatus === s ? 'bg-slate-800 text-white shadow-md' : 'text-slate-400 hover:text-slate-600'}`}>{s}</button>
                 ))}
             </div>
-            <button onClick={() => { setIsEditing(false); resetForm(); setShowNewDriverModal(true); }} className="bg-orange-500 text-white px-5 py-2 rounded-xl text-sm font-bold hover:bg-orange-600 transition flex items-center gap-2 shadow-lg shadow-orange-500/20">
+            <button onClick={() => { setIsEditing(false); resetForm(); setShowNewDriverModal(true); }} className="w-full sm:w-auto justify-center bg-orange-500 text-white px-5 py-2 rounded-xl text-sm font-bold hover:bg-orange-600 transition flex items-center gap-2 shadow-lg shadow-orange-500/20">
                 <Plus className="w-4 h-4" /> Nuevo Conductor
             </button>
         </div>
@@ -166,7 +166,7 @@ export default function Conductores() {
                     </div>
                     <div className="flex flex-col items-end mt-8">
                         <span className={`text-[10px] px-2 py-1 rounded-lg font-black uppercase tracking-widest mb-2 ${driver.status === 'Aprobado' ? 'bg-green-100 text-green-700' : driver.status === 'Suspendido' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'}`}>{driver.status}</span>
-                        <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition">
+                        <div className="flex gap-1 opacity-100 md:opacity-0 md:group-hover:opacity-100 transition">
                             <button onClick={() => setViewDoc(driver.identificacion)} className="p-1.5 bg-slate-50 text-slate-400 hover:text-blue-600 rounded-lg border border-slate-100"><Eye className="w-4 h-4"/></button>
                             <button onClick={() => handleDelete(driver.id)} className="p-1.5 bg-slate-50 text-slate-400 hover:text-red-600 rounded-lg border border-slate-100"><Trash2 className="w-4 h-4"/></button>
                         </div>
@@ -201,8 +201,8 @@ export default function Conductores() {
 
       {/* ================= MODAL DE REGISTRO COMPLETO Y EDICIÃ“N ================= */}
       {(showNewDriverModal || isEditing) && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-md">
-            <div className="bg-white w-full max-w-2xl rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-0 sm:p-4 bg-slate-900/80 backdrop-blur-md">
+            <div className="bg-white w-full max-w-2xl rounded-none sm:rounded-3xl shadow-2xl overflow-hidden flex flex-col h-[100dvh] sm:h-auto sm:max-h-[90vh]">
                 
                 <div className="px-8 py-6 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
                     <div>
@@ -212,13 +212,13 @@ export default function Conductores() {
                     <button onClick={() => { setShowNewDriverModal(false); setIsEditing(false); }} className="bg-white p-2 rounded-full border border-slate-200 text-slate-400 hover:text-red-500 transition shadow-sm"><X className="w-5 h-5" /></button>
                 </div>
                 
-                <div className="p-8 overflow-y-auto">
+                <div className="p-4 sm:p-8 overflow-y-auto">
                     {/* ACCESO */}
                     <div className="mb-8">
                         <h4 className="text-[10px] font-black text-blue-600 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
                             <Lock className="w-4 h-4" /> Credenciales de AplicaciÃ³n
                         </h4>
-                        <div className="grid grid-cols-2 gap-4 bg-blue-50/50 p-5 rounded-2xl border border-blue-100">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 bg-blue-50/50 p-5 rounded-2xl border border-blue-100">
                             <div>
                                 <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5 ml-1">Email *</label>
                                 <input type="email" className="w-full bg-white border border-blue-200 rounded-xl p-3 text-sm outline-none focus:ring-2 focus:ring-blue-500" 
@@ -237,7 +237,7 @@ export default function Conductores() {
                         <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
                             <User className="w-4 h-4" /> InformaciÃ³n Personal
                         </h4>
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div className="col-span-2">
                                 <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5 ml-1">Nombre Completo *</label>
                                 <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" 
@@ -266,7 +266,7 @@ export default function Conductores() {
                         <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
                             <Truck className="w-4 h-4" /> Unidad Asignada
                         </h4>
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div>
                                 <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5 ml-1">Modelo (Ej. Ford)</label>
                                 <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm"
@@ -290,7 +290,7 @@ export default function Conductores() {
                         <h4 className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
                             <FileText className="w-4 h-4" /> DocumentaciÃ³n y Salud
                         </h4>
-                        <div className="grid grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             <div>
                                 <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5 ml-1">No. Licencia</label>
                                 <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" 

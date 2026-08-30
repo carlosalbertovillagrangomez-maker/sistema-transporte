@@ -1,13 +1,308 @@
 <!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>app-transporte</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0f172a" />
+  <meta name="description" content="TripLogix centraliza la planeación, despacho, seguimiento y control de transporte corporativo en una sola plataforma." />
+  <title>TripLogix | Control inteligente de transporte corporativo</title>
+  <style>
+    :root {
+      --ink: #0f172a;
+      --ink-soft: #182235;
+      --panel: #111c2f;
+      --muted: #94a3b8;
+      --line: rgba(148, 163, 184, .18);
+      --white: #f8fafc;
+      --orange: #f97316;
+      --orange-2: #fb923c;
+      --green: #22c55e;
+      --shadow: 0 24px 80px rgba(2, 6, 23, .32);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--white);
+      background: radial-gradient(circle at 84% 12%, rgba(249, 115, 22, .14), transparent 28rem), radial-gradient(circle at 10% 48%, rgba(56, 189, 248, .07), transparent 30rem), var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.5;
+      overflow-x: hidden;
+    }
+    a { color: inherit; text-decoration: none; }
+    button, a { -webkit-tap-highlight-color: transparent; }
+    img { max-width: 100%; display: block; }
+    .container { width: min(1180px, calc(100% - 40px)); margin: 0 auto; }
+    .eyebrow { display: inline-flex; align-items: center; gap: 8px; color: #fed7aa; font-size: 12px; font-weight: 900; letter-spacing: .16em; text-transform: uppercase; }
+    .eyebrow::before { content: ""; width: 28px; height: 2px; border-radius: 99px; background: var(--orange); }
+    header { position: sticky; top: 0; z-index: 50; border-bottom: 1px solid rgba(255,255,255,.06); background: rgba(15, 23, 42, .76); backdrop-filter: blur(18px); }
+    .nav { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+    .brand { display: inline-flex; align-items: center; gap: 12px; min-width: 180px; }
+    .brand img { width: 46px; height: 46px; object-fit: contain; }
+    .brand-name { font-size: 19px; font-weight: 950; letter-spacing: .12em; text-transform: uppercase; }
+    .brand-name span { color: var(--orange); }
+    .nav-links { display: flex; align-items: center; gap: 28px; color: #cbd5e1; font-size: 14px; font-weight: 700; }
+    .nav-links a:hover { color: white; }
+    .button { display: inline-flex; justify-content: center; align-items: center; gap: 9px; min-height: 48px; padding: 0 20px; border-radius: 14px; border: 1px solid transparent; font-size: 14px; font-weight: 900; transition: .2s ease; }
+    .button:hover { transform: translateY(-2px); }
+    .button-primary { background: linear-gradient(135deg, var(--orange), var(--orange-2)); box-shadow: 0 14px 34px rgba(249,115,22,.22); }
+    .button-secondary { border-color: rgba(255,255,255,.14); background: rgba(255,255,255,.05); }
+    .button-small { min-height: 42px; padding-inline: 16px; }
+    .hero { padding: 86px 0 70px; position: relative; }
+    .hero-grid { display: grid; grid-template-columns: 1.02fr .98fr; gap: 64px; align-items: center; }
+    h1 { margin: 20px 0 20px; font-size: clamp(46px, 6.6vw, 82px); line-height: .98; letter-spacing: -.055em; max-width: 760px; }
+    h1 span { color: var(--orange); }
+    .hero-copy > p { max-width: 650px; margin: 0; color: #b8c5d8; font-size: clamp(17px, 2vw, 20px); }
+    .hero-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+    .proof { display: flex; flex-wrap: wrap; gap: 22px; margin-top: 36px; color: #94a3b8; font-size: 13px; font-weight: 700; }
+    .proof span { display: inline-flex; align-items: center; gap: 8px; }
+    .proof i { width: 8px; height: 8px; background: var(--green); border-radius: 50%; box-shadow: 0 0 0 5px rgba(34,197,94,.09); }
+    .control-shell { position: relative; }
+    .glow { position: absolute; inset: 12% 0 auto 15%; height: 70%; filter: blur(65px); background: rgba(249,115,22,.14); border-radius: 50%; }
+    .control-card { position: relative; padding: 14px; border: 1px solid rgba(255,255,255,.1); border-radius: 30px; background: linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.025)); box-shadow: var(--shadow); }
+    .window { overflow: hidden; min-height: 520px; border-radius: 22px; border: 1px solid rgba(255,255,255,.08); background: #0b1322; }
+    .window-top { height: 56px; padding: 0 18px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line); }
+    .dots { display: flex; gap: 7px; }
+    .dots span { width: 8px; height: 8px; border-radius: 50%; background: #475569; }
+    .status { display: flex; align-items: center; gap: 8px; color: #a7f3d0; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: .09em; }
+    .status::before { content:""; width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 14px var(--green); }
+    .dashboard { display: grid; grid-template-columns: 106px 1fr; min-height: 464px; }
+    .sidebar { padding: 18px 12px; border-right: 1px solid var(--line); background: rgba(2,6,23,.26); }
+    .side-logo { width: 52px; height: 52px; margin: 0 auto 22px; object-fit: contain; }
+    .side-pill { height: 36px; margin: 9px 0; border-radius: 10px; background: rgba(148,163,184,.08); }
+    .side-pill.active { background: linear-gradient(90deg, rgba(249,115,22,.28), rgba(249,115,22,.07)); border: 1px solid rgba(249,115,22,.18); }
+    .map-area { position: relative; padding: 24px; background-image: linear-gradient(rgba(148,163,184,.055) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,.055) 1px, transparent 1px); background-size: 30px 30px; }
+    .map-area::before, .map-area::after { content: ""; position: absolute; border: 2px solid rgba(249,115,22,.48); border-left-color: transparent; border-bottom-color: transparent; border-radius: 50%; transform: rotate(14deg); }
+    .map-area::before { width: 290px; height: 180px; top: 126px; left: 58px; }
+    .map-area::after { width: 180px; height: 240px; top: 78px; right: 36px; transform: rotate(108deg); opacity: .65; }
+    .kpis { position: relative; z-index: 2; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+    .kpi { padding: 13px; border: 1px solid var(--line); border-radius: 14px; background: rgba(15,23,42,.87); }
+    .kpi small { display:block; color:#7f8da3; font-size:9px; font-weight:900; text-transform:uppercase; letter-spacing:.08em; }
+    .kpi strong { display:block; margin-top:4px; font-size:19px; }
+    .trip-card { position: absolute; left: 28px; right: 28px; bottom: 24px; z-index: 3; display: grid; grid-template-columns: auto 1fr auto; gap: 12px; align-items: center; padding: 15px; border-radius: 16px; border: 1px solid rgba(255,255,255,.1); background: rgba(15,23,42,.94); box-shadow: 0 14px 40px rgba(2,6,23,.35); }
+    .car-icon { width: 42px; height: 42px; border-radius: 12px; display:grid; place-items:center; background: rgba(249,115,22,.15); color:#fdba74; font-weight:900; }
+    .trip-card b { display:block; font-size:12px; }
+    .trip-card small { color:#7f8da3; font-size:10px; }
+    .eta { color:#fed7aa; font-size:12px; font-weight:950; }
+    .logo-band { padding: 14px 0 64px; }
+    .logo-band-inner { padding: 22px 26px; display:flex; align-items:center; justify-content:center; gap:18px; color:#94a3b8; border-top:1px solid var(--line); border-bottom:1px solid var(--line); font-size:13px; font-weight:800; text-align:center; }
+    .logo-band-inner strong { color:#e2e8f0; }
+    section { padding: 84px 0; }
+    .section-head { max-width: 760px; margin-bottom: 42px; }
+    .section-head h2 { margin: 14px 0 14px; font-size: clamp(34px, 4vw, 54px); letter-spacing: -.04em; line-height: 1.05; }
+    .section-head p { margin: 0; color: #94a3b8; font-size: 17px; }
+    .features { display:grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .feature { min-height: 260px; padding: 28px; border:1px solid var(--line); border-radius:22px; background: linear-gradient(180deg, rgba(255,255,255,.055), rgba(255,255,255,.022)); transition: .22s ease; }
+    .feature:hover { transform: translateY(-5px); border-color: rgba(249,115,22,.3); }
+    .feature-icon { width:48px; height:48px; border-radius:14px; display:grid; place-items:center; background:rgba(249,115,22,.12); color:#fdba74; font-size:20px; font-weight:950; }
+    .feature h3 { margin: 22px 0 10px; font-size:20px; }
+    .feature p { margin:0; color:#93a4ba; font-size:14px; }
+    .split { display:grid; grid-template-columns: .95fr 1.05fr; gap:64px; align-items:center; }
+    .steps { display:grid; gap:14px; }
+    .step { display:grid; grid-template-columns: 48px 1fr; gap:15px; padding:20px; border-radius:18px; border:1px solid var(--line); background:rgba(255,255,255,.025); }
+    .step-number { width:48px; height:48px; display:grid; place-items:center; border-radius:14px; color:#fed7aa; background:rgba(249,115,22,.11); font-weight:950; }
+    .step h3 { margin:1px 0 5px; font-size:16px; }
+    .step p { margin:0; color:#93a4ba; font-size:13px; }
+    .ops-card { padding: 30px; border-radius:28px; border:1px solid var(--line); background: linear-gradient(145deg,#121f33,#0a1220); box-shadow:var(--shadow); }
+    .ops-head { display:flex; justify-content:space-between; gap:20px; align-items:flex-start; }
+    .ops-head img { width:74px; height:74px; object-fit:contain; }
+    .ops-head h3 { font-size:28px; margin:0 0 8px; }
+    .ops-head p { color:#94a3b8; margin:0; font-size:14px; }
+    .ops-grid { margin-top:26px; display:grid; grid-template-columns:repeat(2,1fr); gap:12px; }
+    .ops-item { padding:16px; border-radius:15px; background:rgba(255,255,255,.035); border:1px solid var(--line); }
+    .ops-item strong { display:block; font-size:13px; }
+    .ops-item span { display:block; color:#77879e; font-size:11px; margin-top:4px; }
+    .cta { padding-top: 54px; }
+    .cta-box { position:relative; overflow:hidden; padding: clamp(34px, 6vw, 64px); border:1px solid rgba(249,115,22,.22); border-radius:32px; background: radial-gradient(circle at 88% 35%, rgba(249,115,22,.25), transparent 18rem), linear-gradient(130deg,#17253a,#0b1322 70%); box-shadow:var(--shadow); }
+    .cta-box::after { content:""; position:absolute; width:340px; height:340px; border:1px solid rgba(255,255,255,.05); border-radius:50%; right:-90px; top:-130px; }
+    .cta-content { position:relative; z-index:2; max-width:760px; }
+    .cta-box h2 { margin: 14px 0 14px; font-size:clamp(36px,5vw,62px); letter-spacing:-.045em; line-height:1.02; }
+    .cta-box p { color:#b6c3d5; font-size:17px; max-width:650px; }
+    footer { padding: 46px 0 54px; color:#718096; }
+    .footer-grid { display:flex; justify-content:space-between; align-items:center; gap:24px; border-top:1px solid var(--line); padding-top:28px; font-size:12px; }
+    .footer-brand { display:flex; align-items:center; gap:9px; color:#cbd5e1; font-weight:900; text-transform:uppercase; letter-spacing:.1em; }
+    .footer-brand img { width:34px; height:34px; object-fit:contain; }
+    @media (max-width: 960px) {
+      .nav-links { display:none; }
+      .hero { padding-top:64px; }
+      .hero-grid, .split { grid-template-columns:1fr; gap:42px; }
+      .hero-copy { text-align:center; }
+      .hero-copy .eyebrow { justify-content:center; }
+      .hero-copy > p { margin-inline:auto; }
+      .hero-actions, .proof { justify-content:center; }
+      .control-shell { width:min(650px,100%); margin:auto; }
+      .features { grid-template-columns:repeat(2,1fr); }
+    }
+    @media (max-width: 640px) {
+      .container { width:min(100% - 24px,1180px); }
+      header .button-small { display:none; }
+      .brand-name { font-size:16px; }
+      .brand img { width:40px; height:40px; }
+      .hero { padding:48px 0 48px; }
+      h1 { font-size:46px; }
+      .hero-actions .button { width:100%; }
+      .control-card { padding:8px; border-radius:22px; }
+      .window { min-height:430px; border-radius:17px; }
+      .dashboard { grid-template-columns:72px 1fr; min-height:374px; }
+      .sidebar { padding:14px 8px; }
+      .side-logo { width:42px; height:42px; }
+      .side-pill { height:29px; }
+      .map-area { padding:16px 12px; }
+      .kpis { grid-template-columns:1fr; width:120px; }
+      .kpi:nth-child(n+3) { display:none; }
+      .trip-card { left:12px; right:12px; bottom:12px; }
+      .map-area::before { width:180px; height:120px; left:28px; top:130px; }
+      .map-area::after { display:none; }
+      section { padding:62px 0; }
+      .features { grid-template-columns:1fr; }
+      .feature { min-height:auto; }
+      .ops-grid { grid-template-columns:1fr; }
+      .ops-head img { width:60px; height:60px; }
+      .footer-grid { flex-direction:column; align-items:flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container nav">
+      <a class="brand" href="#inicio" aria-label="TripLogix inicio">
+        <img src="/logo.png" alt="Logo original de TripLogix" />
+        <div class="brand-name">Trip<span>Logix</span></div>
+      </a>
+      <nav class="nav-links" aria-label="Navegación principal">
+        <a href="#plataforma">Plataforma</a>
+        <a href="#operacion">Operación</a>
+        <a href="#control">Control</a>
+      </nav>
+      <a class="button button-primary button-small" href="https://sistema-transporte-seven.vercel.app" target="_blank" rel="noreferrer">Acceso operativo ↗</a>
+    </div>
+  </header>
+  <main id="inicio">
+    <section class="hero">
+      <div class="container hero-grid">
+        <div class="hero-copy">
+          <span class="eyebrow">Torre de control para movilidad corporativa</span>
+          <h1>Tu operación de transporte, <span>bajo control.</span></h1>
+          <p>TripLogix centraliza planeación, despacho, monitoreo y trazabilidad para que cada viaje, conductor y ruta pueda gestionarse desde una sola operación.</p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="#plataforma">Conocer la plataforma →</a>
+            <a class="button button-secondary" href="#operacion">Ver cómo funciona</a>
+          </div>
+          <div class="proof" aria-label="Beneficios clave">
+            <span><i></i> Seguimiento operativo</span>
+            <span><i></i> Planeación centralizada</span>
+            <span><i></i> Historial y auditoría</span>
+          </div>
+        </div>
+        <div class="control-shell" aria-label="Vista conceptual de la torre de control TripLogix">
+          <div class="glow"></div>
+          <div class="control-card">
+            <div class="window">
+              <div class="window-top">
+                <div class="dots"><span></span><span></span><span></span></div>
+                <div class="status">Operación activa</div>
+              </div>
+              <div class="dashboard">
+                <aside class="sidebar" aria-hidden="true">
+                  <img class="side-logo" src="/logo.png" alt="" />
+                  <div class="side-pill active"></div>
+                  <div class="side-pill"></div>
+                  <div class="side-pill"></div>
+                  <div class="side-pill"></div>
+                </aside>
+                <div class="map-area">
+                  <div class="kpis">
+                    <div class="kpi"><small>Viajes</small><strong>24</strong></div>
+                    <div class="kpi"><small>En ruta</small><strong>11</strong></div>
+                    <div class="kpi"><small>Estado</small><strong>OK</strong></div>
+                  </div>
+                  <div class="trip-card">
+                    <div class="car-icon">TL</div>
+                    <div><b>Ruta corporativa · Unidad 07</b><small>Seguimiento y trazabilidad en operación</small></div>
+                    <div class="eta">EN RUTA</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <div class="logo-band">
+      <div class="container logo-band-inner"><strong>TripLogix</strong> conecta la planeación del despacho con lo que realmente ocurre durante el recorrido.</div>
+    </div>
+    <section id="plataforma">
+      <div class="container">
+        <div class="section-head">
+          <span class="eyebrow">Una sola operación</span>
+          <h2>De la planeación al historial, sin perder contexto.</h2>
+          <p>Una visión unificada para coordinar viajes, personal, conductores y rutas con información útil para la operación diaria.</p>
+        </div>
+        <div class="features">
+          <article class="feature"><div class="feature-icon">01</div><h3>Torre de despacho</h3><p>Concentra los viajes y el estado operativo para que el equipo pueda coordinar la jornada desde un único punto.</p></article>
+          <article class="feature"><div class="feature-icon">02</div><h3>Monitoreo de rutas</h3><p>Da seguimiento a recorridos y posiciones reportadas, conservando una referencia clara de la ruta planeada.</p></article>
+          <article class="feature"><div class="feature-icon">03</div><h3>Planeación y carpooling</h3><p>Organiza pasajeros, puntos de encuentro, horarios y agrupaciones para construir una operación más eficiente.</p></article>
+          <article class="feature"><div class="feature-icon">04</div><h3>Conductores y usuarios</h3><p>Administra la información necesaria para asignar servicios y mantener visibilidad sobre quienes participan en cada viaje.</p></article>
+          <article class="feature"><div class="feature-icon">05</div><h3>Historial y auditoría</h3><p>Consulta viajes anteriores, incidencias y trazabilidad operativa para entender qué ocurrió y cuándo ocurrió.</p></article>
+          <article class="feature"><div class="feature-icon">06</div><h3>Flujos operativos</h3><p>Facilita tareas del despacho mediante importación de planeaciones y acciones de comunicación integradas al flujo de trabajo.</p></article>
+        </div>
+      </div>
+    </section>
+    <section id="operacion">
+      <div class="container split">
+        <div>
+          <div class="section-head">
+            <span class="eyebrow">Operación conectada</span>
+            <h2>Menos pasos aislados. Más control de principio a fin.</h2>
+            <p>TripLogix ordena el flujo para que cada etapa conserve la información que necesita la siguiente.</p>
+          </div>
+          <div class="steps">
+            <div class="step"><div class="step-number">1</div><div><h3>Planifica</h3><p>Define servicios, pasajeros, horarios, puntos y rutas antes de iniciar la jornada.</p></div></div>
+            <div class="step"><div class="step-number">2</div><div><h3>Despacha</h3><p>Asigna conductores y organiza la salida con una visión central de la operación.</p></div></div>
+            <div class="step"><div class="step-number">3</div><div><h3>Monitorea</h3><p>Observa el avance del servicio y conserva la referencia del recorrido originalmente planeado.</p></div></div>
+            <div class="step"><div class="step-number">4</div><div><h3>Audita</h3><p>Revisa el historial y la trazabilidad disponible para mejorar decisiones futuras.</p></div></div>
+          </div>
+        </div>
+        <div class="ops-card" id="control">
+          <div class="ops-head">
+            <div><h3>Centro operativo</h3><p>Diseñado para coordinadores, despachadores y responsables de movilidad.</p></div>
+            <img src="/logo.png" alt="TripLogix" />
+          </div>
+          <div class="ops-grid">
+            <div class="ops-item"><strong>Planeación</strong><span>Servicios, horarios y pasajeros</span></div>
+            <div class="ops-item"><strong>Despacho</strong><span>Asignaciones y coordinación</span></div>
+            <div class="ops-item"><strong>Mapa operativo</strong><span>Seguimiento de recorridos</span></div>
+            <div class="ops-item"><strong>Carpooling</strong><span>Agrupación y puntos de encuentro</span></div>
+            <div class="ops-item"><strong>Historial</strong><span>Consulta de viajes anteriores</span></div>
+            <div class="ops-item"><strong>Auditoría</strong><span>Trazabilidad de la operación</span></div>
+            <div class="ops-item"><strong>Importación</strong><span>Planeaciones desde archivos</span></div>
+            <div class="ops-item"><strong>Comunicación</strong><span>Acciones operativas centralizadas</span></div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="cta">
+      <div class="container">
+        <div class="cta-box">
+          <div class="cta-content">
+            <span class="eyebrow">TripLogix</span>
+            <h2>Convierte cada viaje en una operación visible y coordinada.</h2>
+            <p>Una plataforma pensada para equipos que necesitan planear, despachar y dar seguimiento al transporte corporativo con mayor orden y trazabilidad.</p>
+            <div class="hero-actions">
+              <a class="button button-primary" href="https://sistema-transporte-seven.vercel.app" target="_blank" rel="noreferrer">Ir al portal operativo ↗</a>
+              <a class="button button-secondary" href="#inicio">Volver al inicio ↑</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <footer>
+    <div class="container footer-grid">
+      <div class="footer-brand"><img src="/logo.png" alt="" /> TripLogix</div>
+      <div>© <span id="year">2026</span> TripLogix · Plataforma de gestión de transporte corporativo</div>
+    </div>
+  </footer>
+  <script>document.getElementById('year').textContent = new Date().getFullYear();</script>
+</body>
 </html>

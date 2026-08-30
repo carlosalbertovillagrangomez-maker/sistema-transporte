@@ -8,6 +8,7 @@ import { db } from './firebase';
 import { collection, addDoc, onSnapshot, doc, query, orderBy, deleteDoc, updateDoc } from 'firebase/firestore';
 import TripLogixExcelImporter from './TripLogixExcelImporter';
 import TripLogixWhatsAppActions from './TripLogixWhatsAppActions';
+import TripLogixAIAssistant from './TripLogixAIAssistant';
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
 
@@ -1023,6 +1024,109 @@ export default function Planificacion() {
       } else { setEmployeeRoster([]); }
   };
 
+
+  const normalizeAiValue = (value = '') => String(value || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .trim()
+      .toLocaleLowerCase('es');
+
+  const geocodeAiAddress = async (address) => {
+      const clean = String(address || '').trim();
+      if (!clean || !isLoaded || !window.google?.maps?.Geocoder) return null;
+      const geocoder = new window.google.maps.Geocoder();
+      return new Promise(resolve => {
+          geocoder.geocode({ address: clean }, (results, status) => {
+              if (status !== 'OK' || !results?.[0]?.geometry?.location) return resolve(null);
+              const location = results[0].geometry.location;
+              resolve({
+                  address: results[0].formatted_address || clean,
+                  lat: location.lat(),
+                  lng: location.lng()
+              });
+          });
+      });
+  };
+
+  const applyAiScheduleToCarpool = async ({ clientName, date, mode, rows = [] }) => {
+      const clientObj = availableClients.find(client => normalizeAiValue(client?.name) === normalizeAiValue(clientName));
+      if (!clientObj) throw new Error('No se encontró la empresa seleccionada en TripLogix.');
+      if (!Array.isArray(rows) || rows.length === 0) throw new Error('La IA no devolvió personas para programar.');
+
+      const prepared = [];
+      const missing = [];
+      let geocoded = 0;
+      const seenNames = new Set();
+
+      for (const row of rows) {
+          const personName = String(row?.name || '').trim();
+          const normalizedName = normalizeAiValue(personName);
+          if (!normalizedName || seenNames.has(normalizedName)) continue;
+          seenNames.add(normalizedName);
+
+          const userData = (clientObj.users || []).find(user => normalizeAiValue(user?.name) === normalizedName) || {};
+          const savedLocation = (clientObj.locations || []).find(location => normalizeAiValue(location?.assignedTo) === normalizedName) || null;
+          const rawAddress = savedLocation?.address || row?.address || '';
+          let lat = Number(savedLocation?.lat);
+          let lng = Number(savedLocation?.lng ?? savedLocation?.lon);
+          let finalAddress = rawAddress;
+
+          if ((!Number.isFinite(lat) || !Number.isFinite(lng)) && rawAddress) {
+              const geocodedPoint = await geocodeAiAddress(rawAddress);
+              if (geocodedPoint) {
+                  lat = geocodedPoint.lat;
+                  lng = geocodedPoint.lng;
+                  finalAddress = geocodedPoint.address;
+                  geocoded += 1;
+              }
+          }
+
+          if (!Number.isFinite(lat) || !Number.isFinite(lng)) missing.push(personName);
+
+          const officialTime = String(row?.time || '').trim();
+          prepared.push({
+              ...(savedLocation || {}),
+              assignedTo: personName,
+              address: finalAddress,
+              lat: Number.isFinite(lat) ? lat : null,
+              lon: Number.isFinite(lng) ? lng : null,
+              lng: Number.isFinite(lng) ? lng : null,
+              phone: normalizeContactPhone(row?.phone, userData?.phone, userData?.telefono, userData?.whatsapp, savedLocation?.phone),
+              entrada: mode === 'Ida' ? (officialTime || userData?.entrada || '08:00') : (userData?.entrada || '08:00'),
+              salida: mode === 'Regreso' ? (officialTime || userData?.salida || '17:00') : (userData?.salida || '17:00'),
+              included: true,
+              aiReferenceTime: row?.referenceTime || '',
+              aiRoute: row?.route || '',
+              aiOrder: Number(row?.order) || 0,
+              aiDriver: row?.driver || ''
+          });
+      }
+
+      if (!prepared.length) throw new Error('No fue posible preparar ningún pasajero de la programación.');
+
+      setSelectedClientData(clientObj);
+      setNewRoute(prev => ({
+          ...prev,
+          client: clientObj.name,
+          requestUser: '',
+          serviceType: 'Programado',
+          scheduledDate: date || prev.scheduledDate
+      }));
+      setGlobalCarpool({ mode: mode === 'Regreso' ? 'Regreso' : 'Ida' });
+      setEmployeeRoster(prepared.sort(comparePeopleAZ));
+      setCarpoolGroups([]);
+      setRosterSearch('');
+      setPreviewGroupId('all');
+      setCarpoolStep(1);
+      setShowCarpoolModal(true);
+
+      if (missing.length > 0) {
+          setTimeout(() => alert('Gemini preparó ' + prepared.length + ' personas, pero ' + missing.length + ' no tienen coordenadas válidas: ' + missing.join(', ') + '. Revisa sus domicilios o usa puntos de encuentro antes de guardar.'), 150);
+      }
+
+      return { matched: prepared.length, geocoded, missing };
+  };
+
   const updateRosterItem = (originalIndex, field, value) => {
       setEmployeeRoster(prev => {
           const newRoster = [...prev];
@@ -1837,6 +1941,7 @@ export default function Planificacion() {
               </p>
           </div>
           <div className="grid grid-cols-1 sm:flex gap-2 sm:gap-3 flex-wrap sm:justify-end w-full lg:w-auto">
+              <TripLogixAIAssistant clients={availableClients} onApply={applyAiScheduleToCarpool} />
               <TripLogixExcelImporter />
               <button onClick={openCarpoolModal} className="bg-orange-100 text-orange-700 border border-orange-200 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-orange-200 transition"><Network className="w-4 h-4" /> Optimizar Grupos de Personal</button>
               <button onClick={() => { setViewRoute(null); setEditingPlannedRouteId(null); setWalkUpMode(false); setShowModal(true); }} className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg hover:bg-slate-900 transition"><Plus className="w-4 h-4" /> Nueva Ruta Manual</button>

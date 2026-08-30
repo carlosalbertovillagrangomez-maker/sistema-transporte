@@ -3,6 +3,23 @@ import { User, Lock, ArrowRight, Loader2 } from 'lucide-react';
 import { db } from './firebase';
 import { collection, query, where, getDocs } from 'firebase/firestore';
 
+const bytesToHex = (bytes) => Array.from(bytes).map(value => value.toString(16).padStart(2, '0')).join('');
+
+const sha256 = async (value) => {
+  const data = new TextEncoder().encode(value);
+  const hash = await crypto.subtle.digest('SHA-256', data);
+  return bytesToHex(new Uint8Array(hash));
+};
+
+const verifyPassword = async (userData, password) => {
+  if (userData?.passwordHash && userData?.passwordSalt) {
+    const candidate = await sha256(userData.passwordSalt + ':' + password);
+    return candidate === userData.passwordHash;
+  }
+  // Compatibilidad con administradores históricos mientras se migra su autenticación.
+  return userData?.password === password;
+};
+
 export default function Login({ onLogin }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -31,7 +48,8 @@ export default function Login({ onLogin }) {
 
       const userData = { id: snap.docs[0].id, ...snap.docs[0].data() };
 
-      if (userData.password !== password) {
+      const passwordOk = await verifyPassword(userData, password);
+      if (!passwordOk) {
         throw new Error('Contraseña incorrecta.');
       }
 

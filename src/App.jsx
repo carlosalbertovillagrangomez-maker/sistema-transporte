@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Truck, Monitor, Map as MapIcon, Users, FileText, Bell, AlertTriangle, X, Play, CheckSquare, Clock, Zap, Calendar, Edit, Save, History, Eye, Briefcase, Loader2, BellRing, MessageSquare, Send, Camera, RefreshCw, ShieldCheck, MapPin, LocateFixed, Route as RouteIcon, Timer, Gauge, CircleDot, Navigation2, Maximize2, Minimize2, Ban } from 'lucide-react';
+import { Truck, Monitor, Map as MapIcon, Users, FileText, Bell, AlertTriangle, X, Play, CheckSquare, Clock, Zap, Calendar, Edit, Save, History, Eye, Briefcase, Loader2, BellRing, MessageSquare, Send, Camera, RefreshCw, ShieldCheck, MapPin, LocateFixed, Route as RouteIcon, Timer, Gauge, CircleDot, Navigation2, Maximize2, Minimize2, Ban, KeyRound } from 'lucide-react';
 
 // GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline } from '@react-google-maps/api';
@@ -10,6 +10,8 @@ import Planificacion from './Planificacion';
 import Conductores from './Conductores';
 import Clientes from './Clientes';
 import Login from './Login';
+import AccesosEmpresas from './AccesosEmpresas';
+import CompanyMonitor from './CompanyMonitor';
 
 // FIREBASE
 import { db } from './firebase';
@@ -702,6 +704,10 @@ function App() {
 
   // 1. CARGAR RUTAS Y CONDUCTORES
   useEffect(() => {
+    // Las cuentas EmpresaMonitor usan un monitor independiente y nunca cargan
+    // el conjunto completo de rutas/conductores del despachador.
+    if (!currentUser || currentUser?.role === 'EmpresaMonitor') return undefined;
+
     const qRoutes = query(collection(db, "rutas"), orderBy("createdDate", "desc"));
     const unsubRoutes = onSnapshot(qRoutes, (snapshot) => {
         const routesArr = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -736,7 +742,7 @@ function App() {
     });
 
     return () => { unsubRoutes(); unsubDrivers(); };
-  }, []);
+  }, [currentUser?.id, currentUser?.role]);
 
 
 
@@ -1220,6 +1226,10 @@ function App() {
 
   if (!currentUser) return <Login onLogin={handleDispatcherLogin} />;
 
+  if (currentUser?.role === 'EmpresaMonitor') {
+      return <CompanyMonitor currentUser={currentUser} onLogout={handleDispatcherLogout} isLoaded={isLoaded} />;
+  }
+
   return (
     <div className="flex flex-col md:flex-row h-[100dvh] bg-slate-50 font-sans overflow-hidden">
       <aside className="hidden md:flex w-20 xl:w-64 bg-slate-900 text-slate-300 flex-col shrink-0 transition-all duration-300">
@@ -1233,6 +1243,7 @@ function App() {
           <button onClick={() => setActiveTab('clientes')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'clientes' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><Briefcase className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Clientes</span></button>
           <button onClick={() => setActiveTab('conductores')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'conductores' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><Users className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Conductores</span></button>
           <button onClick={() => setActiveTab('reportes')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'reportes' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><FileText className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Reportes</span></button>
+          <button onClick={() => setActiveTab('accesos')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'accesos' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><KeyRound className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Accesos Empresas</span></button>
         </nav>
         <div className="p-2 xl:p-4 border-t border-slate-800 bg-slate-950">
             <button onClick={handleDispatcherLogout} className="w-full flex items-center justify-center gap-2 text-xs font-bold text-slate-500 hover:text-red-400 transition py-3 rounded-xl hover:bg-red-500/10"><X className="w-4 h-4"/> <span className="hidden xl:inline">CERRAR SESIÓN</span></button>
@@ -1241,7 +1252,7 @@ function App() {
 
       <main className="flex-1 flex flex-col min-w-0 min-h-0 relative overflow-hidden pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
         <header className="h-14 md:h-16 bg-white border-b border-slate-200 flex items-center justify-between px-3 sm:px-4 md:px-6 xl:px-8 shadow-sm z-10 shrink-0">
-          <h1 className="text-base md:text-xl font-black text-slate-800 tracking-tight">{activeTab === 'monitoreo' && 'Torre de Control'}{activeTab === 'planificacion' && 'Planificación de Rutas'}{activeTab === 'clientes' && 'Cartera de Clientes'}{activeTab === 'conductores' && 'Directorio de Conductores'}{activeTab === 'reportes' && 'Historial y Reportes'}</h1>
+          <h1 className="text-base md:text-xl font-black text-slate-800 tracking-tight">{activeTab === 'monitoreo' && 'Torre de Control'}{activeTab === 'planificacion' && 'Planificación de Rutas'}{activeTab === 'clientes' && 'Cartera de Clientes'}{activeTab === 'conductores' && 'Directorio de Conductores'}{activeTab === 'reportes' && 'Historial y Reportes'}{activeTab === 'accesos' && 'Accesos Empresariales'}</h1>
           <div className="flex items-center gap-6">
               <button type="button" onClick={() => setShowNotifications(value => !value)} className="relative cursor-pointer p-2 rounded-xl hover:bg-slate-100 transition" aria-label="Ver notificaciones">
                   <Bell className="text-slate-400 hover:text-slate-800 w-6 h-6 transition" />
@@ -1643,15 +1654,17 @@ function App() {
         {activeTab === 'clientes' && <SectionErrorBoundary><Clientes /></SectionErrorBoundary>}
         {activeTab === 'conductores' && <SectionErrorBoundary><Conductores /></SectionErrorBoundary>}
         {activeTab === 'reportes' && <SectionErrorBoundary><Historial /></SectionErrorBoundary>}
+        {activeTab === 'accesos' && <SectionErrorBoundary><AccesosEmpresas currentUser={currentUser} /></SectionErrorBoundary>}
       </main>
 
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-[2100] grid grid-cols-5 bg-slate-950 border-t border-slate-800 pb-[max(0.35rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.28)]">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-[2100] grid grid-cols-6 bg-slate-950 border-t border-slate-800 pb-[max(0.35rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.28)]">
           {[
               ['monitoreo', Monitor, 'Monitor'],
               ['planificacion', MapIcon, 'Planear'],
               ['clientes', Briefcase, 'Clientes'],
               ['conductores', Users, 'Choferes'],
-              ['reportes', FileText, 'Reportes']
+              ['reportes', FileText, 'Reportes'],
+              ['accesos', KeyRound, 'Accesos']
           ].map(([tab, Icon, label]) => (
               <button
                   key={tab}

@@ -6,12 +6,6 @@ const GEMINI_KEY_STORAGE = 'triplogix_gemini_api_key';
 const GEMINI_MODEL_STORAGE = 'triplogix_gemini_model';
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
-const normalizeText = (value = '') => String(value || '')
-  .normalize('NFD')
-  .replace(/[\u0300-\u036f]/g, '')
-  .trim()
-  .toLocaleLowerCase('es');
-
 const cleanTime = (value = '') => {
   const raw = String(value || '').trim();
   const match = raw.match(/(\d{1,2})[:.]?(\d{2})/);
@@ -75,8 +69,13 @@ const responseSchema = {
   required: ['company', 'date', 'mode', 'summary', 'notes', 'rows']
 };
 
-const buildPrompt = (clientNames, userText) => `
+const buildPrompt = (clientNames, userText, operatorContext) => `
 Eres el asistente operativo de TripLogix. Tu trabajo es convertir una programación de transporte corporativo desordenada en datos listos para el módulo de carpooling.
+
+DATOS CONFIRMADOS POR EL OPERADOR (SON AUTORITATIVOS):
+- Empresa: ${operatorContext.company}
+- Fecha del servicio: ${operatorContext.date}
+- Tipo: ${operatorContext.mode === 'Regreso' ? 'SALIDA / Regreso' : 'ENTRADA / Ida'}
 
 FUENTES POSIBLES:
 - texto pegado por el operador;
@@ -85,18 +84,20 @@ FUENTES POSIBLES:
 - formatos con encabezados distintos, celdas combinadas o varias rutas.
 
 REGLAS CRÍTICAS:
-1. NO inventes personas, horarios, domicilios, teléfonos, empresa, conductor o fecha.
-2. Si algo no está en el archivo, devuelve cadena vacía y agrega una nota.
-3. ENTRADA equivale a mode = "Ida". SALIDA o REGRESO equivale a mode = "Regreso".
-4. Para ENTRADA/Ida, el campo time de cada persona debe ser la HORA OFICIAL DE ENTRADA/LLEGADA A LA EMPRESA, NO la hora de paso. Si existe HORA PASO, colócala en referenceTime.
-5. Para SALIDA/Regreso, time debe ser la HORA OFICIAL DE SALIDA DE LA EMPRESA. Si existe hora de paso/entrega, colócala en referenceTime.
-6. Si hay varias rutas, conserva el identificador en route y el orden original en order. TripLogix decidirá después cómo optimizar los vehículos.
-7. address debe ser el domicilio o punto de recogida/entrega más completo que aparezca en la fuente. No uses textos genéricos como "PROGRAMAR RUTA" como domicilio.
-8. phone debe contener solo el teléfono encontrado, sin inventarlo.
-9. date debe ser YYYY-MM-DD si existe una fecha inequívoca. Si no existe, déjalo vacío.
-10. Si detectas tanto ENTRADAS como SALIDAS mezcladas en una misma fuente, elige el bloque predominante y explica en notes que conviene analizar cada bloque por separado.
-11. company debe intentar coincidir con una de estas empresas registradas en TripLogix: ${clientNames.join(', ') || 'sin catálogo disponible'}.
-12. Devuelve únicamente JSON válido siguiendo el esquema solicitado.
+1. NO inventes personas, horarios, domicilios, teléfonos, conductor, ruta ni orden.
+2. EMPRESA, FECHA y TIPO ya fueron seleccionados manualmente por el operador. No los cambies ni intentes inferir otros valores. Devuelve exactamente company="${operatorContext.company}", date="${operatorContext.date}" y mode="${operatorContext.mode}".
+3. Si algo no está en el archivo, devuelve cadena vacía y agrega una nota.
+4. Para ENTRADA/Ida, time es la HORA OFICIAL DE ENTRADA/LLEGADA A LA EMPRESA. Si existe HORA PASO, colócala EXACTAMENTE en referenceTime, sin sumar ni restar minutos.
+5. Para SALIDA/Regreso, time es la HORA OFICIAL DE SALIDA DE LA EMPRESA. Si existe hora de paso/entrega, colócala EXACTAMENTE en referenceTime, sin modificarla.
+6. Si la fuente asigna una RUTA a cada pasajero, route es AUTORITATIVO: conserva exactamente la ruta de cada persona. Personas de rutas distintas jamás deben intercambiarse. Conserva también el orden original en order.
+7. Si la fuente asigna un CONDUCTOR, conserva el nombre exactamente en driver para cada pasajero/ruta. No lo omitas ni lo sustituyas.
+8. address debe ser el domicilio o punto de recogida/entrega más completo que aparezca en la fuente. No uses textos genéricos como "PROGRAMAR RUTA" como domicilio.
+9. phone debe contener solo el teléfono encontrado, sin inventarlo.
+10. Si detectas bloques o columnas que podrían confundirse, prioriza encabezados explícitos como RUTA, CONDUCTOR, HORA PASO, HORA ENTRADA, HORA SALIDA, DOMICILIO y PASAJERO.
+11. Si RUTA o CONDUCTOR aparecen una sola vez encabezando un bloque, por celdas combinadas o como dato común de varias filas, propaga ese valor a todas las personas de ese bloque. Eso es lectura estructural del archivo, no invención.
+12. Si existen varias rutas, devuelve todas las personas con su route y order originales. TripLogix respetará esos grupos en vez de reoptimizarlos.
+13. Catálogo de empresas disponible: ${clientNames.join(', ') || 'sin catálogo disponible'}.
+14. Devuelve únicamente JSON válido siguiendo el esquema solicitado.
 
 TEXTO ADICIONAL DEL OPERADOR:
 ${userText || '(sin texto adicional)'}
@@ -135,18 +136,11 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
     setModel(DEFAULT_MODEL);
   };
 
-  const findClientMatch = (company) => {
-    const target = normalizeText(company);
-    if (!target) return '';
-    const exact = clients.find(client => normalizeText(client?.name) === target);
-    if (exact) return exact.name;
-    const partial = clients.find(client => normalizeText(client?.name).includes(target) || target.includes(normalizeText(client?.name)));
-    return partial?.name || '';
-  };
-
   const analyze = async () => {
     const cleanKey = apiKey.trim();
     if (!cleanKey) return setError('Agrega tu API key de Gemini antes de analizar.');
+    if (!selectedCompany) return setError('Selecciona la empresa antes de analizar.');
+    if (!selectedDate) return setError('Selecciona la fecha del servicio antes de analizar.');
     if (!userText.trim() && !file) return setError('Pega texto o selecciona una foto/Excel.');
 
     setLoading(true);
@@ -155,7 +149,13 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
     setApplyResult(null);
 
     try {
-      const parts = [{ text: buildPrompt(clientNames, userText) }];
+      const parts = [{
+        text: buildPrompt(clientNames, userText, {
+          company: selectedCompany,
+          date: selectedDate,
+          mode: selectedMode
+        })
+      }];
 
       if (file) {
         const lowerName = file.name.toLowerCase();
@@ -219,18 +219,15 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
       if (!cleanRows.length) throw new Error('No se detectaron personas en la programación. Revisa la fuente o agrega contexto en texto.');
 
       const normalizedResult = {
-        company: String(parsed.company || '').trim(),
-        date: /^\d{4}-\d{2}-\d{2}$/.test(String(parsed.date || '')) ? String(parsed.date) : '',
-        mode: parsed.mode === 'Regreso' ? 'Regreso' : 'Ida',
+        company: selectedCompany,
+        date: selectedDate,
+        mode: selectedMode,
         summary: String(parsed.summary || '').trim(),
         notes: Array.isArray(parsed.notes) ? parsed.notes.map(item => String(item || '').trim()).filter(Boolean) : [],
         rows: cleanRows
       };
 
       setResult(normalizedResult);
-      setSelectedCompany(findClientMatch(normalizedResult.company));
-      setSelectedDate(normalizedResult.date);
-      setSelectedMode(normalizedResult.mode);
       localStorage.setItem(GEMINI_KEY_STORAGE, cleanKey);
       localStorage.setItem(GEMINI_MODEL_STORAGE, activeModel);
     } catch (analysisError) {
@@ -309,6 +306,30 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
                 <p className="mt-2 text-[10px] font-bold text-slate-500">La llave se guarda únicamente en este navegador/dispositivo mediante localStorage. No se escribe en Firebase ni en GitHub.</p>
               </div>
 
+              <div className="rounded-2xl border border-slate-200 bg-white p-4">
+                <div className="mb-3">
+                  <p className="text-[10px] font-black uppercase tracking-[0.18em] text-violet-600">Datos del servicio</p>
+                  <p className="text-xs font-bold text-slate-500 mt-1">Completa estos tres campos antes de analizar. Gemini los tomará como datos confirmados y no los cambiará.</p>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Empresa
+                    <select value={selectedCompany} onChange={event => { setSelectedCompany(event.target.value); setResult(null); }} className="mt-1 w-full rounded-xl border border-slate-200 bg-white p-2.5 text-xs font-bold text-slate-700 outline-none focus:border-violet-500">
+                      <option value="">Seleccionar empresa...</option>
+                      {clients.map(client => <option key={client.id || client.name} value={client.name}>{client.name}</option>)}
+                    </select>
+                  </label>
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Fecha del servicio
+                    <input type="date" value={selectedDate} onChange={event => { setSelectedDate(event.target.value); setResult(null); }} className="mt-1 w-full rounded-xl border border-slate-200 bg-white p-2.5 text-xs font-bold text-slate-700 outline-none focus:border-violet-500"/>
+                  </label>
+                  <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Entrada / Salida
+                    <select value={selectedMode} onChange={event => { setSelectedMode(event.target.value); setResult(null); }} className="mt-1 w-full rounded-xl border border-slate-200 bg-white p-2.5 text-xs font-bold text-slate-700 outline-none focus:border-violet-500">
+                      <option value="Ida">ENTRADA / Ida</option>
+                      <option value="Regreso">SALIDA / Regreso</option>
+                    </select>
+                  </label>
+                </div>
+              </div>
+
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
                   <div className="flex items-center gap-2 mb-3"><FileText className="w-4 h-4 text-slate-600"/><p className="font-black text-sm text-slate-800">Texto o instrucciones</p></div>
@@ -348,24 +369,6 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
                   <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
                     <div className="flex items-center gap-2"><CheckCircle2 className="w-5 h-5 text-emerald-600"/><p className="font-black text-emerald-800">Programación identificada</p></div>
                     {result.summary && <p className="text-xs text-emerald-900/70 font-medium mt-2">{result.summary}</p>}
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Empresa
-                      <select value={selectedCompany} onChange={event => setSelectedCompany(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-white p-2.5 text-xs font-bold text-slate-700">
-                        <option value="">Seleccionar empresa...</option>
-                        {clients.map(client => <option key={client.id || client.name} value={client.name}>{client.name}</option>)}
-                      </select>
-                    </label>
-                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Fecha del servicio
-                      <input type="date" value={selectedDate} onChange={event => setSelectedDate(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-white p-2.5 text-xs font-bold text-slate-700"/>
-                    </label>
-                    <label className="text-[10px] font-black uppercase tracking-wider text-slate-500">Tipo de programación
-                      <select value={selectedMode} onChange={event => setSelectedMode(event.target.value)} className="mt-1 w-full rounded-xl border border-slate-200 bg-white p-2.5 text-xs font-bold text-slate-700">
-                        <option value="Ida">ENTRADA / Ida</option>
-                        <option value="Regreso">SALIDA / Regreso</option>
-                      </select>
-                    </label>
                   </div>
 
                   {result.notes.length > 0 && (

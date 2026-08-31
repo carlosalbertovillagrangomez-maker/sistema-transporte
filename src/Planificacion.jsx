@@ -99,7 +99,8 @@ const buildCarpoolTimePlan = ({
     routeSegments = [],
     mode,
     passengerCount = 0,
-    isShared = false
+    isShared = false,
+    passengerBufferMins = PASSENGER_PICKUP_BUFFER_MINS
 }) => {
     if (!timeKey || totalDurationMins == null || mode !== 'Ida') {
         return {
@@ -114,6 +115,7 @@ const buildCarpoolTimePlan = ({
         };
     }
 
+    const effectivePassengerBufferMins = Math.max(0, safeMinutes(passengerBufferMins));
     const officialArrivalDate = parseTimeKeyToDate(timeKey);
     const targetFinalArrivalDate = addMinutesToDate(officialArrivalDate, -FINAL_DESTINATION_EARLY_MINS);
     const safeSegments = Array.isArray(routeSegments) ? routeSegments : [];
@@ -123,12 +125,12 @@ const buildCarpoolTimePlan = ({
     // Un único punto compartido: todos comparten horario de recogida.
     if (isShared && safeSegments.length <= 1) {
         cursor = addMinutesToDate(cursor, -safeMinutes(safeSegments[0]?.duration ?? totalDurationMins));
-        cursor = addMinutesToDate(cursor, -(Math.max(1, passengerCount) * PASSENGER_PICKUP_BUFFER_MINS));
+        cursor = addMinutesToDate(cursor, -(Math.max(1, passengerCount) * effectivePassengerBufferMins));
         pickupTimes.fill(formatHHMM(cursor));
     } else {
         for (let i = passengerCount - 1; i >= 0; i -= 1) {
             cursor = addMinutesToDate(cursor, -safeMinutes(safeSegments[i]?.duration));
-            cursor = addMinutesToDate(cursor, -PASSENGER_PICKUP_BUFFER_MINS);
+            cursor = addMinutesToDate(cursor, -effectivePassengerBufferMins);
             pickupTimes[i] = formatHHMM(cursor);
         }
     }
@@ -139,8 +141,8 @@ const buildCarpoolTimePlan = ({
         targetFinalArrivalTime: formatHHMM(targetFinalArrivalDate),
         estimatedFinalArrivalTime: formatHHMM(targetFinalArrivalDate),
         finalEarlyBufferMins: FINAL_DESTINATION_EARLY_MINS,
-        passengerBufferMins: PASSENGER_PICKUP_BUFFER_MINS,
-        totalPassengerBufferMins: passengerCount * PASSENGER_PICKUP_BUFFER_MINS,
+        passengerBufferMins: effectivePassengerBufferMins,
+        totalPassengerBufferMins: passengerCount * effectivePassengerBufferMins,
         pickupTimes
     };
 };
@@ -1095,6 +1097,7 @@ export default function Planificacion() {
               entrada: mode === 'Ida' ? (officialTime || userData?.entrada || '08:00') : (userData?.entrada || '08:00'),
               salida: mode === 'Regreso' ? (officialTime || userData?.salida || '17:00') : (userData?.salida || '17:00'),
               included: true,
+              aiImported: true,
               aiReferenceTime: row?.referenceTime || '',
               aiRoute: row?.route || '',
               aiOrder: Number(row?.order) || 0,
@@ -1113,7 +1116,15 @@ export default function Planificacion() {
           scheduledDate: date || prev.scheduledDate
       }));
       setGlobalCarpool({ mode: mode === 'Regreso' ? 'Regreso' : 'Ida' });
-      setEmployeeRoster(prepared.sort(comparePeopleAZ));
+      setEmployeeRoster(prepared.sort((a, b) => {
+          const routeA = normalizeAiValue(a?.aiRoute);
+          const routeB = normalizeAiValue(b?.aiRoute);
+          if (routeA !== routeB) return routeA.localeCompare(routeB, 'es');
+          const orderA = Number(a?.aiOrder) || Number.MAX_SAFE_INTEGER;
+          const orderB = Number(b?.aiOrder) || Number.MAX_SAFE_INTEGER;
+          if (orderA !== orderB) return orderA - orderB;
+          return comparePeopleAZ(a, b);
+      }));
       setCarpoolGroups([]);
       setRosterSearch('');
       setPreviewGroupId('all');
@@ -1229,8 +1240,8 @@ export default function Planificacion() {
 
   const handleGenerateStep2 = () => {
       if(!selectedClientData) return alert("Selecciona una empresa primero.");
-      const mode = globalCarpool.mode; 
-      
+      const mode = globalCarpool.mode;
+
       const activeEmps = employeeRoster.filter(emp => emp.included);
       if(activeEmps.length === 0) return alert("No hay empleados seleccionados para planificar.");
 
@@ -1238,95 +1249,175 @@ export default function Planificacion() {
       if(!oficina || !oficina.lat) return alert("La empresa no tiene una ubicación 'General' configurada.");
       const ofiCoords = { lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng) };
 
-      const timeBuckets = {};
+      let newGroups = [];
+      let groupIdx = 0;
+      const driverWarnings = new Set();
 
-      activeEmps.forEach(emp => {
-          const tKey = mode === 'Ida' ? (emp.entrada || '08:00') : (emp.salida || '17:00');
+      const getOfficialTime = (emp) => mode === 'Ida'
+          ? (emp.entrada || '08:00')
+          : (emp.salida || '17:00');
+
+      const resolveAiDriver = (employees, routeLabel = '') => {
+          const sourceNames = [...new Set(
+              employees
+                  .map(emp => String(emp?.aiDriver || '').trim())
+                  .filter(Boolean)
+          )];
+          if (sourceNames.length === 0) return { driverId: '', driverName: '' };
+
+          if (sourceNames.length > 1) {
+              driverWarnings.add((routeLabel ? 'Ruta ' + routeLabel + ': ' : '') + 'el archivo contiene más de un conductor (' + sourceNames.join(', ') + '). Se usará el primero y conviene revisar.');
+          }
+
+          const sourceName = sourceNames[0];
+          const target = normalizeAiValue(sourceName);
+          const exact = availableDrivers.find(driver => normalizeAiValue(driver?.name) === target);
+          const partial = availableDrivers.filter(driver => {
+              const normalized = normalizeAiValue(driver?.name);
+              return normalized && target && (normalized.includes(target) || target.includes(normalized));
+          });
+          const matched = exact || (partial.length === 1 ? partial[0] : null);
+
+          if (!matched) {
+              driverWarnings.add((routeLabel ? 'Ruta ' + routeLabel + ': ' : '') + 'no encontré en Conductores a "' + sourceName + '". El nombre se conservó, pero debes seleccionarlo manualmente.');
+          }
+
+          return {
+              driverId: matched?.id || '',
+              driverName: matched?.name || sourceName
+          };
+      };
+
+      const createGroup = ({ employees, tKey, routeLabel = '', preserveSourceOrder = false }) => {
+          const groupId = `group_${groupIdx++}`;
+          let orderedEmployees = [...employees];
+
+          if (preserveSourceOrder) {
+              orderedEmployees.sort((a, b) => {
+                  const orderA = Number(a?.aiOrder) || Number.MAX_SAFE_INTEGER;
+                  const orderB = Number(b?.aiOrder) || Number.MAX_SAFE_INTEGER;
+                  if (orderA !== orderB) return orderA - orderB;
+                  return comparePeopleAZ(a, b);
+              });
+          } else if (mode === 'Regreso') {
+              orderedEmployees.sort((a, b) => {
+                  const distA = Math.pow(parseFloat(a.lat) - ofiCoords.lat, 2) + Math.pow(parseFloat(a.lon || a.lng) - ofiCoords.lng, 2);
+                  const distB = Math.pow(parseFloat(b.lat) - ofiCoords.lat, 2) + Math.pow(parseFloat(b.lon || b.lng) - ofiCoords.lng, 2);
+                  return distA - distB;
+              });
+          }
+
+          // Una ruta explícita de archivo conserva puntos individuales y no fuerza
+          // punto compartido: el archivo manda sobre la optimización automática.
+          let isShared = false;
+          if (!routeLabel) {
+              const hourStr = tKey ? tKey.split(':')[0] : '8';
+              const hour = parseInt(hourStr, 10) || 8;
+              if (mode === 'Ida' && hour >= 7) isShared = true;
+              if (mode === 'Regreso' && hour < 20) isShared = true;
+          }
+
+          const driver = resolveAiDriver(orderedEmployees, routeLabel);
+          return {
+              id: groupId,
+              employees: orderedEmployees,
+              timeKey: tKey,
+              driverId: driver.driverId,
+              driverName: driver.driverName,
+              aiRoute: routeLabel,
+              aiImported: orderedEmployees.some(emp => emp?.aiImported),
+              preserveAiPassTimes: orderedEmployees.some(emp => emp?.aiImported && String(emp?.aiReferenceTime || '').trim()),
+              sharedMeetingPoint: { active: false, address: '', lat: null, lng: null },
+              sharedMeetingPoints: isShared ? [{ id: `meeting_${groupId}_1`, active: true, address: '', lat: null, lng: null, passengerNames: orderedEmployees.map(emp => emp.assignedTo) }] : [],
+              routeGeometry: [],
+              routeSegments: [],
+              totalDistanceKm: null,
+              totalDurationMins: null
+          };
+      };
+
+      // A) RUTAS EXPLÍCITAS DE GEMINI/ARCHIVO: no se mezclan ni se reoptimizan.
+      const routedEmployees = activeEmps.filter(emp => String(emp?.aiRoute || '').trim());
+      const automaticEmployees = activeEmps.filter(emp => !String(emp?.aiRoute || '').trim());
+      const explicitBuckets = new Map();
+
+      routedEmployees.forEach(emp => {
+          const routeLabel = String(emp.aiRoute).trim();
+          const tKey = getOfficialTime(emp);
+          const key = normalizeAiValue(routeLabel) + '|' + tKey;
+          if (!explicitBuckets.has(key)) explicitBuckets.set(key, { routeLabel, tKey, employees: [] });
+          explicitBuckets.get(key).employees.push(emp);
+      });
+
+      explicitBuckets.forEach(bucket => {
+          const pending = [...bucket.employees].sort((a, b) => {
+              const orderA = Number(a?.aiOrder) || Number.MAX_SAFE_INTEGER;
+              const orderB = Number(b?.aiOrder) || Number.MAX_SAFE_INTEGER;
+              return orderA - orderB;
+          });
+          while (pending.length > 0) {
+              newGroups.push(createGroup({
+                  employees: pending.splice(0, 4),
+                  tKey: bucket.tKey,
+                  routeLabel: bucket.routeLabel,
+                  preserveSourceOrder: true
+              }));
+          }
+      });
+
+      // B) PERSONAS SIN RUTA EXPLÍCITA: conservan la optimización automática existente.
+      const timeBuckets = {};
+      automaticEmployees.forEach(emp => {
+          const tKey = getOfficialTime(emp);
           if(!timeBuckets[tKey]) timeBuckets[tKey] = [];
           timeBuckets[tKey].push(emp);
       });
 
-      let newGroups = [];
-      let groupIdx = 0;
-
       Object.keys(timeBuckets).forEach(tKey => {
           let unassignedValid = timeBuckets[tKey].filter(e => e.lat);
           const invalidEmps = timeBuckets[tKey].filter(e => !e.lat);
-          
+
           while(unassignedValid.length > 0) {
               let currentGrp = [];
-              
               unassignedValid.sort((a,b) => {
                   const distA = Math.pow(parseFloat(a.lat) - ofiCoords.lat, 2) + Math.pow(parseFloat(a.lon||a.lng) - ofiCoords.lng, 2);
                   const distB = Math.pow(parseFloat(b.lat) - ofiCoords.lat, 2) + Math.pow(parseFloat(b.lon||b.lng) - ofiCoords.lng, 2);
-                  return distB - distA; 
+                  return distB - distA;
               });
-              
-              let seed = unassignedValid.shift(); 
+
+              const seed = unassignedValid.shift();
               currentGrp.push(seed);
 
               while(currentGrp.length < 4 && unassignedValid.length > 0) {
                   unassignedValid.sort((a,b) => {
                       const distA = Math.pow(parseFloat(a.lat) - parseFloat(seed.lat), 2) + Math.pow(parseFloat(a.lon||a.lng) - parseFloat(seed.lon||seed.lng), 2);
                       const distB = Math.pow(parseFloat(b.lat) - parseFloat(seed.lat), 2) + Math.pow(parseFloat(b.lon||b.lng) - parseFloat(seed.lon||seed.lng), 2);
-                      return distA - distB; 
+                      return distA - distB;
                   });
                   currentGrp.push(unassignedValid.shift());
               }
 
-              let isShared = false;
-              const hourStr = tKey ? tKey.split(':')[0] : '8';
-              const hour = parseInt(hourStr, 10) || 8;
-              
-              if (mode === 'Ida' && hour >= 7) isShared = true;
-              if (mode === 'Regreso' && hour < 20) isShared = true;
-
-              // ENTRADA se conserva intacta. En SALIDA el vehículo parte de la empresa,
-              // por lo que el primer descenso debe ser el pasajero más cercano a la sede
-              // y después avanzar progresivamente hacia los más lejanos.
-              const orderedEmployees = mode === 'Regreso'
-                  ? [...currentGrp].sort((a, b) => {
-                      const distA = Math.pow(parseFloat(a.lat) - ofiCoords.lat, 2) + Math.pow(parseFloat(a.lon || a.lng) - ofiCoords.lng, 2);
-                      const distB = Math.pow(parseFloat(b.lat) - ofiCoords.lat, 2) + Math.pow(parseFloat(b.lon || b.lng) - ofiCoords.lng, 2);
-                      return distA - distB;
-                  })
-                  : currentGrp;
-
-              newGroups.push({
-                  id: `group_${groupIdx++}`,
-                  employees: orderedEmployees,
-                  timeKey: tKey, 
-                  driverId: '',
-                  driverName: '',
-                  sharedMeetingPoint: { active: false, address: '', lat: null, lng: null },
-                  sharedMeetingPoints: isShared ? [{ id: `meeting_${groupIdx}_1`, active: true, address: '', lat: null, lng: null, passengerNames: orderedEmployees.map(emp => emp.assignedTo) }] : [],
-                  routeGeometry: [],
-                  routeSegments: [],
-                  totalDistanceKm: null,
-                  totalDurationMins: null
-              });
+              newGroups.push(createGroup({ employees: currentGrp, tKey }));
           }
 
           while(invalidEmps.length > 0) {
-              newGroups.push({
-                  id: `group_${groupIdx++}`,
+              newGroups.push(createGroup({
                   employees: invalidEmps.splice(0, 4),
-                  timeKey: tKey,
-                  driverId: '',
-                  driverName: '',
-                  sharedMeetingPoint: { active: false, address: '', lat: null, lng: null },
-                  sharedMeetingPoints: [],
-                  routeGeometry: [],
-                  routeSegments: [],
-                  totalDistanceKm: null,
-                  totalDurationMins: null
-              });
+                  tKey,
+                  preserveSourceOrder: true
+              }));
           }
       });
 
+      if (newGroups.length === 0) return alert("No fue posible generar grupos para la programación.");
+
       setCarpoolGroups(newGroups);
-      setCarpoolStep(2); 
-      fetchRealRoutesForGroups(newGroups); 
+      setCarpoolStep(2);
+      fetchRealRoutesForGroups(newGroups);
+
+      if (driverWarnings.size > 0) {
+          setTimeout(() => alert('Gemini respetó las rutas del archivo, pero revisa conductor:\n\n' + [...driverWarnings].join('\n')), 180);
+      }
   };
 
   const removeEmployeeFromGroup = (groupId, empIndex) => {
@@ -1546,13 +1637,20 @@ export default function Planificacion() {
 
               const hasSharedStops = passengerStops.some(stop => stop.employees.length > 1 || stop.stopType === 'shared_meeting');
 
+              const preserveAiPassTimes = Boolean(
+                  g.preserveAiPassTimes ||
+                  g.employees.some(employee => employee?.aiImported && String(employee?.aiReferenceTime || '').trim())
+              );
+              const effectivePickupBufferMins = preserveAiPassTimes ? 0 : PASSENGER_PICKUP_BUFFER_MINS;
+
               const timePlan = buildCarpoolTimePlan({
                   timeKey: g.timeKey,
                   totalDurationMins: g.totalDurationMins,
                   routeSegments: g.routeSegments || [],
                   mode: globalCarpool.mode,
                   passengerCount: g.employees.length,
-                  isShared: hasSharedStops
+                  isShared: hasSharedStops,
+                  passengerBufferMins: effectivePickupBufferMins
               });
 
               const routePoints = globalCarpool.mode === 'Ida'
@@ -1603,7 +1701,7 @@ export default function Planificacion() {
                       );
                       backwardsCursor = addMinutesToDate(
                           backwardsCursor,
-                          -(Math.max(1, passengerStops[stopIndex]?.employees?.length || 1) * PASSENGER_PICKUP_BUFFER_MINS)
+                          -(Math.max(1, passengerStops[stopIndex]?.employees?.length || 1) * effectivePickupBufferMins)
                       );
 
                       const currentTime = formatHHMM(backwardsCursor);
@@ -1640,26 +1738,34 @@ export default function Planificacion() {
 
                   stop.employees.forEach(employee => {
                       const exactPhone = resolveEmployeePhone(employee);
+                      const sourceReferenceTime = String(employee?.aiReferenceTime || '').trim();
+                      const calculatedTime = globalCarpool.mode === 'Ida'
+                          ? (pickupTimeByPassenger.get(employee.assignedTo) || timePlan.startTime)
+                          : (dropoffTimeByPassenger.get(employee.assignedTo) || '');
+                      const authoritativeTime = sourceReferenceTime || calculatedTime;
+
                       passengerSchedule.push({
                           stopIndex: routeStopIndex,
                           passengerName: employee.assignedTo,
                           phone: exactPhone,
                           contactPhone: exactPhone,
-                          pickupTime: globalCarpool.mode === 'Ida'
-                              ? (pickupTimeByPassenger.get(employee.assignedTo) || timePlan.startTime)
-                              : '',
-                          dropoffTime: globalCarpool.mode === 'Regreso'
-                              ? (dropoffTimeByPassenger.get(employee.assignedTo) || '')
-                              : '',
-                          plannedTime: globalCarpool.mode === 'Ida'
-                              ? (pickupTimeByPassenger.get(employee.assignedTo) || timePlan.startTime)
-                              : (dropoffTimeByPassenger.get(employee.assignedTo) || ''),
+                          pickupTime: globalCarpool.mode === 'Ida' ? authoritativeTime : '',
+                          dropoffTime: globalCarpool.mode === 'Regreso' ? authoritativeTime : '',
+                          plannedTime: authoritativeTime,
                           movementType: globalCarpool.mode === 'Regreso' ? 'dropoff' : 'pickup',
-                          bufferMins: globalCarpool.mode === 'Ida' ? PASSENGER_PICKUP_BUFFER_MINS : 0,
+                          bufferMins: sourceReferenceTime ? 0 : (globalCarpool.mode === 'Ida' ? effectivePickupBufferMins : 0),
+                          timeSource: sourceReferenceTime ? 'source_file' : 'calculated',
+                          sourceRoute: String(employee?.aiRoute || '').trim(),
+                          sourceDriver: String(employee?.aiDriver || '').trim(),
+                          sourceOrder: Number(employee?.aiOrder) || 0,
                           meetingPointId: stop.stopType === 'shared_meeting' ? stop.id : ''
                       });
                   });
               });
+
+              const authoritativeStartTime = globalCarpool.mode === 'Ida'
+                  ? (passengerSchedule.map(item => item.pickupTime).filter(Boolean).sort()[0] || timePlan.startTime)
+                  : g.timeKey;
 
               const buildSavedPoint = (routePoint, routeIndex) => {
                   const snapped = routedPointAt(routeIndex, routePoint);
@@ -1690,7 +1796,10 @@ export default function Planificacion() {
                       saved.sharedMeetingPoint = true;
                   }
 
-                  const pointPlannedTime = pointTimeByRouteIndex.get(routeIndex) || '';
+                  const pointPlannedTime = schedules
+                      .map(item => item.plannedTime)
+                      .filter(Boolean)
+                      .sort()[0] || pointTimeByRouteIndex.get(routeIndex) || '';
                   saved.plannedTime = pointPlannedTime;
 
                   if (globalCarpool.mode === 'Ida' && schedules.length) {
@@ -1698,7 +1807,7 @@ export default function Planificacion() {
                           .map(item => item.pickupTime)
                           .filter(Boolean)
                           .sort()[0] || timePlan.startTime;
-                      saved.pickupBufferMins = PASSENGER_PICKUP_BUFFER_MINS;
+                      saved.pickupBufferMins = schedules.some(item => item.timeSource === 'source_file') ? 0 : effectivePickupBufferMins;
                   }
 
                   if (globalCarpool.mode === 'Regreso') {
@@ -1747,10 +1856,12 @@ export default function Planificacion() {
                   carpool: {
                       mode: globalCarpool.mode,
                       officialScheduledTime: g.timeKey,
-                      startTime: timePlan.startTime,
+                      startTime: authoritativeStartTime,
                       targetArrivalTime: finalOperationalArrivalTime,
                       estimatedFinalArrivalTime: finalOperationalArrivalTime || timePlan.estimatedFinalArrivalTime,
                       direction: globalCarpool.mode,
+                      sourceRoute: g.aiRoute || '',
+                      scheduleSource: g.aiImported ? 'gemini' : 'dispatcher',
                       finalEarlyBufferMins: timePlan.finalEarlyBufferMins,
                       passengerBufferMins: timePlan.passengerBufferMins,
                       totalPassengerBufferMins: timePlan.totalPassengerBufferMins,
@@ -1805,12 +1916,14 @@ export default function Planificacion() {
                   chat: [],
                   scheduledDate: newRoute.scheduledDate,
                   scheduledTime: g.timeKey,
-                  startTime: timePlan.startTime,
+                  startTime: authoritativeStartTime,
                   targetArrivalTime: finalOperationalArrivalTime,
                   officialScheduledTime: g.timeKey,
                   estimatedFinalArrivalTime: finalOperationalArrivalTime || timePlan.estimatedFinalArrivalTime,
                   carpoolMode: globalCarpool.mode,
                   tripDirection: globalCarpool.mode,
+                  sourceRoute: g.aiRoute || '',
+                  scheduleSource: g.aiImported ? 'gemini' : 'dispatcher',
                   finalEarlyBufferMins: timePlan.finalEarlyBufferMins,
                   passengerBufferMins: timePlan.passengerBufferMins,
                   totalPassengerBufferMins: timePlan.totalPassengerBufferMins,
@@ -2265,13 +2378,17 @@ export default function Planificacion() {
                                           {carpoolGroups.map((grupo, idx) => {
                                               const isPreviewing = previewGroupId === grupo.id;
                                               const groupColor = PREVIEW_COLORS[idx % PREVIEW_COLORS.length];
+                                              const previewPreservesSourceTimes = grupo.employees.some(employee =>
+                                                  employee?.aiImported && String(employee?.aiReferenceTime || '').trim()
+                                              );
                                               const timePlan = buildCarpoolTimePlan({
                                                   timeKey: grupo.timeKey,
                                                   totalDurationMins: grupo.totalDurationMins,
                                                   routeSegments: grupo.routeSegments || [],
                                                   mode: globalCarpool.mode,
                                                   passengerCount: grupo.employees.length,
-                                                  isShared: getGroupMeetingPoints(grupo).length > 0
+                                                  isShared: getGroupMeetingPoints(grupo).length > 0,
+                                                  passengerBufferMins: previewPreservesSourceTimes ? 0 : PASSENGER_PICKUP_BUFFER_MINS
                                               });
                                               
                                               return (
@@ -2280,6 +2397,9 @@ export default function Planificacion() {
                                                       <div className="flex items-center gap-2">
                                                           <div className="w-3 h-3 rounded-full" style={{ backgroundColor: groupColor }}></div>
                                                           <h4 className="font-black text-sm">Vehículo {idx + 1}</h4>
+                                                          {grupo.aiRoute && (
+                                                              <span className="text-[10px] bg-violet-500/20 text-violet-200 border border-violet-400/30 px-2 py-1 rounded font-black">RUTA: {grupo.aiRoute}</span>
+                                                          )}
                                                           
                                                           {/* --- ETIQUETA COHERENTE CON EL MODO DE PLANIFICACIÓN --- */}
                                                           {globalCarpool.mode === 'Ida' ? (
@@ -2312,6 +2432,11 @@ export default function Planificacion() {
                                                               <option value="">👤 Seleccionar chofer...</option>
                                                               {availableDrivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
                                                           </select>
+                                                          {grupo.aiImported && grupo.driverName && (
+                                                              <p className={grupo.driverId ? 'mt-1 text-[9px] font-bold text-emerald-600' : 'mt-1 text-[9px] font-bold text-amber-600'}>
+                                                                  {grupo.driverId ? '✓ Conductor tomado del archivo: ' : '⚠ Conductor indicado en archivo, sin coincidencia automática: '}{grupo.driverName}
+                                                              </p>
+                                                          )}
                                                       </div>
                                                       
                                                                                                             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
@@ -2346,8 +2471,10 @@ export default function Planificacion() {
                                                                       )}
                                                                       <div className="flex-1 overflow-hidden">
                                                                           <p className="text-xs font-bold text-slate-700 truncate">{emp.assignedTo}</p>
-                                                                          {timePlan.pickupTimes?.[eIdx] && (
-                                                                              <p className="text-[10px] text-emerald-600 font-bold mt-0.5">Paso estimado: {timePlan.pickupTimes[eIdx]}</p>
+                                                                          {(emp.aiReferenceTime || timePlan.pickupTimes?.[eIdx]) && (
+                                                                              <p className={emp.aiReferenceTime ? 'text-[10px] font-bold mt-0.5 text-violet-600' : 'text-[10px] font-bold mt-0.5 text-emerald-600'}>
+                                                                                  {emp.aiReferenceTime ? 'Hora de paso (archivo): ' : 'Paso estimado: '}{emp.aiReferenceTime || timePlan.pickupTimes[eIdx]}
+                                                                              </p>
                                                                           )}
                                                                       </div>
                                                                       <button onClick={() => removeEmployeeFromGroup(grupo.id, eIdx)} className="text-slate-300 hover:text-red-500 p-1 bg-white rounded border border-slate-100 shadow-sm"><X className="w-3 h-3"/></button>

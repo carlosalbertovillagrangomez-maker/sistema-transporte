@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Building2, LogOut, MapPin, Navigation2, Clock, Car, Loader2, ShieldCheck, RefreshCw } from 'lucide-react';
+import { Building2, LogOut, MapPin, Navigation2, Clock, Car, Loader2, ShieldCheck } from 'lucide-react';
 import { GoogleMap, Marker, Polyline } from '@react-google-maps/api';
 import { db } from './firebase';
 import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
@@ -73,7 +73,6 @@ export default function CompanyMonitor({ currentUser, onLogout, isLoaded }) {
   const [routes, setRoutes] = useState([]);
   const [selectedRouteId, setSelectedRouteId] = useState('');
   const [selectedDriver, setSelectedDriver] = useState(null);
-  const [showAll, setShowAll] = useState(false);
   const [loading, setLoading] = useState(true);
   const mapRef = useRef(null);
 
@@ -82,9 +81,12 @@ export default function CompanyMonitor({ currentUser, onLogout, isLoaded }) {
     setLoading(true);
     const companyQuery = query(collection(db, 'rutas'), where('client', '==', currentUser.companyName));
     return onSnapshot(companyQuery, snapshot => {
-      const next = snapshot.docs.map(item => ({ id: item.id, ...item.data() })).sort((a, b) => routeSortValue(b) - routeSortValue(a));
+      const next = snapshot.docs
+        .map(item => ({ id: item.id, ...item.data() }))
+        .filter(item => !['Finalizado', 'Completado', 'Cancelado'].includes(item.status))
+        .sort((a, b) => routeSortValue(b) - routeSortValue(a));
       setRoutes(next);
-      setSelectedRouteId(previous => previous && next.some(item => item.id === previous) ? previous : (next.find(item => !['Finalizado', 'Completado', 'Cancelado'].includes(item.status))?.id || next[0]?.id || ''));
+      setSelectedRouteId(previous => previous && next.some(item => item.id === previous) ? previous : (next[0]?.id || ''));
       setLoading(false);
     }, error => {
       console.error('Monitor empresa:', error);
@@ -102,10 +104,7 @@ export default function CompanyMonitor({ currentUser, onLogout, isLoaded }) {
     });
   }, [selectedRoute?.driverId]);
 
-  const visibleRoutes = useMemo(() => {
-    if (showAll) return routes.slice(0, 30);
-    return routes.filter(route => !['Finalizado', 'Completado', 'Cancelado'].includes(route.status));
-  }, [routes, showAll]);
+  const visibleRoutes = useMemo(() => routes, [routes]);
 
   const plannedGeometry = selectedRoute ? getPlannedGeometry(selectedRoute) : [];
   const liveGeometry = selectedRoute ? getLiveGeometry(selectedRoute) : [];
@@ -158,12 +157,12 @@ export default function CompanyMonitor({ currentUser, onLogout, isLoaded }) {
         </div>
 
         <aside className="xl:min-h-0 xl:overflow-y-auto rounded-2xl bg-white border border-slate-200 p-3 sm:p-4 space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <div><p className="text-[9px] uppercase tracking-wider font-black text-orange-500">Servicios de la empresa</p><p className="font-black text-slate-800">{visibleRoutes.length} visibles</p></div>
-            <button type="button" onClick={() => setShowAll(value => !value)} className="text-[10px] font-black px-3 py-2 rounded-lg bg-slate-100 text-slate-600 flex items-center gap-1"><RefreshCw className="w-3 h-3"/>{showAll ? 'Solo activos' : 'Últimos'}</button>
+          <div>
+            <p className="text-[9px] uppercase tracking-wider font-black text-orange-500">Rutas activas de la empresa</p>
+            <p className="font-black text-slate-800">{visibleRoutes.length} activas</p>
           </div>
 
-          <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 flex gap-2"><ShieldCheck className="w-4 h-4 text-blue-600 shrink-0"/><p className="text-[10px] font-bold text-blue-800">Esta cuenta no puede planear, editar, iniciar, cancelar ni finalizar viajes.</p></div>
+          <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 flex gap-2"><ShieldCheck className="w-4 h-4 text-blue-600 shrink-0"/><p className="text-[10px] font-bold text-blue-800">Esta cuenta sólo puede ver rutas activas de la empresa asignada. No puede consultar historial, planear, editar, iniciar, cancelar ni finalizar viajes.</p></div>
 
           {loading && <div className="py-12 text-center text-slate-400 text-xs font-bold"><Loader2 className="w-5 h-5 animate-spin mx-auto mb-2"/>Actualizando servicios...</div>}
           {!loading && visibleRoutes.length === 0 && <div className="py-12 text-center text-slate-400 text-xs font-bold">No hay servicios para mostrar.</div>}

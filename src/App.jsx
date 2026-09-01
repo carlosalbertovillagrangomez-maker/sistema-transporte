@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Truck, Monitor, Map as MapIcon, Users, FileText, Bell, AlertTriangle, X, Play, CheckSquare, Clock, Zap, Calendar, Edit, Save, History, Eye, Briefcase, Loader2, BellRing, MessageSquare, Send, Camera, RefreshCw, ShieldCheck, MapPin, LocateFixed, Route as RouteIcon, Timer, Gauge, CircleDot, Navigation2, Maximize2, Minimize2, Ban, KeyRound } from 'lucide-react';
+import { Truck, Monitor, Map as MapIcon, Users, FileText, Bell, AlertTriangle, X, Play, CheckSquare, Clock, Zap, Calendar, Edit, Save, History, Eye, Briefcase, Loader2, BellRing, MessageSquare, Send, Camera, RefreshCw, ShieldCheck, MapPin, LocateFixed, Route as RouteIcon, Timer, Gauge, CircleDot, Navigation2, Maximize2, Minimize2, Ban, KeyRound, LogOut } from 'lucide-react';
 
 // GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline } from '@react-google-maps/api';
@@ -1253,7 +1253,7 @@ function App() {
       <main className="flex-1 flex flex-col min-w-0 min-h-0 relative overflow-hidden pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
         <header className="h-14 md:h-16 bg-white border-b border-slate-200 flex items-center justify-between px-3 sm:px-4 md:px-6 xl:px-8 shadow-sm z-10 shrink-0">
           <h1 className="text-base md:text-xl font-black text-slate-800 tracking-tight">{activeTab === 'monitoreo' && 'Torre de Control'}{activeTab === 'planificacion' && 'Planificación de Rutas'}{activeTab === 'clientes' && 'Cartera de Clientes'}{activeTab === 'conductores' && 'Directorio de Conductores'}{activeTab === 'reportes' && 'Historial y Reportes'}{activeTab === 'accesos' && 'Accesos Empresariales'}</h1>
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-2 sm:gap-4">
               <button type="button" onClick={() => setShowNotifications(value => !value)} className="relative cursor-pointer p-2 rounded-xl hover:bg-slate-100 transition" aria-label="Ver notificaciones">
                   <Bell className="text-slate-400 hover:text-slate-800 w-6 h-6 transition" />
                   {activeAlertsCount > 0 && <span className="absolute top-0 right-0 h-4 w-4 bg-red-500 text-white text-[10px] font-bold flex items-center justify-center rounded-full border-2 border-white animate-pulse">{activeAlertsCount}</span>}
@@ -1265,6 +1265,9 @@ function App() {
                       <p className="text-[10px] text-green-500 font-bold uppercase tracking-widest">● En Línea</p>
                   </div>
               </div>
+              <button type="button" onClick={handleDispatcherLogout} title="Cerrar sesión" aria-label="Cerrar sesión" className="shrink-0 p-2 sm:px-3 sm:py-2 rounded-xl border border-slate-200 text-slate-500 hover:text-red-600 hover:bg-red-50 hover:border-red-200 transition flex items-center gap-2 text-xs font-black">
+                  <LogOut className="w-4 h-4"/><span className="hidden md:inline">Salir</span>
+              </button>
           </div>
         </header>
 

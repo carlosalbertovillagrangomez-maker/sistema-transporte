@@ -401,6 +401,7 @@ export default function Planificacion() {
   const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries, language: 'es' });
   const mapRef = useRef(null);
   const previewMapRef = useRef(null);
+  const carpoolRoutingRequestRef = useRef(0);
   const [localMapCenter, setLocalMapCenter] = useState(centerMX);
 
   useEffect(() => {
@@ -1149,12 +1150,15 @@ export default function Planificacion() {
   // --- CALCULAR RUTAS VEHICULARES CON GOOGLE DIRECTIONS ---
   // Soporta varios puntos compartidos dentro de la misma unidad.
   const fetchRealRoutesForGroups = async (groups) => {
+      const requestId = ++carpoolRoutingRequestRef.current;
       setFetchingRealRoutes(true);
       const oficina = selectedClientData?.locations?.find(l => l.assignedTo === 'General');
       let updatedGroups = [...groups];
 
       try {
           for (let i = 0; i < updatedGroups.length; i++) {
+              if (requestId !== carpoolRoutingRequestRef.current) return;
+
               const g = updatedGroups[i];
               const passengerStops = buildPassengerStopsForGroup(g);
               const points = [];
@@ -1182,7 +1186,9 @@ export default function Planificacion() {
 
               try {
                   const result = await requestGoogleDrivingRoute(points);
+                  if (requestId !== carpoolRoutingRequestRef.current) return;
                   if (!result) continue;
+
                   updatedGroups[i] = {
                       ...g,
                       passengerStops,
@@ -1194,6 +1200,7 @@ export default function Planificacion() {
                       routingProvider: 'google-directions'
                   };
               } catch (routeError) {
+                  if (requestId !== carpoolRoutingRequestRef.current) return;
                   console.error('Google Directions Error', routeError);
                   updatedGroups[i] = {
                       ...g,
@@ -1206,9 +1213,14 @@ export default function Planificacion() {
                   };
               }
           }
-          setCarpoolGroups(updatedGroups);
+
+          if (requestId === carpoolRoutingRequestRef.current) {
+              setCarpoolGroups(updatedGroups);
+          }
       } finally {
-          setFetchingRealRoutes(false);
+          if (requestId === carpoolRoutingRequestRef.current) {
+              setFetchingRealRoutes(false);
+          }
       }
   };
 
@@ -1494,6 +1506,8 @@ export default function Planificacion() {
   };
 
   const refreshGroupsAfterChange = (nextGroups) => {
+      // Invalida cualquier respuesta asíncrona anterior ANTES de pintar el nuevo estado.
+      carpoolRoutingRequestRef.current += 1;
       setCarpoolGroups(nextGroups);
       setTimeout(() => fetchRealRoutesForGroups(nextGroups), 80);
   };
@@ -1554,28 +1568,33 @@ export default function Planificacion() {
       const nextGroups = carpoolGroups.map(group => {
           if (group.id !== groupId) return group;
 
-          // Un pasajero solo puede pertenecer a un punto compartido.
+          const currentMeeting = (group.sharedMeetingPoints || [])
+              .find(item => item.id === meetingId);
+          const wasAssignedHere = Boolean(
+              currentMeeting?.passengerNames?.includes(employeeName)
+          );
+
+          // Primero quita al pasajero de cualquier punto compartido del mismo vehículo.
           const cleared = (group.sharedMeetingPoints || []).map(point => ({
               ...point,
-              passengerNames: (point.passengerNames || []).filter(name => name !== employeeName)
+              passengerNames: (point.passengerNames || [])
+                  .filter(name => name !== employeeName)
           }));
 
           return {
               ...group,
               sharedMeetingPoints: cleared.map(point => {
                   if (point.id !== meetingId) return point;
-                  const wasAssigned = (group.sharedMeetingPoints || [])
-                      .find(item => item.id === meetingId)
-                      ?.passengerNames?.includes(employeeName);
                   return {
                       ...point,
-                      passengerNames: wasAssigned
+                      passengerNames: wasAssignedHere
                           ? point.passengerNames
                           : [...(point.passengerNames || []), employeeName]
                   };
               })
           };
       });
+
       refreshGroupsAfterChange(nextGroups);
   };
 
@@ -1583,25 +1602,43 @@ export default function Planificacion() {
       if(isLoaded && previewMapRef.current && carpoolGroups.length > 0 && selectedClientData) {
           const bounds = new window.google.maps.LatLngBounds();
           const oficina = selectedClientData.locations.find(loc => loc.assignedTo === 'General');
-          let hasPoints = false;
-          if (oficina && oficina.lat) { bounds.extend({ lat: parseFloat(oficina.lat), lng: parseFloat(oficina.lon || oficina.lng) }); hasPoints = true; }
+          let pointCount = 0;
 
-          carpoolGroups.forEach(g => {
-              if (previewGroupId === 'all' || previewGroupId === g.id) {
-                  if (g.routeGeometry && g.routeGeometry.length > 0) {
-                      g.routeGeometry.forEach(p => bounds.extend(p)); hasPoints = true;
-                  } else {
-                      const previewStops = buildPassengerStopsForGroup(g);
-                      previewStops.forEach(stop => {
-                          if (Number.isFinite(Number(stop.lat)) && Number.isFinite(Number(stop.lng))) {
-                              bounds.extend({ lat: Number(stop.lat), lng: Number(stop.lng) });
-                              hasPoints = true;
-                          }
-                      });
-                  }
-              }
+          const extendPoint = (point) => {
+              const lat = Number(point?.lat);
+              const lng = Number(point?.lng ?? point?.lon);
+              if (!Number.isFinite(lat) || !Number.isFinite(lng)) return;
+              bounds.extend({ lat, lng });
+              pointCount += 1;
+          };
+
+          extendPoint(oficina);
+
+          carpoolGroups.forEach(group => {
+              if (previewGroupId !== 'all' && previewGroupId !== group.id) return;
+              buildPassengerStopsForGroup(group).forEach(extendPoint);
           });
-          if (hasPoints) { previewMapRef.current.fitBounds(bounds); previewMapRef.current.panToBounds(bounds, 50); }
+
+          if (pointCount === 1 && oficina) {
+              previewMapRef.current.panTo({
+                  lat: Number(oficina.lat),
+                  lng: Number(oficina.lng ?? oficina.lon)
+              });
+              previewMapRef.current.setZoom(14);
+              return;
+          }
+
+          if (pointCount > 1) {
+              previewMapRef.current.fitBounds(bounds, 60);
+              if (window.google?.maps?.event?.addListenerOnce) {
+                  window.google.maps.event.addListenerOnce(previewMapRef.current, 'idle', () => {
+                      const zoom = Number(previewMapRef.current?.getZoom?.());
+                      if (Number.isFinite(zoom) && zoom > 15) {
+                          previewMapRef.current.setZoom(15);
+                      }
+                  });
+              }
+          }
       }
   }, [previewGroupId, carpoolGroups, selectedClientData, isLoaded]);
 

@@ -193,6 +193,79 @@ const getScheduledRouteMs = (route) => {
     return getTimestampMs(route?.createdDate) || 0;
 };
 
+const getRouteDirectionLabel = (route) => {
+    const raw = String(
+        route?.technicalData?.carpool?.mode ||
+        route?.carpoolMode ||
+        route?.tripDirection ||
+        ''
+    ).toLocaleLowerCase('es');
+
+    if (raw.includes('regreso') || raw.includes('salida')) return 'SALIDA';
+    if (raw.includes('ida') || raw.includes('entrada')) return 'ENTRADA';
+    return 'RUTA';
+};
+
+const getRouteScheduledDateKey = (route) => {
+    const explicit = String(
+        route?.scheduledDate ||
+        route?.pickupDate ||
+        route?.fechaServicio ||
+        ''
+    ).trim();
+
+    if (/^\d{4}-\d{2}-\d{2}/.test(explicit)) return explicit.slice(0, 10);
+
+    const ms = getScheduledRouteMs(route);
+    if (!ms) return '';
+
+    const date = new Date(ms);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleDateString('en-CA');
+};
+
+const getRouteScheduledTimeText = (route) => {
+    const raw = String(
+        route?.startCoords?.pickupTime ||
+        route?.pickupTime ||
+        route?.technicalData?.carpool?.startTime ||
+        route?.startTime ||
+        route?.scheduledTime ||
+        ''
+    ).trim();
+
+    const match = raw.match(/^(\d{1,2}):(\d{2})/);
+    if (!match) return raw;
+
+    return `${String(Number(match[1])).padStart(2, '0')}:${match[2]}`;
+};
+
+const normalizeRouteSearchText = (value) => String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('es')
+    .trim();
+
+const getRouteMonitorStatusRank = (route) => {
+    if (route?.status === 'En Ruta') return 0;
+    if (route?.status === 'Aceptada') return 1;
+    if (route?.status === 'Pendiente') return 2;
+    return 3;
+};
+
+const getRouteMonitorDateBucket = (route) => {
+    if (route?.status === 'En Ruta') return 0;
+
+    const routeDate = getRouteScheduledDateKey(route);
+    const today = new Date().toLocaleDateString('en-CA');
+
+    if (!routeDate) return 3;
+    if (routeDate === today) return 0;
+    if (routeDate > today) return 1;
+    return 2;
+};
+
+
 const isRouteActivelyInProgress = (route) => {
     if (!route || ['Finalizado', 'Completado', 'Cancelado'].includes(route.status)) return false;
     if (route.status === 'En Ruta') return true;
@@ -637,6 +710,11 @@ function App() {
   const [detectedLocalCountry, setDetectedLocalCountry] = useState(() => getCountryFromTimezone());
   const [driverCountryFilter, setDriverCountryFilter] = useState('Local');
   const [mapExpanded, setMapExpanded] = useState(false);
+  const [routeSearchTerm, setRouteSearchTerm] = useState('');
+  const [routeDriverFilter, setRouteDriverFilter] = useState('Todos');
+  const [routeTimeFilter, setRouteTimeFilter] = useState('Todos');
+  const [routeStatusFilter, setRouteStatusFilter] = useState('Todos');
+  const [routeSortMode, setRouteSortMode] = useState('Hora');
 
   const [chatModalRoute, setChatModalRoute] = useState(null);
   const [chatInput, setChatInput] = useState('');
@@ -1166,45 +1244,132 @@ function App() {
       return 'Programados';
   };
 
-  const getFilteredAndSortedRoutes = () => {
-      let filtered = liveRoutes.filter(ruta => viewHistory
-          ? ['Finalizado', 'Completado', 'Cancelado'].includes(ruta.status)
-          : !['Finalizado', 'Completado', 'Cancelado'].includes(ruta.status)
-      );
+const getFilteredAndSortedRoutes = () => {
+    let filtered = liveRoutes.filter(ruta => viewHistory
+        ? ['Finalizado', 'Completado', 'Cancelado'].includes(ruta.status)
+        : !['Finalizado', 'Completado', 'Cancelado'].includes(ruta.status)
+    );
 
-      if (viewHistory && historyServiceFilter !== 'Todos') {
-          filtered = filtered.filter(ruta => getHistoryServiceKind(ruta) === historyServiceFilter);
-      }
+    if (viewHistory && historyServiceFilter !== 'Todos') {
+        filtered = filtered.filter(ruta => getHistoryServiceKind(ruta) === historyServiceFilter);
+    }
 
-      if (viewHistory && historyDateFilter) {
-          filtered = filtered.filter(ruta => getHistoryRouteDateKey(ruta) === historyDateFilter);
-      }
+    if (viewHistory && historyDateFilter) {
+        filtered = filtered.filter(ruta => getHistoryRouteDateKey(ruta) === historyDateFilter);
+    }
 
-      const effectiveCountry = driverCountryFilter === 'Local' ? detectedLocalCountry : driverCountryFilter;
-      if (effectiveCountry && effectiveCountry !== 'Todos') {
-          filtered = filtered.filter(ruta => {
-              const routeCountry = getRouteCountry(ruta);
-              return routeCountry === effectiveCountry || routeCountry === 'Sin ubicación';
-          });
-      }
+    if (!viewHistory) {
+        const search = normalizeRouteSearchText(routeSearchTerm);
 
-      return filtered.sort((a, b) => {
-          if (viewHistory) return getRouteAuditSortMs(b) - getRouteAuditSortMs(a);
-          if (a.status === 'En Ruta' && b.status !== 'En Ruta') return -1;
-          if (b.status === 'En Ruta' && a.status !== 'En Ruta') return 1;
-          if (a.serviceType === 'Prioritario' && b.serviceType !== 'Prioritario') return -1;
-          if (b.serviceType === 'Prioritario' && a.serviceType !== 'Prioritario') return 1;
-          const now = Date.now();
-          const aMs = getScheduledRouteMs(a);
-          const bMs = getScheduledRouteMs(b);
-          const aPast = aMs < now && a.status !== 'En Ruta';
-          const bPast = bMs < now && b.status !== 'En Ruta';
-          if (aPast !== bPast) return aPast ? 1 : -1;
-          return aMs - bMs;
-      });
-  };
+        if (search) {
+            filtered = filtered.filter(ruta => {
+                const haystack = normalizeRouteSearchText([
+                    ruta?.id,
+                    ruta?.driver,
+                    ruta?.client,
+                    ruta?.start,
+                    ruta?.origin,
+                    ruta?.end,
+                    ruta?.destination,
+                    getRouteDirectionLabel(ruta),
+                    getRouteScheduledDateKey(ruta),
+                    getRouteScheduledTimeText(ruta),
+                    ruta?.status
+                ].filter(Boolean).join(' | '));
+
+                return haystack.includes(search);
+            });
+        }
+
+        if (routeDriverFilter !== 'Todos') {
+            filtered = filtered.filter(ruta => String(ruta?.driver || '') === routeDriverFilter);
+        }
+
+        if (routeTimeFilter !== 'Todos') {
+            filtered = filtered.filter(ruta => getRouteScheduledTimeText(ruta) === routeTimeFilter);
+        }
+
+        if (routeStatusFilter !== 'Todos') {
+            filtered = filtered.filter(ruta => ruta?.status === routeStatusFilter);
+        }
+    }
+
+    const effectiveCountry = driverCountryFilter === 'Local' ? detectedLocalCountry : driverCountryFilter;
+    if (effectiveCountry && effectiveCountry !== 'Todos') {
+        filtered = filtered.filter(ruta => {
+            const routeCountry = getRouteCountry(ruta);
+            return routeCountry === effectiveCountry || routeCountry === 'Sin ubicación';
+        });
+    }
+
+    return filtered.sort((a, b) => {
+        if (viewHistory) return getRouteAuditSortMs(b) - getRouteAuditSortMs(a);
+
+        const aMs = getScheduledRouteMs(a);
+        const bMs = getScheduledRouteMs(b);
+        const aStatusRank = getRouteMonitorStatusRank(a);
+        const bStatusRank = getRouteMonitorStatusRank(b);
+
+        if (routeSortMode === 'Conductor') {
+            const driverDiff = String(a?.driver || 'Sin conductor').localeCompare(
+                String(b?.driver || 'Sin conductor'),
+                'es'
+            );
+            if (driverDiff !== 0) return driverDiff;
+            if (aMs !== bMs) return aMs - bMs;
+            return aStatusRank - bStatusRank;
+        }
+
+        if (routeSortMode === 'Estado') {
+            if (aStatusRank !== bStatusRank) return aStatusRank - bStatusRank;
+            if (aMs !== bMs) return aMs - bMs;
+            return String(a?.driver || '').localeCompare(String(b?.driver || ''), 'es');
+        }
+
+        if (routeSortMode === 'Operativo') {
+            if (a.status === 'En Ruta' && b.status !== 'En Ruta') return -1;
+            if (b.status === 'En Ruta' && a.status !== 'En Ruta') return 1;
+            if (a.serviceType === 'Prioritario' && b.serviceType !== 'Prioritario') return -1;
+            if (b.serviceType === 'Prioritario' && a.serviceType !== 'Prioritario') return 1;
+
+            const now = Date.now();
+            const aPast = aMs < now && a.status !== 'En Ruta';
+            const bPast = bMs < now && b.status !== 'En Ruta';
+            if (aPast !== bPast) return aPast ? 1 : -1;
+            return aMs - bMs;
+        }
+
+        // Orden por hora (predeterminado):
+        // 1) rutas activas y del día, 2) futuras, 3) rezagadas de días anteriores.
+        // Dentro de cada grupo manda la hora planificada; el estado sólo desempata.
+        const aBucket = getRouteMonitorDateBucket(a);
+        const bBucket = getRouteMonitorDateBucket(b);
+        if (aBucket !== bBucket) return aBucket - bBucket;
+        if (aMs !== bMs) return aMs - bMs;
+        if (aStatusRank !== bStatusRank) return aStatusRank - bStatusRank;
+
+        const driverDiff = String(a?.driver || '').localeCompare(String(b?.driver || ''), 'es');
+        if (driverDiff !== 0) return driverDiff;
+
+        return String(a?.id || '').localeCompare(String(b?.id || ''), 'es');
+    });
+};
+
 
   const rutasVisibles = getFilteredAndSortedRoutes();
+  const activeRouteDriverOptions = Array.from(new Set(
+      liveRoutes
+          .filter(route => !['Finalizado', 'Completado', 'Cancelado'].includes(route?.status))
+          .map(route => String(route?.driver || '').trim())
+          .filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b, 'es'));
+
+  const activeRouteTimeOptions = Array.from(new Set(
+      liveRoutes
+          .filter(route => !['Finalizado', 'Completado', 'Cancelado'].includes(route?.status))
+          .map(getRouteScheduledTimeText)
+          .filter(Boolean)
+  )).sort((a, b) => a.localeCompare(b, 'es'));
   const effectiveDriverCountry = driverCountryFilter === 'Local' ? detectedLocalCountry : driverCountryFilter;
   const visibleOnlineDrivers = onlineDrivers.filter(driver => !effectiveDriverCountry || effectiveDriverCountry === 'Todos' || getDriverCountry(driver) === effectiveDriverCountry);
   const selectedRouteGeometry = selectedRoute && !['Finalizado', 'Completado', 'Cancelado'].includes(selectedRoute.status) ? getLiveGeometry(selectedRoute) : [];
@@ -1545,6 +1710,82 @@ function App() {
                         </div>
                     )}
 
+{!viewHistory && (
+    <div className="px-5 py-3 border-b border-slate-100 bg-white space-y-2">
+        <input
+            type="search"
+            value={routeSearchTerm}
+            onChange={(event) => setRouteSearchTerm(event.target.value)}
+            placeholder="Buscar conductor, cliente, origen, destino o ID..."
+            className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-700 bg-slate-50 outline-none focus:border-orange-400"
+        />
+
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
+            <select
+                value={routeDriverFilter}
+                onChange={(event) => setRouteDriverFilter(event.target.value)}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-700 bg-slate-50 outline-none focus:border-orange-400"
+            >
+                <option value="Todos">Todos los conductores</option>
+                {activeRouteDriverOptions.map(driverName => (
+                    <option key={driverName} value={driverName}>{driverName}</option>
+                ))}
+            </select>
+
+            <select
+                value={routeTimeFilter}
+                onChange={(event) => setRouteTimeFilter(event.target.value)}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-700 bg-slate-50 outline-none focus:border-orange-400"
+            >
+                <option value="Todos">Todas las horas</option>
+                {activeRouteTimeOptions.map(time => (
+                    <option key={time} value={time}>{time}</option>
+                ))}
+            </select>
+
+            <select
+                value={routeStatusFilter}
+                onChange={(event) => setRouteStatusFilter(event.target.value)}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-bold text-slate-700 bg-slate-50 outline-none focus:border-orange-400"
+            >
+                <option value="Todos">Todos los estados</option>
+                <option value="En Ruta">En Ruta</option>
+                <option value="Aceptada">Aceptada</option>
+                <option value="Pendiente">Pendiente</option>
+            </select>
+
+            <select
+                value={routeSortMode}
+                onChange={(event) => setRouteSortMode(event.target.value)}
+                className="w-full border border-slate-200 rounded-xl px-3 py-2.5 text-xs font-black text-slate-700 bg-orange-50 outline-none focus:border-orange-400"
+            >
+                <option value="Hora">Orden: hora</option>
+                <option value="Conductor">Orden: conductor</option>
+                <option value="Estado">Orden: estado</option>
+                <option value="Operativo">Orden: operativo</option>
+            </select>
+        </div>
+
+        {(routeSearchTerm || routeDriverFilter !== 'Todos' || routeTimeFilter !== 'Todos' || routeStatusFilter !== 'Todos' || routeSortMode !== 'Hora') && (
+            <div className="flex justify-end">
+                <button
+                    type="button"
+                    onClick={() => {
+                        setRouteSearchTerm('');
+                        setRouteDriverFilter('Todos');
+                        setRouteTimeFilter('Todos');
+                        setRouteStatusFilter('Todos');
+                        setRouteSortMode('Hora');
+                    }}
+                    className="px-3 py-2 rounded-xl border border-slate-200 text-[9px] font-black uppercase tracking-widest text-slate-500 hover:bg-slate-50"
+                >
+                    Limpiar filtros
+                </button>
+            </div>
+        )}
+    </div>
+)}
+
                     <div className="flex-1 overflow-y-auto p-5 space-y-4">
                         {rutasVisibles.length === 0 && <div className="text-center py-10 text-slate-400 text-sm font-medium"><p>{viewHistory ? 'No hay viajes pasados que coincidan con los filtros.' : 'No hay rutas pendientes hoy.'}</p></div>}
 
@@ -1557,6 +1798,52 @@ function App() {
                             
                             return (
                                 <div key={ruta.id} onClick={() => { setSelectedRoute(ruta); setManualMapInteraction(false); setFollowSelectedRoute(ruta.status === 'En Ruta'); }} className={`border-2 rounded-2xl p-4 transition-all shadow-sm cursor-pointer relative overflow-hidden ${selectedRoute?.id === ruta.id ? 'border-orange-500 bg-orange-50/30 shadow-orange-500/10' : 'bg-white border-slate-100 hover:border-slate-200 hover:shadow-md'} ${isCurrentProximityAlert(ruta) ? 'border-orange-400 bg-orange-50/50' : ''}`}>
+<div className={`mb-3 rounded-2xl bg-slate-900 text-white p-3 shadow-sm ${isCurrentProximityAlert(ruta) ? 'mt-5' : ''}`}>
+    <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 flex-wrap min-w-0">
+            <span className={`px-2.5 py-1 rounded-full text-[9px] font-black tracking-widest ${getRouteDirectionLabel(ruta) === 'SALIDA' ? 'bg-blue-500/20 text-blue-200 border border-blue-400/30' : getRouteDirectionLabel(ruta) === 'ENTRADA' ? 'bg-orange-500/20 text-orange-200 border border-orange-400/30' : 'bg-white/10 text-slate-200 border border-white/10'}`}>
+                {getRouteDirectionLabel(ruta)}
+            </span>
+            <span className="text-[9px] font-black text-slate-300 truncate">
+                {ruta.driver || 'Sin conductor'}
+            </span>
+        </div>
+        <div className="text-right shrink-0">
+            <p className="text-xl font-black text-orange-400 leading-none">
+                {getRouteScheduledTimeText(ruta) || '--:--'}
+            </p>
+            <p className="text-[8px] font-bold text-slate-400 mt-1">
+                {getRouteScheduledDateKey(ruta) || 'Sin fecha'}
+            </p>
+        </div>
+    </div>
+
+    <div className="mt-3 grid grid-cols-[1fr_auto_1fr] gap-2 items-start">
+        <div className="min-w-0">
+            <p className="text-[8px] font-black uppercase tracking-widest text-green-400">Origen</p>
+            <p className="text-sm font-black leading-snug mt-1 line-clamp-2">
+                {ruta.start || ruta.origin || 'Origen no registrado'}
+            </p>
+        </div>
+        <div className="text-orange-400 font-black text-lg pt-4">→</div>
+        <div className="min-w-0 text-right">
+            <p className="text-[8px] font-black uppercase tracking-widest text-red-400">Destino</p>
+            <p className="text-sm font-black leading-snug mt-1 line-clamp-2">
+                {ruta.end || ruta.destination || 'Destino no registrado'}
+            </p>
+        </div>
+    </div>
+
+    <div className="mt-3 flex items-center justify-between gap-2">
+        <p className="text-[9px] font-bold text-slate-300 truncate">
+            Cliente: {ruta.client || 'Sin cliente'}
+        </p>
+        <span className={`px-2 py-1 rounded-full text-[8px] font-black ${ruta.status === 'En Ruta' ? 'bg-green-500 text-white' : ruta.status === 'Aceptada' ? 'bg-violet-500/30 text-violet-100' : 'bg-slate-700 text-slate-200'}`}>
+            {ruta.status || 'Pendiente'}
+        </span>
+    </div>
+</div>
+
                                     {isCurrentProximityAlert(ruta) && <div className="absolute top-0 left-0 right-0 bg-orange-500 text-white text-[10px] font-black text-center py-1 flex items-center justify-center gap-1 animate-pulse"><BellRing className="w-3 h-3"/> ¡LLEGANDO A: {ruta.proximityAlert.passenger.toUpperCase()}!</div>}
 
                                     <div className={`flex justify-between items-start mb-3 ${isCurrentProximityAlert(ruta) ? 'mt-4' : ''}`}>

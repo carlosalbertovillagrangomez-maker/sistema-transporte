@@ -98,6 +98,8 @@ REGLAS CRÍTICAS:
 12. Si existen varias rutas, devuelve todas las personas con su route y order originales. TripLogix respetará esos grupos en vez de reoptimizarlos.
 13. Catálogo de empresas disponible: ${clientNames.join(', ') || 'sin catálogo disponible'}.
 14. Devuelve únicamente JSON válido siguiendo el esquema solicitado.
+15. summary, notes y cualquier observación deben estar SIEMPRE en español, aunque el archivo use otro idioma.
+16. Al cambiar entre ENTRADA/Ida y SALIDA/Regreso, vuelve a leer estructuralmente toda la fuente ya proporcionada y aplica únicamente el tipo seleccionado por el operador.
 
 TEXTO ADICIONAL DEL OPERADOR:
 ${userText || '(sin texto adicional)'}
@@ -110,6 +112,8 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
   const [showKey, setShowKey] = useState(false);
   const [userText, setUserText] = useState('');
   const [file, setFile] = useState(null);
+  const [preparedFile, setPreparedFile] = useState(null);
+  const [fileLoading, setFileLoading] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [result, setResult] = useState(null);
@@ -136,12 +140,74 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
     setModel(DEFAULT_MODEL);
   };
 
+  const clearPreparedFile = () => {
+    setFile(null);
+    setPreparedFile(null);
+    setFileLoading(false);
+    if (fileRef.current) fileRef.current.value = '';
+  };
+
+  const handleFileSelection = async (event) => {
+    const selectedFile = event.target.files?.[0] || null;
+    setError('');
+    setResult(null);
+    setApplyResult(null);
+
+    if (!selectedFile) {
+      clearPreparedFile();
+      return;
+    }
+
+    const lowerName = selectedFile.name.toLowerCase();
+    const isWorkbook = /.(xlsx|xls|csv)$/.test(lowerName);
+    const isImage = selectedFile.type.startsWith('image/') || /.(png|jpg|jpeg|webp|heic|heif)$/i.test(lowerName);
+
+    if (!isWorkbook && !isImage) {
+      clearPreparedFile();
+      setError('Formato no compatible. Usa Excel, CSV o una imagen.');
+      return;
+    }
+
+    setFile({
+      name: selectedFile.name,
+      type: selectedFile.type || '',
+      size: Number(selectedFile.size) || 0
+    });
+    setPreparedFile(null);
+    setFileLoading(true);
+
+    try {
+      if (isWorkbook) {
+        const workbookText = await workbookToPromptText(selectedFile);
+        setPreparedFile({
+          kind: 'workbook',
+          name: selectedFile.name,
+          text: workbookText
+        });
+      } else {
+        const base64 = await fileToBase64(selectedFile);
+        setPreparedFile({
+          kind: 'image',
+          name: selectedFile.name,
+          mimeType: selectedFile.type || 'image/jpeg',
+          data: base64
+        });
+      }
+    } catch (fileError) {
+      console.error('No se pudo preparar el archivo:', fileError);
+      clearPreparedFile();
+      setError('No se pudo leer el archivo seleccionado. Vuelve a seleccionarlo una sola vez y TripLogix conservará una copia procesada para reutilizarla en Entradas y Salidas.');
+    } finally {
+      setFileLoading(false);
+    }
+  };
+
   const analyze = async () => {
     const cleanKey = apiKey.trim();
     if (!cleanKey) return setError('Agrega tu API key de Gemini antes de analizar.');
     if (!selectedCompany) return setError('Selecciona la empresa antes de analizar.');
     if (!selectedDate) return setError('Selecciona la fecha del servicio antes de analizar.');
-    if (!userText.trim() && !file) return setError('Pega texto o selecciona una foto/Excel.');
+    if (!userText.trim() && !preparedFile) return setError(fileLoading ? 'Espera a que termine de preparar el archivo.' : 'Pega texto o selecciona una foto/Excel.');
 
     setLoading(true);
     setError('');
@@ -157,20 +223,17 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
         })
       }];
 
-      if (file) {
-        const lowerName = file.name.toLowerCase();
-        const isWorkbook = /\.(xlsx|xls|csv)$/.test(lowerName);
-        const isImage = file.type.startsWith('image/') || /\.(png|jpg|jpeg|webp|heic|heif)$/i.test(lowerName);
-
-        if (isWorkbook) {
-          const workbookText = await workbookToPromptText(file);
-          parts.push({ text: `\nCONTENIDO DEL ARCHIVO ${file.name}:\n${workbookText}` });
-        } else if (isImage) {
-          const base64 = await fileToBase64(file);
-          parts.push({ inlineData: { mimeType: file.type || 'image/jpeg', data: base64 } });
-        } else {
-          throw new Error('Formato no compatible. Usa Excel, CSV o una imagen.');
-        }
+      if (preparedFile?.kind === 'workbook') {
+        parts.push({
+          text: `\nCONTENIDO DEL ARCHIVO ${preparedFile.name}:\n${preparedFile.text}`
+        });
+      } else if (preparedFile?.kind === 'image') {
+        parts.push({
+          inlineData: {
+            mimeType: preparedFile.mimeType || 'image/jpeg',
+            data: preparedFile.data
+          }
+        });
       }
 
       const activeModel = (model || DEFAULT_MODEL).trim();
@@ -338,7 +401,7 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
 
                 <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
                   <div className="flex items-center gap-2 mb-3"><Upload className="w-4 h-4 text-slate-600"/><p className="font-black text-sm text-slate-800">Foto, Excel o CSV</p></div>
-                  <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,image/*" onChange={event => setFile(event.target.files?.[0] || null)} className="hidden"/>
+                  <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,image/*" onChange={handleFileSelection} className="hidden"/>
                   <button type="button" onClick={() => fileRef.current?.click()} className="w-full min-h-[180px] rounded-2xl border-2 border-dashed border-slate-300 bg-white flex flex-col items-center justify-center gap-3 hover:border-violet-400 hover:bg-violet-50 transition">
                     {file ? (
                       <>
@@ -354,11 +417,13 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
                       </>
                     )}
                   </button>
-                  {file && <button type="button" onClick={() => { setFile(null); if (fileRef.current) fileRef.current.value = ''; }} className="mt-2 inline-flex items-center gap-1 text-[10px] font-black text-red-500"><Trash2 className="w-3 h-3"/> Quitar archivo</button>}
+                  {file && <button type="button" onClick={clearPreparedFile} className="mt-2 inline-flex items-center gap-1 text-[10px] font-black text-red-500"><Trash2 className="w-3 h-3"/> Quitar archivo</button>}
+                  {fileLoading && <p className="mt-2 text-[10px] font-bold text-violet-600 flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin"/> Preparando archivo para reutilizarlo...</p>}
+                  {file && preparedFile && !fileLoading && <p className="mt-2 text-[10px] font-bold text-emerald-600">Archivo listo. Puedes cambiar Entrada/Salida y analizar nuevamente sin volver a seleccionarlo.</p>}
                 </div>
               </div>
 
-              <button type="button" disabled={loading} onClick={analyze} className="w-full rounded-2xl bg-violet-600 hover:bg-violet-700 text-white py-3.5 font-black text-sm flex items-center justify-center gap-2 disabled:opacity-60">
+              <button type="button" disabled={loading || fileLoading} onClick={analyze} className="w-full rounded-2xl bg-violet-600 hover:bg-violet-700 text-white py-3.5 font-black text-sm flex items-center justify-center gap-2 disabled:opacity-60">
                 {loading ? <><Loader2 className="w-5 h-5 animate-spin"/> Analizando programación...</> : <><Sparkles className="w-5 h-5"/> Analizar con Gemini</>}
               </button>
 

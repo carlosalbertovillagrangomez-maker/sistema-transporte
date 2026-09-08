@@ -1703,7 +1703,9 @@ export default function Planificacion() {
                       address: oficina.address,
                       lat: Number(oficina.lat),
                       lng: Number(oficina.lng ?? oficina.lon),
-                      employees: []
+                      // En SALIDAS todos los pasajeros se validan primero en la empresa.
+                      // El conductor decide quién realmente abordó antes de visitar domicilios.
+                      employees: passengerStops.flatMap(stop => stop.employees || [])
                   }, ...passengerStops];
 
               const routedPointAt = (index, fallback) => {
@@ -1828,9 +1830,20 @@ export default function Planificacion() {
                       stopType: routePoint.stopType
                   };
 
-                  if (schedules.length > 1 || routePoint.stopType === 'shared_meeting') {
+                  const isSalidaOfficeManifest =
+                      globalCarpool.mode === 'Regreso' &&
+                      routePoint.stopType === 'office' &&
+                      schedules.length > 0;
+
+                  if (schedules.length > 1 || routePoint.stopType === 'shared_meeting' || isSalidaOfficeManifest) {
                       saved.passengersSchedule = schedules;
-                      saved.sharedMeetingPoint = true;
+                      if (schedules.length > 1 || routePoint.stopType === 'shared_meeting') {
+                          saved.sharedMeetingPoint = true;
+                      }
+                      if (isSalidaOfficeManifest) {
+                          saved.boardingManifest = true;
+                          saved.boardingManifestRequired = true;
+                      }
                   }
 
                   const pointPlannedTime = schedules

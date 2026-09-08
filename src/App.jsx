@@ -1129,6 +1129,21 @@ function App() {
           : '¿Confirmas cancelar este viaje? La ruta se conservará en historial para auditoría.';
       if (!window.confirm(confirmationText)) return;
 
+      const plannedDistanceKm = Math.max(
+          0,
+          Number(route?.originalPlan?.totalDistance) || 0,
+          Number(route?.technicalData?.totalDistance) || 0
+      );
+      const executedDistanceKm = hasExecution
+          ? Math.max(
+              0,
+              Number(route?.realDistanceDriven) || 0,
+              Number(route?.officialGoogleDistanceKm) || 0,
+              Number(route?.googleMatchedDistanceKm) || 0,
+              Number(route?.actualDistanceKm) || 0
+          )
+          : 0;
+
       const now = new Date().toISOString();
       try {
           await updateDoc(doc(db, 'rutas', route.id), {
@@ -1137,6 +1152,16 @@ function App() {
               canceledAt: now,
               canceledBy: currentUser?.name || 'Despacho',
               cancelPreviousStatus: route.status || '',
+              cancelExecutionStarted: hasExecution,
+              cancelPlannedDistanceKm: Math.round(plannedDistanceKm * 100) / 100,
+              cancelExecutedDistanceKm: Math.round(executedDistanceKm * 100) / 100,
+              cancelDistancePolicy: 'planned_kept_for_audit_executed_counts_operational',
+              cancellationDistance: {
+                  executionStarted: hasExecution,
+                  plannedDistanceKm: Math.round(plannedDistanceKm * 100) / 100,
+                  executedDistanceKm: Math.round(executedDistanceKm * 100) / 100,
+                  policy: 'planned_kept_for_audit_executed_counts_operational'
+              },
               'proximityAlert.active': false,
               lastUpdate: now
           });

@@ -390,10 +390,12 @@ export default function Historial() {
 
   // === FILTRADO Y ORDEN DESCENDENTE POR CIERRE REAL ===
   const filteredRoutes = useMemo(() => {
-    let result = allRoutes.filter(route => ['Finalizado', 'Completado', 'Cancelado'].includes(route.status));
+    let result = allRoutes.filter(route => ['Finalizado', 'Completado', 'Cancelado', 'No realizado'].includes(route.status));
 
     if (serviceTab === 'Inmediatos') result = result.filter(route => route.serviceType === 'Prioritario');
     if (serviceTab === 'Programados') result = result.filter(route => route.serviceType === 'Programado');
+    if (serviceTab === 'Cancelados') result = result.filter(route => route.status === 'Cancelado');
+    if (serviceTab === 'No realizados') result = result.filter(route => route.status === 'No realizado');
 
     if (filterDateStart) result = result.filter(route => getDateKey(
         (route.status === 'Cancelado' ? getCancellationTimestamp(route) : null) || route.actualEndTimestamp || route.finishedAt || route.completedAt || route.finalDate || route.scheduledDate || route.createdDate
@@ -562,7 +564,7 @@ export default function Historial() {
 
       <div className="bg-white p-3 rounded-xl shadow-sm border border-slate-200 mb-4 flex flex-col lg:flex-row lg:items-center gap-3">
           <div className="flex gap-2 flex-wrap">
-              {['Todos', 'Inmediatos', 'Programados'].map(tab => (
+              {['Todos', 'Inmediatos', 'Programados', 'Cancelados', 'No realizados'].map(tab => (
                   <button key={tab} type="button" onClick={() => setServiceTab(tab)} className={`px-4 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition ${serviceTab === tab ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>
                       {tab}
                   </button>

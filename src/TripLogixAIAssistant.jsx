@@ -57,12 +57,14 @@ const responseSchema = {
           time: { type: 'STRING' },
           referenceTime: { type: 'STRING' },
           address: { type: 'STRING' },
+          meetingPoint: { type: 'STRING' },
+          meetingPointAddress: { type: 'STRING' },
           phone: { type: 'STRING' },
           driver: { type: 'STRING' },
           route: { type: 'STRING' },
           order: { type: 'INTEGER' }
         },
-        required: ['name', 'time', 'referenceTime', 'address', 'phone', 'driver', 'route', 'order']
+        required: ['name', 'time', 'referenceTime', 'address', 'meetingPoint', 'meetingPointAddress', 'phone', 'driver', 'route', 'order']
       }
     }
   },
@@ -91,7 +93,10 @@ REGLAS CRÍTICAS:
 5. Para SALIDA/Regreso, time es la HORA OFICIAL DE SALIDA DE LA EMPRESA. Si existe hora de paso/entrega, colócala EXACTAMENTE en referenceTime, sin modificarla.
 6. Si la fuente asigna una RUTA a cada pasajero, route es AUTORITATIVO: conserva exactamente la ruta de cada persona. Personas de rutas distintas jamás deben intercambiarse. Conserva también el orden original en order.
 7. Si la fuente asigna un CONDUCTOR, conserva el nombre exactamente en driver para cada pasajero/ruta. No lo omitas ni lo sustituyas.
-8. address debe ser el domicilio o punto de recogida/entrega más completo que aparezca en la fuente. No uses textos genéricos como "PROGRAMAR RUTA" como domicilio.
+8. address debe conservar el domicilio personal más completo del pasajero cuando exista. No uses textos genéricos como "PROGRAMAR RUTA" como domicilio.
+8A. Si la fuente contiene PUNTO INTERMEDIO, PUNTO DE RECOGIDA, PUNTO DE ENCUENTRO, PARADA, PLAZA, SUCURSAL o equivalente, NO lo ignores: devuelve el nombre exacto en meetingPoint.
+8B. Si el punto intermedio trae dirección explícita, colócala en meetingPointAddress. Si solo trae un alias como "Plaza Vallarta" o "China City", deja meetingPointAddress vacío; TripLogix lo resolverá contra las ubicaciones configuradas de la empresa y no debe adivinar otra ciudad.
+8C. El punto intermedio es autoritativo para el recorrido de ese pasajero tanto en ENTRADA como en SALIDA y debe prevalecer sobre el domicilio particular.
 9. phone debe contener solo el teléfono encontrado, sin inventarlo.
 10. Si detectas bloques o columnas que podrían confundirse, prioriza encabezados explícitos como RUTA, CONDUCTOR, HORA PASO, HORA ENTRADA, HORA SALIDA, DOMICILIO y PASAJERO.
 11. Si RUTA o CONDUCTOR aparecen una sola vez encabezando un bloque, por celdas combinadas o como dato común de varias filas, propaga ese valor a todas las personas de ese bloque. Eso es lectura estructural del archivo, no invención.
@@ -272,6 +277,8 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
           time: cleanTime(row?.time),
           referenceTime: cleanTime(row?.referenceTime),
           address: String(row?.address || '').trim(),
+          meetingPoint: String(row?.meetingPoint || '').trim(),
+          meetingPointAddress: String(row?.meetingPointAddress || '').trim(),
           phone: String(row?.phone || '').replace(/[^\d+]/g, ''),
           driver: String(row?.driver || '').trim(),
           route: String(row?.route || '').trim(),

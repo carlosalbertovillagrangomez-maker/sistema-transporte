@@ -240,6 +240,44 @@ const getRouteScheduledTimeText = (route) => {
     return `${String(Number(match[1])).padStart(2, '0')}:${match[2]}`;
 };
 
+const CLOSED_OPERATIONAL_STATUSES = Object.freeze([
+    'Finalizado',
+    'Completado',
+    'Cancelado',
+    'No realizado'
+]);
+
+const isClosedOperationalRoute = (route) =>
+    CLOSED_OPERATIONAL_STATUSES.includes(String(route?.status || ''));
+
+const isEnterpriseAssignedRoute = (route) => Boolean(
+    String(route?.serviceType || '').toLowerCase() === 'programado' ||
+    String(route?.scheduleSource || '').toLowerCase() === 'gemini'
+);
+
+const isOverdueUnexecutedRoute = (route, nowMs = Date.now()) => {
+    if (!route || isClosedOperationalRoute(route)) return false;
+    if (route?.status === 'En Ruta') return false;
+    if (route?.actualStartTimestamp || route?.navigationStartedAt || route?.startedAt) return false;
+    if (route?.firstStopAttendedTimestamp || route?.firstBoardingTimestamp) return false;
+
+    const dateKey = getRouteScheduledDateKey(route);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) return false;
+
+    const todayKey = new Date(nowMs).toLocaleDateString('en-CA');
+    if (dateKey < todayKey) return true;
+    if (dateKey > todayKey) return false;
+
+    const timeText = getRouteScheduledTimeText(route);
+    const match = String(timeText || '').match(/^(\d{1,2}):(\d{2})/);
+    if (!match) return false;
+
+    const scheduled = new Date(`${dateKey}T${String(Number(match[1])).padStart(2, '0')}:${match[2]}:00`).getTime();
+    if (!Number.isFinite(scheduled)) return false;
+
+    return nowMs - scheduled >= 90 * 60 * 1000;
+};
+
 const normalizeRouteSearchText = (value) => String(value || '')
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
@@ -539,6 +577,7 @@ const getRouteCountry = (route) => {
 };
 
 const isCurrentProximityAlert = (route) => {
+    if (isClosedOperationalRoute(route)) return false;
     if (!route?.proximityAlert?.active) return false;
     const currentStop = Number(route?.currentStopIndex ?? route?.nextStopIdx ?? route?.liveNavigation?.stopIndex ?? 0);
     const alertStop = Number(route?.proximityAlert?.stopIndex ?? currentStop);
@@ -693,6 +732,7 @@ function App() {
   const [manualMapInteraction, setManualMapInteraction] = useState(false);
 
   const [liveRoutes, setLiveRoutes] = useState([]);
+  const [allDrivers, setAllDrivers] = useState([]);
   const [onlineDrivers, setOnlineDrivers] = useState([]); 
   const [editingRoute, setEditingRoute] = useState(null); 
   const [viewHistory, setViewHistory] = useState(false);
@@ -816,7 +856,11 @@ function App() {
     const qDrivers = query(collection(db, "conductores"));
     const unsubDrivers = onSnapshot(qDrivers, (snapshot) => {
         const driversArr = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setOnlineDrivers(driversArr.filter(d => d.isOnline && d.status === 'Aprobado'));
+        const approvedDrivers = driversArr
+            .filter(driver => driver?.status === 'Aprobado')
+            .sort((a, b) => String(a?.name || '').localeCompare(String(b?.name || ''), 'es'));
+        setAllDrivers(approvedDrivers);
+        setOnlineDrivers(approvedDrivers.filter(driver => driver?.isOnline));
     });
 
     return () => { unsubRoutes(); unsubDrivers(); };
@@ -834,6 +878,29 @@ function App() {
       const interval = setInterval(() => setClockTick(Date.now()), 5000);
       return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+      if (!currentUser || currentUser?.role === 'EmpresaMonitor') return;
+
+      const overdue = liveRoutes.filter(route => isOverdueUnexecutedRoute(route, clockTick));
+      if (overdue.length === 0) return;
+
+      overdue.slice(0, 20).forEach(route => {
+          const now = new Date().toISOString();
+          updateDoc(doc(db, 'rutas', route.id), {
+              status: 'No realizado',
+              reviewRequired: true,
+              reviewReason: 'Servicio vencido sin inicio registrado',
+              missedTripAt: now,
+              missedTripPreviousStatus: route?.status || '',
+              ofertaEstado: 'Vencida',
+              ofertaPara: '',
+              ofertaNombre: '',
+              'proximityAlert.active': false,
+              lastUpdate: now
+          }).catch(error => console.warn('No se pudo archivar un servicio vencido:', route.id, error));
+      });
+  }, [liveRoutes, clockTick, currentUser?.id, currentUser?.role]);
 
   useEffect(() => {
       if (selectedRouteListenerRef.current) {
@@ -1093,7 +1160,12 @@ function App() {
           endTime: now.toLocaleTimeString('es-419', { hour: '2-digit', minute: '2-digit' }),
           actualEndTime: now.toLocaleTimeString('es-419', { hour: '2-digit', minute: '2-digit' }),
           actualEndTimestamp: now.toISOString(),
-          finishedAt: now.toISOString()
+          finishedAt: now.toISOString(),
+          ofertaEstado: 'Finalizada',
+          ofertaPara: '',
+          ofertaNombre: '',
+          reviewRequired: false,
+          'proximityAlert.active': false
       });
   };
 
@@ -1156,6 +1228,9 @@ function App() {
               cancelPlannedDistanceKm: Math.round(plannedDistanceKm * 100) / 100,
               cancelExecutedDistanceKm: Math.round(executedDistanceKm * 100) / 100,
               cancelDistancePolicy: 'planned_kept_for_audit_executed_counts_operational',
+              ofertaEstado: 'Cancelada',
+              ofertaPara: '',
+              ofertaNombre: '',
               cancellationDistance: {
                   executionStarted: hasExecution,
                   plannedDistanceKm: Math.round(plannedDistanceKm * 100) / 100,
@@ -1196,8 +1271,13 @@ function App() {
   // LÓGICA DE REASIGNACIÓN
   const confirmReassignDriver = async () => {
       if (!newDriverSelection || !reassigningRoute) return alert("Selecciona un conductor primero.");
-      const selectedDriverObj = onlineDrivers.find(d => d.id === newDriverSelection);
-      if (!selectedDriverObj) return;
+      if (isClosedOperationalRoute(reassigningRoute)) {
+          setReassigningRoute(null);
+          setNewDriverSelection('');
+          return alert('Este viaje ya está en historial y no puede reasignarse.');
+      }
+      const selectedDriverObj = allDrivers.find(d => d.id === newDriverSelection);
+      if (!selectedDriverObj) return alert('No se encontró el conductor seleccionado.');
 
       try {
           await updateDoc(doc(db, "rutas", reassigningRoute.id), {
@@ -1271,11 +1351,15 @@ function App() {
 
 const getFilteredAndSortedRoutes = () => {
     let filtered = liveRoutes.filter(ruta => viewHistory
-        ? ['Finalizado', 'Completado', 'Cancelado'].includes(ruta.status)
-        : !['Finalizado', 'Completado', 'Cancelado'].includes(ruta.status)
+        ? isClosedOperationalRoute(ruta)
+        : !isClosedOperationalRoute(ruta)
     );
 
-    if (viewHistory && historyServiceFilter !== 'Todos') {
+    if (viewHistory && historyServiceFilter === 'Cancelados') {
+        filtered = filtered.filter(ruta => ruta?.status === 'Cancelado');
+    } else if (viewHistory && historyServiceFilter === 'No realizados') {
+        filtered = filtered.filter(ruta => ruta?.status === 'No realizado');
+    } else if (viewHistory && historyServiceFilter !== 'Todos') {
         filtered = filtered.filter(ruta => getHistoryServiceKind(ruta) === historyServiceFilter);
     }
 
@@ -1384,20 +1468,20 @@ const getFilteredAndSortedRoutes = () => {
   const rutasVisibles = getFilteredAndSortedRoutes();
   const activeRouteDriverOptions = Array.from(new Set(
       liveRoutes
-          .filter(route => !['Finalizado', 'Completado', 'Cancelado'].includes(route?.status))
+          .filter(route => !CLOSED_OPERATIONAL_STATUSES.includes(route?.status))
           .map(route => String(route?.driver || '').trim())
           .filter(Boolean)
   )).sort((a, b) => a.localeCompare(b, 'es'));
 
   const activeRouteTimeOptions = Array.from(new Set(
       liveRoutes
-          .filter(route => !['Finalizado', 'Completado', 'Cancelado'].includes(route?.status))
+          .filter(route => !CLOSED_OPERATIONAL_STATUSES.includes(route?.status))
           .map(getRouteScheduledTimeText)
           .filter(Boolean)
   )).sort((a, b) => a.localeCompare(b, 'es'));
   const effectiveDriverCountry = driverCountryFilter === 'Local' ? detectedLocalCountry : driverCountryFilter;
   const visibleOnlineDrivers = onlineDrivers.filter(driver => !effectiveDriverCountry || effectiveDriverCountry === 'Todos' || getDriverCountry(driver) === effectiveDriverCountry);
-  const selectedRouteGeometry = selectedRoute && !['Finalizado', 'Completado', 'Cancelado'].includes(selectedRoute.status) ? getLiveGeometry(selectedRoute) : [];
+  const selectedRouteGeometry = selectedRoute && !isClosedOperationalRoute(selectedRoute) ? getLiveGeometry(selectedRoute) : [];
   const selectedPlannedGeometry = selectedRoute ? getPlannedGeometry(selectedRoute) : [];
   const selectedTravelledSegments = selectedRoute ? splitGpsTraceSegments(selectedRoute?.rutaReal) : [];
   const selectedRouteDriverLocation = selectedRoute ? getBestDriverLocation(selectedRoute, onlineDrivers) : null;
@@ -1624,11 +1708,11 @@ const getFilteredAndSortedRoutes = () => {
                     </div>
 
                     {(selectedRoute || selectedOnlineDriver) && (
-                        <div className="absolute top-[4.5rem] right-4 z-[700] bg-slate-900/90 text-white px-3 py-2 rounded-xl shadow-lg border border-white/10 max-w-[260px]">
-                            <p className="text-[8px] font-black uppercase tracking-widest text-orange-300">Viendo conductor</p>
-                            <p className="text-xs font-black truncate">{selectedRoute?.driver || selectedOnlineDriver?.name || 'Conductor'}</p>
+                        <div className="absolute top-[4.25rem] right-2 sm:right-4 z-[700] bg-slate-900/90 text-white px-2.5 py-1.5 sm:px-3 sm:py-2 rounded-xl shadow-lg border border-white/10 max-w-[155px] sm:max-w-[260px] pointer-events-none">
+                            <p className="text-[7px] sm:text-[8px] font-black uppercase tracking-widest text-orange-300">Viendo conductor</p>
+                            <p className="text-[10px] sm:text-xs font-black truncate">{selectedRoute?.driver || selectedOnlineDriver?.name || 'Conductor'}</p>
                             {selectedRoute && selectedPassengerNames.length > 0 && (
-                                <p className="text-[9px] font-bold text-slate-200 mt-1 line-clamp-2">
+                                <p className="hidden sm:block text-[9px] font-bold text-slate-200 mt-1 line-clamp-2">
                                     Lleva: {selectedPassengerNames.join(' · ')}
                                 </p>
                             )}
@@ -1714,6 +1798,8 @@ const getFilteredAndSortedRoutes = () => {
                                 <option value="Todos">Todos los viajes</option>
                                 <option value="Inmediatos">Inmediatos</option>
                                 <option value="Programados">Programados</option>
+                                <option value="Cancelados">Cancelados</option>
+                                <option value="No realizados">No realizados / revisar</option>
                             </select>
                             <input
                                 type="date"
@@ -1885,7 +1971,7 @@ const getFilteredAndSortedRoutes = () => {
                                     </div>
 
                                     {/* --- AQUÍ ESTÁ EL BOTÓN DE REASIGNACIÓN --- */}
-                                    {ruta.ofertaEstado === 'Pendiente' ? (
+                                    {!viewHistory && !isClosedOperationalRoute(ruta) && ruta.ofertaEstado === 'Pendiente' && !isEnterpriseAssignedRoute(ruta) ? (
                                         <div className="bg-yellow-50 border border-yellow-200 text-yellow-700 text-[10px] font-black px-3 py-2 rounded-xl uppercase flex items-center justify-between gap-2 mb-4 animate-pulse">
                                             <div className="flex items-center gap-2">
                                                 <Loader2 className="w-3 h-3 animate-spin"/> OFRECIENDO A: {ruta.ofertaNombre?.split(' ')[0]}
@@ -1956,6 +2042,7 @@ const getFilteredAndSortedRoutes = () => {
                                         {ruta.status === 'En Ruta' && (<button onClick={(e) => { e.stopPropagation(); handleEndTrip(ruta.id); }} className="flex-1 bg-red-500 hover:bg-red-600 text-white py-2.5 rounded-xl text-[10px] uppercase tracking-widest font-black flex items-center justify-center gap-2 transition shadow-sm animate-pulse shadow-red-500/20"><CheckSquare className="w-3 h-3" /> FINALIZAR</button>)}
                                         {['Finalizado', 'Completado'].includes(ruta.status) && <div className="w-full text-center text-[10px] tracking-widest font-black text-green-600 py-2.5 bg-green-50 rounded-xl border border-green-100 uppercase">✅ FINALIZADO</div>}
                                         {ruta.status === 'Cancelado' && <div className="w-full text-center text-[10px] tracking-widest font-black text-red-600 py-2.5 bg-red-50 rounded-xl border border-red-100 uppercase">✕ CANCELADO · {getCancellationReason(ruta)} · {getCancellationActor(ruta)}</div>}
+{ruta.status === 'No realizado' && <div className="w-full text-center text-[10px] tracking-widest font-black text-amber-700 py-2.5 bg-amber-50 rounded-xl border border-amber-200 uppercase">⚠ NO REALIZADO · REVISAR POR COORDINACIÓN</div>}
                                     </div>
                                 </div>
                             );
@@ -2153,9 +2240,9 @@ const getFilteredAndSortedRoutes = () => {
                               value={newDriverSelection}
                               onChange={(e) => setNewDriverSelection(e.target.value)}
                           >
-                              <option value="">👤 Seleccionar chofer disponible...</option>
-                              {onlineDrivers.filter(d => d.id !== reassigningRoute.driverId).map(d => (
-                                  <option key={d.id} value={d.id}>{d.name}</option>
+                              <option value="">👤 Seleccionar conductor...</option>
+                              {allDrivers.filter(d => d.id !== reassigningRoute.driverId).map(d => (
+                                  <option key={d.id} value={d.id}>{d.name}{d.isOnline ? ' · En línea' : ' · Fuera de línea'}</option>
                               ))}
                           </select>
                       </div>

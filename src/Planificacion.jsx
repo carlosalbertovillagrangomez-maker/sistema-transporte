@@ -334,6 +334,29 @@ const buildPassengerStopsForGroup = (group) => {
     const usedMeetingPoints = new Set();
 
     (group?.employees || []).forEach(employee => {
+        const aiMeetingKey = String(employee?.aiMeetingPointKey || '').trim();
+        if (aiMeetingKey) {
+            const key = `ai:${aiMeetingKey}`;
+            if (usedMeetingPoints.has(key)) return;
+            usedMeetingPoints.add(key);
+
+            const assignedEmployees = (group.employees || []).filter(item =>
+                String(item?.aiMeetingPointKey || '').trim() === aiMeetingKey
+            );
+
+            stops.push({
+                stopType: 'shared_meeting',
+                id: key,
+                address: employee.address,
+                lat: Number(employee.lat),
+                lng: Number(employee.lng ?? employee.lon),
+                employees: assignedEmployees,
+                aiMeetingPoint: true,
+                aiMeetingPointLabel: employee?.aiMeetingPointLabel || ''
+            });
+            return;
+        }
+
         const meetingPoint = getEmployeeMeetingPoint(group, employee.assignedTo);
         if (meetingPoint) {
             const key = String(meetingPoint.id || meetingPoint.address);
@@ -1068,8 +1091,31 @@ export default function Planificacion() {
           seenNames.add(normalizedName);
 
           const userData = (clientObj.users || []).find(user => normalizeAiValue(user?.name) === normalizedName) || {};
-          const savedLocation = (clientObj.locations || []).find(location => normalizeAiValue(location?.assignedTo) === normalizedName) || null;
-          const rawAddress = savedLocation?.address || row?.address || '';
+          const homeSavedLocation = (clientObj.locations || []).find(location => normalizeAiValue(location?.assignedTo) === normalizedName) || null;
+
+          const aiMeetingPointLabel = String(row?.meetingPoint || '').trim();
+          const aiMeetingPointAddress = String(row?.meetingPointAddress || '').trim();
+          const normalizedMeetingLabel = normalizeAiValue(aiMeetingPointLabel);
+          const normalizedMeetingAddress = normalizeAiValue(aiMeetingPointAddress);
+
+          const configuredMeetingLocation = aiMeetingPointLabel
+              ? (clientObj.locations || []).find(location => {
+                  const aliases = [location?.alias, location?.name, location?.assignedTo, location?.address]
+                      .map(normalizeAiValue)
+                      .filter(Boolean);
+                  return aliases.some(value =>
+                      value === normalizedMeetingLabel ||
+                      (normalizedMeetingLabel.length >= 5 && (value.includes(normalizedMeetingLabel) || normalizedMeetingLabel.includes(value))) ||
+                      (normalizedMeetingAddress && value === normalizedMeetingAddress)
+                  );
+              }) || null
+              : null;
+
+          const hasExplicitMeetingPoint = Boolean(aiMeetingPointLabel || aiMeetingPointAddress);
+          const savedLocation = hasExplicitMeetingPoint ? configuredMeetingLocation : homeSavedLocation;
+          const rawAddress = hasExplicitMeetingPoint
+              ? (configuredMeetingLocation?.address || aiMeetingPointAddress || '')
+              : (homeSavedLocation?.address || row?.address || '');
           let lat = Number(savedLocation?.lat);
           let lng = Number(savedLocation?.lng ?? savedLocation?.lon);
           let finalAddress = rawAddress;
@@ -1102,7 +1148,13 @@ export default function Planificacion() {
               aiReferenceTime: row?.referenceTime || '',
               aiRoute: row?.route || '',
               aiOrder: Number(row?.order) || 0,
-              aiDriver: row?.driver || ''
+              aiDriver: row?.driver || '',
+              aiOriginalAddress: String(row?.address || '').trim(),
+              aiMeetingPointLabel,
+              aiMeetingPointAddress: configuredMeetingLocation?.address || aiMeetingPointAddress || '',
+              aiMeetingPointKey: aiMeetingPointLabel
+                  ? normalizeAiValue(configuredMeetingLocation?.alias || configuredMeetingLocation?.address || aiMeetingPointLabel)
+                  : ''
           });
       }
 

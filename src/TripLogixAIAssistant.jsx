@@ -7,12 +7,122 @@ const GEMINI_MODEL_STORAGE = 'triplogix_gemini_model';
 const DEFAULT_MODEL = 'gemini-2.5-flash';
 
 const cleanTime = (value = '') => {
-  const raw = String(value || '').trim();
-  const match = raw.match(/(\d{1,2})[:.]?(\d{2})/);
-  if (!match) return '';
-  const h = Math.min(23, Number(match[1]));
-  const m = Math.min(59, Number(match[2]));
+  if (value === null || value === undefined) return '';
+  const raw = String(value).trim().replace(',', '.');
+  if (!raw) return '';
+
+  const colonMatch = raw.match(/^(\d{1,2}):(\d{1,2})$/);
+  if (colonMatch) {
+    let h = Number(colonMatch[1]);
+    const m = Number(colonMatch[2]);
+    if (h === 24 && m === 0) h = 0;
+    if (h < 0 || h > 23 || m < 0 || m > 59) return '';
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+  }
+
+  const numericMatch = raw.match(/^(\d{1,2})(?:\.(\d{1,2}))?$/);
+  if (!numericMatch) return '';
+
+  let h = Number(numericMatch[1]);
+  const minuteToken = numericMatch[2] || '';
+  const m = minuteToken
+    ? Number(minuteToken.length === 1 ? `${minuteToken}0` : minuteToken)
+    : 0;
+
+  if (h === 24 && m === 0) h = 0;
+  if (h < 0 || h > 23 || m < 0 || m > 59) return '';
+
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+};
+
+const normalizeWorkbookKey = (value = '') => String(value || '')
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .replace(/\s+/g, ' ')
+  .trim()
+  .toLocaleLowerCase('es');
+
+const cleanWorkbookCell = (value) => String(value ?? '')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+const normalizeWorkbookPhone = (...values) => {
+  for (const value of values) {
+    const digits = String(value ?? '').replace(/\D/g, '');
+    if (digits.length >= 10 && digits.length <= 15) return digits;
+  }
+  return '';
+};
+
+const getWorkbookRows = (workbook, expectedName, raw = true) => {
+  const expectedKey = normalizeWorkbookKey(expectedName);
+  const sheetName = workbook.SheetNames.find(name => normalizeWorkbookKey(name) === expectedKey);
+  if (!sheetName) return [];
+
+  return XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
+    header: 1,
+    defval: '',
+    raw,
+    blankrows: false
+  });
+};
+
+const buildStructuredWorkbookRows = (workbook) => {
+  const programRows = getWorkbookRows(workbook, 'Programación', true);
+  if (programRows.length < 3) return [];
+
+  const references = new Map();
+
+  const mergeReference = (name, incoming = {}) => {
+    const key = normalizeWorkbookKey(name);
+    if (!key) return;
+    const current = references.get(key) || {};
+    references.set(key, {
+      homeAddress: current.homeAddress || incoming.homeAddress || '',
+      phone: current.phone || incoming.phone || ''
+    });
+  };
+
+  const directoryRows = getWorkbookRows(workbook, 'Directorio', true);
+  directoryRows.slice(1).forEach(row => {
+    mergeReference(row?.[0], {
+      homeAddress: cleanWorkbookCell(row?.[1]),
+      phone: normalizeWorkbookPhone(row?.[4])
+    });
+  });
+
+  const bdRows = getWorkbookRows(workbook, 'BD', true);
+  bdRows.slice(1).forEach(row => {
+    mergeReference(row?.[1], {
+      homeAddress: cleanWorkbookCell(row?.[2]),
+      phone: normalizeWorkbookPhone(row?.[7])
+    });
+  });
+
+  return programRows.slice(2).map((row, rowIndex) => {
+    const name = cleanWorkbookCell(row?.[2]);
+    if (!name) return null;
+
+    const reference = references.get(normalizeWorkbookKey(name)) || {};
+
+    return {
+      sourceRow: rowIndex + 3,
+      name,
+      entradaTime: cleanTime(row?.[0]),
+      salidaTime: cleanTime(row?.[1]),
+      referenceTime: cleanTime(row?.[3]),
+      pickupAddress: cleanWorkbookCell(row?.[4]),
+      dropoffAddress: cleanWorkbookCell(row?.[6]),
+      homeAddress: reference.homeAddress || '',
+      entradaRoute: cleanWorkbookCell(row?.[8]),
+      entradaOrder: Number(row?.[9]) || 0,
+      entradaDriver: cleanWorkbookCell(row?.[10]),
+      salidaRoute: cleanWorkbookCell(row?.[11]),
+      salidaOrder: Number(row?.[12]) || 0,
+      salidaDriver: cleanWorkbookCell(row?.[13]),
+      phone: normalizeWorkbookPhone(row?.[14], reference.phone)
+    };
+  }).filter(Boolean);
 };
 
 const fileToBase64 = (file) => new Promise((resolve, reject) => {
@@ -28,6 +138,7 @@ const fileToBase64 = (file) => new Promise((resolve, reject) => {
 const workbookToPromptText = async (file) => {
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: false });
+
   const sections = workbook.SheetNames.map((sheetName) => {
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
       header: 1,
@@ -35,9 +146,14 @@ const workbookToPromptText = async (file) => {
       raw: false,
       blankrows: false
     });
+
     return `HOJA: ${sheetName}\n${rows.map(row => row.map(cell => String(cell ?? '')).join(' | ')).join('\n')}`;
   });
-  return sections.join('\n\n').slice(0, 70000);
+
+  return {
+    text: sections.join('\n\n').slice(0, 70000),
+    structuredRows: buildStructuredWorkbookRows(workbook)
+  };
 };
 
 const responseSchema = {
@@ -104,7 +220,7 @@ REGLAS CRÍTICAS:
 13. Catálogo de empresas disponible: ${clientNames.join(', ') || 'sin catálogo disponible'}.
 14. Devuelve únicamente JSON válido siguiendo el esquema solicitado.
 15. summary, notes y cualquier observación deben estar SIEMPRE en español, aunque el archivo use otro idioma.
-16. Al cambiar entre ENTRADA/Ida y SALIDA/Regreso, vuelve a leer estructuralmente toda la fuente ya proporcionada y aplica únicamente el tipo seleccionado por el operador.
+16. Al cambiar entre ENTRADA/Ida y SALIDA/Regreso, vuelve a leer estructuralmente toda la fuente ya proporcionada y aplica únicamente el tipo seleccionado por el operador.\n17. En estos Excel, 1 o 1.00 = 01:00; 5.1 = 05:10; 5.15 = 05:15; 5.3 = 05:30; 6.4 = 06:40; 17.3 = 17:30; 24 o 24.00 = 00:00.\n18. PUNTO DE RECOGIDA y PUNTO DE DESCARGUE de Programación son autoritativos si existen.\n19. BD y Directorio son respaldo de domicilio/teléfono y no deben sustituir una dirección operativa explícita.\n20. Notas como SOLO VA DOMINGOS no son una dirección física.
 
 TEXTO ADICIONAL DEL OPERADOR:
 ${userText || '(sin texto adicional)'}
@@ -183,11 +299,12 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
 
     try {
       if (isWorkbook) {
-        const workbookText = await workbookToPromptText(selectedFile);
+        const workbookData = await workbookToPromptText(selectedFile);
         setPreparedFile({
           kind: 'workbook',
           name: selectedFile.name,
-          text: workbookText
+          text: workbookData.text,
+          structuredRows: workbookData.structuredRows
         });
       } else {
         const base64 = await fileToBase64(selectedFile);
@@ -271,7 +388,8 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
       if (!rawText) throw new Error('Gemini no devolvió una programación reconocible.');
 
       const parsed = JSON.parse(rawText);
-      const cleanRows = (Array.isArray(parsed.rows) ? parsed.rows : [])
+
+      const aiCleanRows = (Array.isArray(parsed.rows) ? parsed.rows : [])
         .map((row, index) => ({
           name: String(row?.name || '').trim(),
           time: cleanTime(row?.time),
@@ -286,14 +404,73 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
         }))
         .filter(row => row.name);
 
-      if (!cleanRows.length) throw new Error('No se detectaron personas en la programación. Revisa la fuente o agrega contexto en texto.');
+      const structuredSourceRows =
+        preparedFile?.kind === 'workbook' &&
+        Array.isArray(preparedFile?.structuredRows)
+          ? preparedFile.structuredRows
+          : [];
+
+      const structuredRowsForMode = structuredSourceRows
+        .map((row, index) => {
+          const isRegreso = selectedMode === 'Regreso';
+          const route = String(isRegreso ? row?.salidaRoute : row?.entradaRoute).trim();
+          if (!route) return null;
+
+          const operationalAddress = String(
+            isRegreso ? row?.dropoffAddress : row?.pickupAddress
+          ).trim();
+          const homeAddress = String(row?.homeAddress || '').trim();
+
+          return {
+            name: String(row?.name || '').trim(),
+            time: cleanTime(isRegreso ? row?.salidaTime : row?.entradaTime),
+            referenceTime: cleanTime(row?.referenceTime),
+            address: homeAddress,
+            meetingPoint: '',
+            meetingPointAddress: operationalAddress,
+            sourceAddressAuthoritative: Boolean(operationalAddress),
+            sourceUsesIntermediate: Boolean(
+              operationalAddress &&
+              homeAddress &&
+              normalizeWorkbookKey(operationalAddress) !== normalizeWorkbookKey(homeAddress)
+            ),
+            sourceRow: Number(row?.sourceRow) || index + 3,
+            phone: normalizeWorkbookPhone(row?.phone),
+            driver: String(isRegreso ? row?.salidaDriver : row?.entradaDriver).trim(),
+            route,
+            order: Number(isRegreso ? row?.salidaOrder : row?.entradaOrder) || index + 1
+          };
+        })
+        .filter(Boolean);
+
+      const structuredSourceApplied = structuredRowsForMode.length > 0;
+      const cleanRows = structuredSourceApplied ? structuredRowsForMode : aiCleanRows;
+
+      if (!cleanRows.length) {
+        throw new Error('No se detectaron personas en la programación. Revisa la fuente o agrega contexto en texto.');
+      }
+
+      const missingOperationalAddresses = structuredSourceApplied
+        ? cleanRows.filter(row => !row.meetingPointAddress).map(row => row.name)
+        : [];
 
       const normalizedResult = {
         company: selectedCompany,
         date: selectedDate,
         mode: selectedMode,
         summary: String(parsed.summary || '').trim(),
-        notes: Array.isArray(parsed.notes) ? parsed.notes.map(item => String(item || '').trim()).filter(Boolean) : [],
+        notes: structuredSourceApplied
+          ? [
+              `Lectura estructurada aplicada a ${cleanRows.length} pasajeros desde la hoja Programación.`,
+              'La dirección operativa del archivo actual tiene prioridad sobre BD/Directorio y sobre una dirección anterior guardada.',
+              'Horarios numéricos interpretados como reloj operativo.',
+              ...(missingOperationalAddresses.length
+                ? [`Sin dirección operativa explícita para: ${missingOperationalAddresses.join(', ')}`]
+                : [])
+            ]
+          : (Array.isArray(parsed.notes)
+              ? parsed.notes.map(item => String(item || '').trim()).filter(Boolean)
+              : []),
         rows: cleanRows
       };
 
@@ -409,7 +586,7 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
                 <div className="rounded-2xl border border-slate-200 p-4 bg-slate-50">
                   <div className="flex items-center gap-2 mb-3"><Upload className="w-4 h-4 text-slate-600"/><p className="font-black text-sm text-slate-800">Foto, Excel o CSV</p></div>
                   <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv,image/*" onChange={handleFileSelection} className="hidden"/>
-                  <button type="button" onClick={() => fileRef.current?.click()} className="w-full min-h-[180px] rounded-2xl border-2 border-dashed border-slate-300 bg-white flex flex-col items-center justify-center gap-3 hover:border-violet-400 hover:bg-violet-50 transition">
+                  <button type="button" onClick={() => { if (fileRef.current) { fileRef.current.value = ''; fileRef.current.click(); } }} className="w-full min-h-[180px] rounded-2xl border-2 border-dashed border-slate-300 bg-white flex flex-col items-center justify-center gap-3 hover:border-violet-400 hover:bg-violet-50 transition">
                     {file ? (
                       <>
                         {/\.(xlsx|xls|csv)$/i.test(file.name) ? <FileSpreadsheet className="w-10 h-10 text-emerald-600"/> : <ImageIcon className="w-10 h-10 text-blue-600"/>}

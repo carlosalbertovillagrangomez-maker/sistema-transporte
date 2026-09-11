@@ -10,10 +10,10 @@ import TripLogixExcelImporter from './TripLogixExcelImporter';
 import TripLogixWhatsAppActions from './TripLogixWhatsAppActions';
 import TripLogixAIAssistant from './TripLogixAIAssistant';
 
-const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
+const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0";
 
 const containerStyle = { width: '100%', height: '100%' };
-const centerMX = { lat: 19.4326, lng: -99.1332 }; 
+const centerMX = { lat: 19.4326, lng: -99.1332 };
 const libraries = ['places', 'geometry'];
 
 // --- CONFIGURACIÓN DE TIEMPOS CARPOOLING ---
@@ -202,7 +202,7 @@ const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor
     };
 
     return (
-        <div className="relative" style={{ zIndex: zIndex }}> 
+        <div className="relative" style={{ zIndex: zIndex }}>
             <div className="flex items-center gap-3">
                 <div className={`w-10 h-10 rounded-full ${iconColor === 'green' ? 'bg-green-100 border-green-200' : iconColor === 'red' ? 'bg-red-100 border-red-200' : iconColor === 'orange' ? 'bg-orange-100 border-orange-200' : 'bg-slate-100 border-slate-200'} border flex items-center justify-center shrink-0 shadow-sm relative z-10 bg-white`}>
                     <MapPin className={`w-4 h-4 ${iconColor === 'green' ? 'text-green-700' : iconColor === 'red' ? 'text-red-600' : iconColor === 'orange' ? 'text-orange-600' : 'text-slate-600'}`} />
@@ -454,11 +454,11 @@ export default function Planificacion() {
   const [viewRoute, setViewRoute] = useState(null);
   const [newRoute, setNewRoute] = useState({ client: '', requestUser: '', driver: '', driverId: '', status: 'Pendiente', serviceType: 'Programado', scheduledDate: '', scheduledTime: '' });
   const [selectedClientData, setSelectedClientData] = useState(null);
-  
+
   const [startPoint, setStartPoint] = useState({ address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' });
   const [endPoint, setEndPoint] = useState({ address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' });
   const [waypoints, setWaypoints] = useState([]);
-  
+
   const [routeInfo, setRouteInfo] = useState({ totalDistance: 0, totalDuration: 0, segments: [], geometry: [] });
   const [calculatedEtas, setCalculatedEtas] = useState([]);
   const [startTimeDisplay, setStartTimeDisplay] = useState('');
@@ -466,12 +466,12 @@ export default function Planificacion() {
 
   // === ESTADOS MÓDULO CARPOOLING INTELIGENTE (WIZARD) ===
   const [showCarpoolModal, setShowCarpoolModal] = useState(false);
-  const [carpoolStep, setCarpoolStep] = useState(1); 
-  const [employeeRoster, setEmployeeRoster] = useState([]); 
-  const [rosterSearch, setRosterSearch] = useState(''); 
-  
+  const [carpoolStep, setCarpoolStep] = useState(1);
+  const [employeeRoster, setEmployeeRoster] = useState([]);
+  const [rosterSearch, setRosterSearch] = useState('');
+
   const [carpoolGroups, setCarpoolGroups] = useState([]);
-  const [previewGroupId, setPreviewGroupId] = useState('all'); 
+  const [previewGroupId, setPreviewGroupId] = useState('all');
   const [fetchingRealRoutes, setFetchingRealRoutes] = useState(false);
   const [globalCarpool, setGlobalCarpool] = useState({ mode: 'Ida' });
 
@@ -496,7 +496,7 @@ export default function Planificacion() {
       if(isLoaded && mapRef.current) {
           const bounds = new window.google.maps.LatLngBounds();
           let hasPoints = false;
-          if (viewRoute?.technicalData?.geometry) { viewRoute.technicalData.geometry.forEach(coord => bounds.extend(coord)); hasPoints = true; } 
+          if (viewRoute?.technicalData?.geometry) { viewRoute.technicalData.geometry.forEach(coord => bounds.extend(coord)); hasPoints = true; }
           else {
               if (startPoint?.lat) { bounds.extend(startPoint); hasPoints = true; }
               if (endPoint?.lat) { bounds.extend(endPoint); hasPoints = true; }
@@ -643,7 +643,7 @@ export default function Planificacion() {
   };
 
   useEffect(() => {
-      let baseDateObj = new Date(); 
+      let baseDateObj = new Date();
       if (isProgramado && newRoute.scheduledTime) { const [hours, minutes] = newRoute.scheduledTime.split(':'); baseDateObj.setHours(parseInt(hours, 10), parseInt(minutes, 10), 0); }
       setStartTimeDisplay(baseDateObj.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
       if (routeInfo.segments && routeInfo.segments.length > 0) {
@@ -1007,11 +1007,11 @@ export default function Planificacion() {
 
   const openCarpoolModal = () => {
       setShowCarpoolModal(true);
-      setCarpoolStep(1); 
+      setCarpoolStep(1);
       setNewRoute({...newRoute, client: '', serviceType: 'Programado', scheduledDate: ''});
       setCarpoolGroups([]);
       setEmployeeRoster([]);
-      setRosterSearch(''); 
+      setRosterSearch('');
       setPreviewGroupId('all');
       setGlobalCarpool({ mode: 'Ida' });
       setSelectedClientData(null);
@@ -1022,13 +1022,13 @@ export default function Planificacion() {
       setNewRoute({ ...newRoute, client: clientName });
       const clientObj = availableClients.find(c => c.name === clientName);
       setSelectedClientData(clientObj || null);
-      setCarpoolGroups([]); 
-      setRosterSearch(''); 
+      setCarpoolGroups([]);
+      setRosterSearch('');
 
       if (clientObj) {
           const activeUserNames = clientObj.users?.map(u => u.name) || [];
           const emps = clientObj.locations.filter(loc => loc.assignedTo && loc.assignedTo !== 'General' && activeUserNames.includes(loc.assignedTo));
-          
+
           const initialRoster = emps.map(emp => {
               const uData = clientObj.users?.find(u => u.name === emp.assignedTo) || {};
               return {
@@ -1111,11 +1111,22 @@ export default function Planificacion() {
               }) || null
               : null;
 
+          const sourceAddressAuthoritative =
+              row?.sourceAddressAuthoritative === true &&
+              Boolean(aiMeetingPointAddress);
+          const sourceUsesIntermediate = row?.sourceUsesIntermediate === true;
           const hasExplicitMeetingPoint = Boolean(aiMeetingPointLabel || aiMeetingPointAddress);
-          const savedLocation = hasExplicitMeetingPoint ? configuredMeetingLocation : homeSavedLocation;
-          const rawAddress = hasExplicitMeetingPoint
-              ? (configuredMeetingLocation?.address || aiMeetingPointAddress || '')
-              : (homeSavedLocation?.address || row?.address || '');
+
+          const savedLocation = sourceAddressAuthoritative
+              ? null
+              : (hasExplicitMeetingPoint ? configuredMeetingLocation : homeSavedLocation);
+
+          const rawAddress = sourceAddressAuthoritative
+              ? aiMeetingPointAddress
+              : (hasExplicitMeetingPoint
+                  ? (configuredMeetingLocation?.address || aiMeetingPointAddress || '')
+                  : (homeSavedLocation?.address || row?.address || ''));
+
           let lat = Number(savedLocation?.lat);
           let lng = Number(savedLocation?.lng ?? savedLocation?.lon);
           let finalAddress = rawAddress;
@@ -1150,11 +1161,17 @@ export default function Planificacion() {
               aiOrder: Number(row?.order) || 0,
               aiDriver: row?.driver || '',
               aiOriginalAddress: String(row?.address || '').trim(),
+              aiSourceAddressAuthoritative: sourceAddressAuthoritative,
+              aiSourceUsesIntermediate: sourceUsesIntermediate,
               aiMeetingPointLabel,
-              aiMeetingPointAddress: configuredMeetingLocation?.address || aiMeetingPointAddress || '',
-              aiMeetingPointKey: aiMeetingPointLabel
-                  ? normalizeAiValue(configuredMeetingLocation?.alias || configuredMeetingLocation?.address || aiMeetingPointLabel)
-                  : ''
+              aiMeetingPointAddress: sourceAddressAuthoritative
+                  ? aiMeetingPointAddress
+                  : (configuredMeetingLocation?.address || aiMeetingPointAddress || ''),
+              aiMeetingPointKey: sourceUsesIntermediate && aiMeetingPointAddress
+                  ? normalizeAiValue(aiMeetingPointAddress)
+                  : (aiMeetingPointLabel
+                      ? normalizeAiValue(configuredMeetingLocation?.alias || configuredMeetingLocation?.address || aiMeetingPointLabel)
+                      : '')
           });
       }
 
@@ -2251,7 +2268,7 @@ export default function Planificacion() {
                         </div>
                     )}
 
-                    
+
                     {(() => {
                         const passengers = [ ruta.startCoords?.contact, ...(ruta.waypointsData?.map(w => w.contact) || []), ruta.endCoords?.contact ].filter(Boolean);
                         if (passengers.length === 0) return null;
@@ -2261,13 +2278,13 @@ export default function Planificacion() {
                             </div>
                         );
                     })()}
-                    
+
                     <div className="space-y-2 mt-3">
                         <div className="flex items-center gap-2 text-slate-600 text-xs"><MapPin className="w-3 h-3 text-green-600 shrink-0" /> <span className="truncate">{ruta.start?.split(',')[0]}</span></div>
                         {ruta.waypointsData && ruta.waypointsData.length > 0 && <div className="pl-5"><div className="text-[10px] text-slate-500 font-bold bg-slate-50 border border-slate-100 rounded px-2 py-1 inline-flex items-center gap-1"><Users className="w-3 h-3"/> {ruta.waypointsData.length} paradas</div></div>}
                         <div className="flex items-center gap-2 text-slate-600 text-xs"><MapPin className="w-3 h-3 text-red-600 shrink-0" /> <span className="truncate">{ruta.end?.split(',')[0]}</span></div>
                     </div>
-                    
+
                     {ruta.status === 'Pendiente' && <button onClick={(e) => { e.stopPropagation(); setRouteToAssign(ruta); setShowAssignModal(true); }} className="w-full mt-3 bg-orange-100 hover:bg-orange-200 text-orange-700 border border-orange-200 font-black p-2 rounded-lg text-[10px] flex items-center justify-center gap-1.5 transition-colors shadow-sm animate-pulse"><User className="w-3.5 h-3.5"/> ASIGNAR UNIDAD</button>}
                     {ruta.driver && <div className="w-full mt-3 bg-slate-50 text-slate-600 border border-slate-200 font-bold p-2 rounded-lg text-[10px] flex items-center justify-center gap-1.5 shadow-sm"><Car className="w-3.5 h-3.5 text-slate-500"/> {ruta.driver}</div>}
                 </div>
@@ -2318,7 +2335,7 @@ export default function Planificacion() {
                       <div><h3 className="text-lg font-bold flex items-center gap-2"><Network className="w-5 h-5 text-orange-500"/> Optimizador Logístico por Turnos</h3></div>
                       <button onClick={() => setShowCarpoolModal(false)}><X className="w-6 h-6 text-slate-400 hover:text-white transition" /></button>
                   </div>
-                  
+
                   <div className="flex-1 flex flex-col xl:flex-row overflow-y-auto xl:overflow-hidden min-h-0">
                       {/* COLUMNA 1: CONFIGURACIÓN MAESTRA (SIEMPRE VISIBLE) */}
                       <div className="w-full xl:w-1/4 bg-slate-50 border-b xl:border-b-0 xl:border-r border-slate-200 p-4 sm:p-6 overflow-visible xl:overflow-y-auto min-w-0 xl:min-w-[280px] shrink-0">
@@ -2330,7 +2347,7 @@ export default function Planificacion() {
                                       {availableClients.map(c => <option key={c.id} value={c.name}>{c.name}</option>)}
                                   </select>
                               </div>
-                              
+
                               <div>
                                   <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1.5 mb-2"><Calendar className="w-4 h-4"/> Fecha Programada</label>
                                   <input type="date" className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none shadow-sm" value={newRoute.scheduledDate} onChange={(e) => setNewRoute({...newRoute, scheduledDate: e.target.value})} />
@@ -2339,12 +2356,12 @@ export default function Planificacion() {
                               <div className="bg-white p-4 rounded-xl border-2 border-orange-100 shadow-sm">
                                   <label className="text-xs font-black text-orange-600 uppercase mb-3 block">Modo de Planificación</label>
                                   <div className="flex gap-2 mb-4">
-                                      <button 
-                                          onClick={() => { setGlobalCarpool({mode: 'Ida'}); setCarpoolStep(1); }} 
+                                      <button
+                                          onClick={() => { setGlobalCarpool({mode: 'Ida'}); setCarpoolStep(1); }}
                                           className={`flex-1 py-3 px-2 rounded-lg text-xs font-bold border transition ${globalCarpool.mode === 'Ida' ? 'bg-orange-500 text-white border-orange-500 shadow-md' : 'bg-slate-50 text-slate-500 border-slate-200'}`}
                                       >🌅 ENTRADAS (Ida)</button>
-                                      <button 
-                                          onClick={() => { setGlobalCarpool({mode: 'Regreso'}); setCarpoolStep(1); }} 
+                                      <button
+                                          onClick={() => { setGlobalCarpool({mode: 'Regreso'}); setCarpoolStep(1); }}
                                           className={`flex-1 py-3 px-2 rounded-lg text-xs font-bold border transition ${globalCarpool.mode === 'Regreso' ? 'bg-slate-800 text-white border-slate-800 shadow-md' : 'bg-slate-50 text-slate-500 border-slate-200'}`}
                                       >🌃 SALIDAS (Regreso)</button>
                                   </div>
@@ -2354,7 +2371,7 @@ export default function Planificacion() {
 
                       {/* AREA PRINCIPAL: CAMBIA SEGÚN LA ETAPA */}
                       <div className="flex-1 flex flex-col xl:flex-row overflow-visible xl:overflow-hidden min-h-0">
-                          
+
                           {/* === ETAPA 1: FILTRO Y AJUSTE DE ASISTENCIA === */}
                           {carpoolStep === 1 && (
                               <div className="flex-1 bg-slate-100 p-4 sm:p-6 xl:p-8 overflow-visible xl:overflow-y-auto animate-[fadeIn_0.3s_ease-out]">
@@ -2387,9 +2404,9 @@ export default function Planificacion() {
                                                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                                                       <Search className="h-4 w-4 text-slate-400" />
                                                   </div>
-                                                  <input 
-                                                      type="text" 
-                                                      placeholder="Buscar empleado por nombre o dirección..." 
+                                                  <input
+                                                      type="text"
+                                                      placeholder="Buscar empleado por nombre o dirección..."
                                                       className="w-full pl-10 pr-4 py-3 bg-white border border-slate-300 rounded-xl focus:ring-2 focus:ring-orange-500 outline-none transition text-sm font-bold text-slate-700 shadow-sm"
                                                       value={rosterSearch}
                                                       onChange={(e) => setRosterSearch(e.target.value)}
@@ -2421,8 +2438,8 @@ export default function Planificacion() {
                                                           if (a.included !== b.included) return a.included ? -1 : 1;
                                                           return comparePeopleAZ(a, b);
                                                       })
-                                                      .filter(emp => 
-                                                          emp.assignedTo?.toLowerCase().includes(rosterSearch.toLowerCase()) || 
+                                                      .filter(emp =>
+                                                          emp.assignedTo?.toLowerCase().includes(rosterSearch.toLowerCase()) ||
                                                           emp.address?.toLowerCase().includes(rosterSearch.toLowerCase())
                                                       )
                                                       .map((emp) => (
@@ -2445,14 +2462,14 @@ export default function Planificacion() {
                                                           )}
                                                       </div>
                                                   ))}
-                                                  
+
                                                   {employeeRoster.filter(emp => emp.assignedTo?.toLowerCase().includes(rosterSearch.toLowerCase()) || emp.address?.toLowerCase().includes(rosterSearch.toLowerCase())).length === 0 && (
                                                       <div className="text-center p-6 text-slate-400 font-bold text-sm">
                                                           No se encontró ningún empleado con "{rosterSearch}"
                                                       </div>
                                                   )}
                                               </div>
-                                              
+
                                               <div className="pt-6 flex justify-end">
                                                   <button onClick={handleGenerateStep2} className="px-8 py-4 bg-orange-500 text-white rounded-2xl font-black shadow-xl shadow-orange-500/30 hover:bg-orange-600 transition flex items-center gap-2 uppercase tracking-widest text-sm">
                                                       Siguiente Paso <ArrowRight className="w-5 h-5"/>
@@ -2492,7 +2509,7 @@ export default function Planificacion() {
                                                   isShared: getGroupMeetingPoints(grupo).length > 0,
                                                   passengerBufferMins: previewPreservesSourceTimes ? 0 : PASSENGER_PICKUP_BUFFER_MINS
                                               });
-                                              
+
                                               return (
                                               <div key={grupo.id} className={`bg-white rounded-2xl shadow-sm border overflow-hidden transition-all ${isPreviewing ? 'border-orange-500 ring-2 ring-orange-500/20' : 'border-slate-200'}`}>
                                                   <div className="bg-slate-800 text-white px-3 sm:px-4 py-3 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-2">
@@ -2502,7 +2519,7 @@ export default function Planificacion() {
                                                           {grupo.aiRoute && (
                                                               <span className="text-[10px] bg-violet-500/20 text-violet-200 border border-violet-400/30 px-2 py-1 rounded font-black">RUTA: {grupo.aiRoute}</span>
                                                           )}
-                                                          
+
                                                           {/* --- ETIQUETA COHERENTE CON EL MODO DE PLANIFICACIÓN --- */}
                                                           {globalCarpool.mode === 'Ida' ? (
                                                               <span
@@ -2526,7 +2543,7 @@ export default function Planificacion() {
                                                           <button onClick={() => setPreviewGroupId(grupo.id)} className={`text-[10px] font-black uppercase px-2 py-1 rounded transition ${isPreviewing ? 'bg-orange-500 text-white' : 'bg-slate-600 text-slate-300 hover:bg-slate-500'}`}>Ver Ruta</button>
                                                       </div>
                                                   </div>
-                                                  
+
                                                   <div className="p-4 space-y-4">
                                                       <div>
                                                           <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Conductor Asignado</label>
@@ -2540,7 +2557,7 @@ export default function Planificacion() {
                                                               </p>
                                                           )}
                                                       </div>
-                                                      
+
                                                                                                             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
                                                           <p className="text-[10px] font-black text-slate-500 uppercase mb-2">Pasajeros seleccionados</p>
                                                           <div className="flex flex-wrap gap-2">
@@ -2557,8 +2574,8 @@ export default function Planificacion() {
 
                                                           <div className="space-y-2 min-h-[50px]">
                                                               {grupo.employees.map((emp, eIdx) => (
-                                                                  <div 
-                                                                      key={`${grupo.id}-${eIdx}`} 
+                                                                  <div
+                                                                      key={`${grupo.id}-${eIdx}`}
                                                                       draggable
                                                                       onDragStart={(e) => handleDragStart(e, grupo.id, eIdx)}
                                                                       onDragOver={(e) => e.preventDefault()}
@@ -2583,17 +2600,17 @@ export default function Planificacion() {
                                                                   </div>
                                                               ))}
                                                           </div>
-                                                          
+
                                                           {grupo.employees.length < 4 && (
                                                               <div className="mt-2 pt-2 border-t border-slate-100">
-                                                                  <EmployeeSearch 
-                                                                      employees={selectedClientData?.locations?.filter(l => 
-                                                                          l.assignedTo !== 'General' && 
+                                                                  <EmployeeSearch
+                                                                      employees={selectedClientData?.locations?.filter(l =>
+                                                                          l.assignedTo !== 'General' &&
                                                                           (selectedClientData.users?.map(u => u.name) || []).includes(l.assignedTo) &&
-                                                                          !grupo.employees.some(e => e.assignedTo === l.assignedTo) 
-                                                                      ) || []} 
-                                                                      placeholder="🔍 Buscar para agregar/mover aquí..." 
-                                                                      onSelect={(emp) => addEmployeeToGroup(grupo.id, emp)} 
+                                                                          !grupo.employees.some(e => e.assignedTo === l.assignedTo)
+                                                                      ) || []}
+                                                                      placeholder="🔍 Buscar para agregar/mover aquí..."
+                                                                      onSelect={(emp) => addEmployeeToGroup(grupo.id, emp)}
                                                                   />
                                                               </div>
                                                           )}
@@ -2690,12 +2707,12 @@ export default function Planificacion() {
                                       {!isLoaded ? ( <div className="h-full flex items-center justify-center text-slate-500 font-bold"><Loader2 className="animate-spin mr-2"/> Cargando Mapas...</div> ) : (
                                           <GoogleMap mapContainerStyle={containerStyle} center={localMapCenter} zoom={11} onLoad={handlePreviewMapLoad} options={{ streetViewControl: false, mapTypeControl: false, gestureHandling: "greedy" }}>
                                               {selectedClientData && (
-                                                  <Marker 
-                                                      position={{ lat: parseFloat(selectedClientData.locations.find(l => l.assignedTo === 'General')?.lat || localMapCenter.lat), lng: parseFloat(selectedClientData.locations.find(l => l.assignedTo === 'General')?.lon || selectedClientData.locations.find(l => l.assignedTo === 'General')?.lng || localMapCenter.lng) }} 
+                                                  <Marker
+                                                      position={{ lat: parseFloat(selectedClientData.locations.find(l => l.assignedTo === 'General')?.lat || localMapCenter.lat), lng: parseFloat(selectedClientData.locations.find(l => l.assignedTo === 'General')?.lon || selectedClientData.locations.find(l => l.assignedTo === 'General')?.lng || localMapCenter.lng) }}
                                                       icon="http://maps.google.com/mapfiles/kml/pal3/icon21.png" title="Oficina Central"
                                                   />
                                               )}
-                                              
+
                                               {carpoolGroups.map((g, idx) => {
                                                   if (previewGroupId !== 'all' && previewGroupId !== g.id) return null;
                                                   const gColor = PREVIEW_COLORS[idx % PREVIEW_COLORS.length];
@@ -2724,7 +2741,7 @@ export default function Planificacion() {
                                                           </React.Fragment>
                                                       );
                                                   }
-                                                  return null; 
+                                                  return null;
                                               })}
                                           </GoogleMap>
                                       )}
@@ -2950,7 +2967,7 @@ export default function Planificacion() {
                                         <input type="text" placeholder="Pasajero o Referencia (Ej. Juan Pérez)" className="w-full pl-8 text-xs p-2.5 border border-slate-200 rounded-lg bg-white text-slate-700 outline-none focus:border-green-400 shadow-sm font-medium" value={startPoint?.contact || ''} onChange={e => setStartPoint(prev => ({...(prev || {}), contact: e.target.value}))} />
                                     </div>
                                 </div>
-                                
+
                                 {waypoints.map((wp, index) => (
                                     <div key={index} className="relative" style={{zIndex: 40-index}}>
                                         <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-200 mb-0 mt-3 relative shadow-sm">
@@ -2972,9 +2989,9 @@ export default function Planificacion() {
                                         </div>
                                     </div>
                                 ))}
-                                
+
                                 <button type="button" onClick={addWaypoint} className="ml-[52px] mt-3 text-xs text-slate-800 bg-white border border-slate-200 hover:bg-slate-50 px-3 py-2 rounded-lg font-bold flex items-center gap-1 transition shadow-sm relative z-10"><Plus className="w-4 h-4"/> Añadir Parada Manualmente</button>
-                                
+
                                 <div className="bg-slate-50/50 p-4 rounded-xl border border-slate-200 mb-6 mt-3 relative shadow-sm z-10">
                                     <div className="flex justify-between items-center mb-3">
                                         <h5 className="text-xs font-black text-slate-800 flex items-center gap-1.5"><MapPin className="w-3.5 h-3.5 text-red-600"/> Punto de Destino Final</h5>

@@ -270,12 +270,17 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
 
   const handleFileSelection = async (event) => {
     const selectedFile = event.target.files?.[0] || null;
+    const previousFile = file;
+    const previousPreparedFile = preparedFile;
+    const previousResult = result;
+    const previousApplyResult = applyResult;
+
     setError('');
-    setResult(null);
-    setApplyResult(null);
 
     if (!selectedFile) {
       clearPreparedFile();
+      setResult(null);
+      setApplyResult(null);
       return;
     }
 
@@ -284,17 +289,17 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
     const isImage = selectedFile.type.startsWith('image/') || /.(png|jpg|jpeg|webp|heic|heif)$/i.test(lowerName);
 
     if (!isWorkbook && !isImage) {
-      clearPreparedFile();
-      setError('Formato no compatible. Usa Excel, CSV o una imagen.');
+      if (fileRef.current) fileRef.current.value = '';
+      setError('Formato no compatible. Se conservó el último archivo válido.');
       return;
     }
 
     setFile({
       name: selectedFile.name,
       type: selectedFile.type || '',
-      size: Number(selectedFile.size) || 0
+      size: Number(selectedFile.size) || 0,
+      lastModified: Number(selectedFile.lastModified) || 0
     });
-    setPreparedFile(null);
     setFileLoading(true);
 
     try {
@@ -315,10 +320,24 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
           data: base64
         });
       }
+
+      setResult(null);
+      setApplyResult(null);
     } catch (fileError) {
       console.error('No se pudo preparar el archivo:', fileError);
-      clearPreparedFile();
-      setError('No se pudo leer el archivo seleccionado. Vuelve a seleccionarlo una sola vez y TripLogix conservará una copia procesada para reutilizarla en Entradas y Salidas.');
+
+      setFile(previousFile);
+      setPreparedFile(previousPreparedFile);
+      setResult(previousResult);
+      setApplyResult(previousApplyResult);
+
+      if (fileRef.current) fileRef.current.value = '';
+
+      setError(
+        previousPreparedFile
+          ? 'No se pudo leer el nuevo archivo. Se conservó el último archivo válido y su análisis anterior.'
+          : 'No se pudo leer el archivo. No se modificó ninguna programación.'
+      );
     } finally {
       setFileLoading(false);
     }
@@ -329,11 +348,12 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
     if (!cleanKey) return setError('Agrega tu API key de Gemini antes de analizar.');
     if (!selectedCompany) return setError('Selecciona la empresa antes de analizar.');
     if (!selectedDate) return setError('Selecciona la fecha del servicio antes de analizar.');
-    if (!userText.trim() && !preparedFile) return setError(fileLoading ? 'Espera a que termine de preparar el archivo.' : 'Pega texto o selecciona una foto/Excel.');
+    if (fileLoading) return setError('Espera a que termine de preparar el archivo antes de analizar.');
+    if (!userText.trim() && !preparedFile) return setError('Pega texto o selecciona una foto/Excel.');
 
     setLoading(true);
     setError('');
-    setResult(null);
+    // Conservamos el último análisis válido hasta que el nuevo termine bien.
     setApplyResult(null);
 
     try {
@@ -479,7 +499,12 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
       localStorage.setItem(GEMINI_MODEL_STORAGE, activeModel);
     } catch (analysisError) {
       console.error('Gemini schedule analyzer:', analysisError);
-      setError(analysisError.message || 'No fue posible analizar la programación.');
+      const message = analysisError.message || 'No fue posible analizar la programación.';
+      setError(
+        result
+          ? message + ' Se conserva el último análisis válido; no se aplicó ningún cambio al Carpooling.'
+          : message + ' No se aplicó ningún cambio al Carpooling.'
+      );
     } finally {
       setLoading(false);
     }

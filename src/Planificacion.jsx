@@ -283,6 +283,81 @@ const getMarkerLabel = (index) => String.fromCharCode(65 + index);
 const PREVIEW_COLORS = ['#f97316', '#3b82f6', '#22c55e', '#a855f7', '#ef4444', '#06b6d4', '#eab308', '#ec4899'];
 const comparePeopleAZ = (a, b) => String(a?.assignedTo || a?.name || '').localeCompare(String(b?.assignedTo || b?.name || ''), 'es', { sensitivity: 'base' });
 
+const normalizeRosterIdentity = (value = '') => String(value || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/s+/g, ' ')
+    .trim()
+    .toLocaleLowerCase('es');
+
+const buildCanonicalClientRoster = (clientObj) => {
+    const users = Array.isArray(clientObj?.users) ? clientObj.users : [];
+    const locations = Array.isArray(clientObj?.locations) ? clientObj.locations : [];
+    const seenUsers = new Set();
+    const roster = [];
+
+    users.forEach((user) => {
+        const userName = String(user?.name || '').trim();
+        const userKey = normalizeRosterIdentity(userName);
+        if (!userKey || seenUsers.has(userKey)) return;
+        seenUsers.add(userKey);
+
+        const userAddress = String(
+            user?.address ||
+            user?.domicilio ||
+            user?.direccion ||
+            ''
+        ).trim();
+        const userAddressKey = normalizeRosterIdentity(userAddress);
+
+        const byAddress = userAddressKey
+            ? locations.find(location =>
+                normalizeRosterIdentity(location?.address) === userAddressKey
+              )
+            : null;
+
+        const byAssignedTo = locations.find(location =>
+            normalizeRosterIdentity(location?.assignedTo) === userKey
+        ) || null;
+
+        const matchedLocation = byAddress || byAssignedTo;
+
+        const finalAddress = String(
+            matchedLocation?.address ||
+            userAddress ||
+            ''
+        ).trim();
+
+        const lat = matchedLocation?.lat ?? user?.lat ?? null;
+        const lon = matchedLocation?.lon ?? matchedLocation?.lng ?? user?.lon ?? user?.lng ?? null;
+        const lng = matchedLocation?.lng ?? matchedLocation?.lon ?? user?.lng ?? user?.lon ?? null;
+
+        roster.push({
+            ...(matchedLocation || {}),
+            assignedTo: userName,
+            address: finalAddress,
+            lat,
+            lon,
+            lng,
+            included: false,
+            entrada: user?.entrada || '08:00',
+            salida: user?.salida || '17:00',
+            phone: normalizeContactPhone(
+                user?.phone,
+                user?.telefono,
+                user?.whatsapp,
+                user?.mobile,
+                user?.celular,
+                matchedLocation?.phone
+            ),
+            rosterUserKey: userKey
+        });
+    });
+
+    return roster.sort(comparePeopleAZ);
+};
+
+
 // FUNCIONES MATEMÁTICAS DE DISTANCIA
 const getDistance = (p1, p2) => {
     const R = 6371; const dLat = (p2.lat - p1.lat) * Math.PI / 180; const dLon = (p2.lng - p1.lng) * Math.PI / 180;
@@ -1020,34 +1095,20 @@ export default function Planificacion() {
   const handleCarpoolClientChange = (e) => {
       const clientName = e.target.value;
       setNewRoute({ ...newRoute, client: clientName });
+
       const clientObj = availableClients.find(c => c.name === clientName);
       setSelectedClientData(clientObj || null);
       setCarpoolGroups([]);
       setRosterSearch('');
 
-      if (clientObj) {
-          const activeUserNames = clientObj.users?.map(u => u.name) || [];
-          const emps = clientObj.locations.filter(loc => loc.assignedTo && loc.assignedTo !== 'General' && activeUserNames.includes(loc.assignedTo));
+      if (!clientObj) {
+          setEmployeeRoster([]);
+          return;
+      }
 
-          const initialRoster = emps.map(emp => {
-              const uData = clientObj.users?.find(u => u.name === emp.assignedTo) || {};
-              return {
-                  ...emp,
-                  included: false,
-                  entrada: uData.entrada || '08:00',
-                  salida: uData.salida || '17:00',
-                  phone: normalizeContactPhone(
-                      uData.phone,
-                      uData.telefono,
-                      uData.whatsapp,
-                      uData.mobile,
-                      uData.celular,
-                      emp.phone
-                  )
-              }
-          });
-          setEmployeeRoster(initialRoster.sort(comparePeopleAZ));
-      } else { setEmployeeRoster([]); }
+      // La identidad del pasajero nace de USERS.
+      // LOCATIONS sólo aporta la ubicación de esa misma persona.
+      setEmployeeRoster(buildCanonicalClientRoster(clientObj));
   };
 
 
@@ -1176,6 +1237,18 @@ export default function Planificacion() {
       }
 
       if (!prepared.length) throw new Error('No fue posible preparar ningún pasajero de la programación.');
+
+      if (missing.length > 0) {
+          throw new Error(
+              'No se aplicó la programación porque faltan ubicaciones válidas para ' +
+              missing.length +
+              ' pasajero' +
+              (missing.length === 1 ? '' : 's') +
+              ': ' +
+              missing.join(', ') +
+              '. La programación anterior se conserva sin cambios.'
+          );
+      }
 
       setSelectedClientData(clientObj);
       setNewRoute(prev => ({
@@ -1323,8 +1396,47 @@ export default function Planificacion() {
       if(!selectedClientData) return alert("Selecciona una empresa primero.");
       const mode = globalCarpool.mode;
 
-      const activeEmps = employeeRoster.filter(emp => emp.included);
+      const activeEmps = employeeRoster
+          .filter(emp => emp.included)
+          .map(({ rosterUserKey, ...employee }) => employee);
+
       if(activeEmps.length === 0) return alert("No hay empleados seleccionados para planificar.");
+
+      const duplicateNames = new Map();
+      activeEmps.forEach(employee => {
+          const key = normalizeRosterIdentity(employee?.assignedTo);
+          if (key) duplicateNames.set(key, (duplicateNames.get(key) || 0) + 1);
+      });
+
+      if ([...duplicateNames.values()].some(count => count > 1)) {
+          return alert(
+              "TripLogix detectó pasajeros duplicados antes de crear el Carpooling. " +
+              "No se generó ninguna ruta."
+          );
+      }
+
+      const incomplete = activeEmps.filter(employee => {
+          const lat = Number(employee?.lat);
+          const lng = Number(employee?.lng ?? employee?.lon);
+          return (
+              !String(employee?.assignedTo || '').trim() ||
+              !String(employee?.address || '').trim() ||
+              !Number.isFinite(lat) ||
+              !Number.isFinite(lng)
+          );
+      });
+
+      if (incomplete.length > 0) {
+          const names = incomplete
+              .map(employee => employee?.assignedTo || 'Pasajero sin nombre')
+              .join(', ');
+
+          return alert(
+              "No se generó ninguna ruta porque faltan datos de ubicación válidos para: " +
+              names +
+              ". La programación actual se conserva sin cambios."
+          );
+      }
 
       const oficina = selectedClientData.locations.find(l => l.assignedTo === 'General');
       if(!oficina || !oficina.lat) return alert("La empresa no tiene una ubicación 'General' configurada.");

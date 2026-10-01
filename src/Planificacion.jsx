@@ -147,6 +147,44 @@ const buildCarpoolTimePlan = ({
     };
 };
 
+const TimeField = ({ value, onChange, disabled = false, compact = false }) => {
+    const raw = String(value || '');
+    const match = raw.match(/^(\d{1,2}):(\d{2})$/);
+    const hour24 = match ? Math.min(23, Math.max(0, Number(match[1]))) : null;
+    const minute = match ? String(Math.min(59, Math.max(0, Number(match[2])))).padStart(2, '0') : '';
+    const period = hour24 == null ? 'AM' : (hour24 >= 12 ? 'PM' : 'AM');
+    const hour12 = hour24 == null ? '' : String((hour24 % 12) || 12);
+
+    const commit = ({ nextHour = hour12, nextMinute = minute || '00', nextPeriod = period } = {}) => {
+        const parsedHour = Number(nextHour || 8);
+        let nextHour24 = parsedHour % 12;
+        if (nextPeriod === 'PM') nextHour24 += 12;
+        onChange?.(`${String(nextHour24).padStart(2, '0')}:${String(nextMinute || '00').padStart(2, '0')}`);
+    };
+
+    const selectClass = compact
+        ? 'bg-transparent text-[11px] font-black text-slate-800 outline-none px-1 py-1'
+        : 'bg-white text-xs font-black text-slate-800 outline-none px-2 py-2';
+
+    return (
+        <div className={`inline-flex items-center rounded-lg border border-slate-200 bg-white ${disabled ? 'opacity-50' : ''}`}>
+            <select aria-label="Hora" disabled={disabled} value={hour12} onChange={(e) => commit({ nextHour: e.target.value })} className={selectClass}>
+                <option value="" disabled>--</option>
+                {Array.from({ length: 12 }, (_, index) => index + 1).map(hour => <option key={hour} value={String(hour)}>{hour}</option>)}
+            </select>
+            <span className="text-slate-400 font-black">:</span>
+            <select aria-label="Minutos" disabled={disabled} value={minute} onChange={(e) => commit({ nextMinute: e.target.value })} className={selectClass}>
+                <option value="" disabled>--</option>
+                {Array.from({ length: 60 }, (_, index) => String(index).padStart(2, '0')).map(item => <option key={item} value={item}>{item}</option>)}
+            </select>
+            <select aria-label="Periodo" disabled={disabled} value={period} onChange={(e) => commit({ nextPeriod: e.target.value })} className={selectClass}>
+                <option value="AM">A.M.</option>
+                <option value="PM">P.M.</option>
+            </select>
+        </div>
+    );
+};
+
 // --- COMPONENTES AUXILIARES ---
 const RECENT_ADDRESS_STORAGE_KEY = 'triplogix_recent_addresses_v1';
 
@@ -1637,7 +1675,28 @@ export default function Planificacion() {
       fetchRealRoutesForGroups(newGroups);
   };
 
-  const handleDragStart = (e, groupId, empIndex) => { e.dataTransfer.setData('sourceGroupId', groupId); e.dataTransfer.setData('sourceEmpIndex', empIndex.toString()); };
+  const reorderEmployeeWithinGroup = (groupId, sourceEmpIndex, targetEmpIndex) => {
+      if (sourceEmpIndex === targetEmpIndex || sourceEmpIndex < 0 || targetEmpIndex < 0) return;
+
+      const nextGroups = carpoolGroups.map(group => {
+          if (group.id !== groupId) return group;
+          const employees = [...group.employees];
+          if (sourceEmpIndex >= employees.length || targetEmpIndex >= employees.length) return group;
+          const [moved] = employees.splice(sourceEmpIndex, 1);
+          employees.splice(targetEmpIndex, 0, moved);
+          return { ...group, employees };
+      });
+
+      carpoolRoutingRequestRef.current += 1;
+      setCarpoolGroups(nextGroups);
+      setTimeout(() => fetchRealRoutesForGroups(nextGroups), 80);
+  };
+
+  const handleDragStart = (e, groupId, empIndex) => {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('sourceGroupId', groupId);
+      e.dataTransfer.setData('sourceEmpIndex', empIndex.toString());
+  };
 
   const handleDrop = (e, targetGroupId, targetEmpIndex) => {
       e.preventDefault();
@@ -1647,15 +1706,8 @@ export default function Planificacion() {
       let resultedGroups = [];
 
       if (sourceGroupId === targetGroupId) {
-          setCarpoolGroups(prev => {
-              const newGroups = [...prev];
-              const gIdx = newGroups.findIndex(g => g.id === targetGroupId);
-              const emps = [...newGroups[gIdx].employees];
-              const [moved] = emps.splice(sourceEmpIndex, 1);
-              emps.splice(targetEmpIndex, 0, moved);
-              newGroups[gIdx] = { ...newGroups[gIdx], employees: emps };
-              resultedGroups = newGroups; return newGroups;
-          });
+          reorderEmployeeWithinGroup(targetGroupId, sourceEmpIndex, targetEmpIndex);
+          return;
       } else {
           setCarpoolGroups(prev => {
               const newGroups = [...prev];
@@ -2329,11 +2381,11 @@ export default function Planificacion() {
                       <div className="grid grid-cols-2 gap-2">
                           <label className="text-[9px] font-black uppercase tracking-wider text-slate-500">
                               Desde
-                              <input type="time" value={planTimeFrom} onChange={(e) => setPlanTimeFrom(e.target.value)} className="mt-1 w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-2 text-[11px] font-bold text-slate-700 outline-none focus:border-orange-400" />
+                              <div className="mt-1"><TimeField value={planTimeFrom} onChange={setPlanTimeFrom} /></div>
                           </label>
                           <label className="text-[9px] font-black uppercase tracking-wider text-slate-500">
                               Hasta
-                              <input type="time" value={planTimeTo} onChange={(e) => setPlanTimeTo(e.target.value)} className="mt-1 w-full bg-slate-50 border border-slate-200 rounded-xl px-2 py-2 text-[11px] font-bold text-slate-700 outline-none focus:border-orange-400" />
+                              <div className="mt-1"><TimeField value={planTimeTo} onChange={setPlanTimeTo} /></div>
                           </label>
                       </div>
                   </div>
@@ -2564,12 +2616,12 @@ export default function Planificacion() {
                                                           {globalCarpool.mode === 'Ida' ? (
                                                               <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100">
                                                                   <span className="text-[10px] font-bold text-slate-500 uppercase">ENTRADA:</span>
-                                                                  <input type="time" className="text-xs font-black outline-none bg-transparent w-20 text-slate-800" value={emp.entrada} onChange={(e) => updateRosterItem(emp.originalIndex, 'entrada', e.target.value)} disabled={!emp.included} />
+                                                                  <TimeField compact value={emp.entrada} onChange={(value) => updateRosterItem(emp.originalIndex, 'entrada', value)} disabled={!emp.included} />
                                                               </div>
                                                           ) : (
                                                               <div className="flex items-center gap-2 bg-slate-50 px-3 py-2 rounded-lg border border-slate-100">
                                                                   <span className="text-[10px] font-bold text-slate-500 uppercase">SALIDA:</span>
-                                                                  <input type="time" className="text-xs font-black outline-none bg-transparent w-20 text-slate-800" value={emp.salida} onChange={(e) => updateRosterItem(emp.originalIndex, 'salida', e.target.value)} disabled={!emp.included} />
+                                                                  <TimeField compact value={emp.salida} onChange={(value) => updateRosterItem(emp.originalIndex, 'salida', value)} disabled={!emp.included} />
                                                               </div>
                                                           )}
                                                       </div>
@@ -2682,7 +2734,7 @@ export default function Planificacion() {
                                                       </div>
 
                                                       <div>
-                                                          <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Orden de Recorrido (Drag & Drop)</label>
+                                                          <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Orden de Recorrido <span className="normal-case text-slate-400">(arrastra con mouse o usa las flechas en móvil)</span></label>
 
                                                           <div className="space-y-2 min-h-[50px]">
                                                               {grupo.employees.map((emp, eIdx) => (
@@ -2708,7 +2760,23 @@ export default function Planificacion() {
                                                                               </p>
                                                                           )}
                                                                       </div>
-                                                                      <button onClick={() => removeEmployeeFromGroup(grupo.id, eIdx)} className="text-slate-300 hover:text-red-500 p-1 bg-white rounded border border-slate-100 shadow-sm"><X className="w-3 h-3"/></button>
+                                                                      <div className="flex items-center gap-1 shrink-0">
+                                                                          <button
+                                                                              type="button"
+                                                                              aria-label="Mover pasajero arriba"
+                                                                              disabled={eIdx === 0}
+                                                                              onClick={(event) => { event.stopPropagation(); reorderEmployeeWithinGroup(grupo.id, eIdx, eIdx - 1); }}
+                                                                              className="min-w-8 h-8 rounded-lg border border-slate-200 bg-white text-slate-600 font-black disabled:opacity-30"
+                                                                          >↑</button>
+                                                                          <button
+                                                                              type="button"
+                                                                              aria-label="Mover pasajero abajo"
+                                                                              disabled={eIdx === grupo.employees.length - 1}
+                                                                              onClick={(event) => { event.stopPropagation(); reorderEmployeeWithinGroup(grupo.id, eIdx, eIdx + 1); }}
+                                                                              className="min-w-8 h-8 rounded-lg border border-slate-200 bg-white text-slate-600 font-black disabled:opacity-30"
+                                                                          >↓</button>
+                                                                          <button type="button" onClick={() => removeEmployeeFromGroup(grupo.id, eIdx)} className="text-slate-300 hover:text-red-500 p-2 bg-white rounded-lg border border-slate-100 shadow-sm"><X className="w-3 h-3"/></button>
+                                                                      </div>
                                                                   </div>
                                                               ))}
                                                           </div>
@@ -2926,7 +2994,7 @@ export default function Planificacion() {
                                 {isProgramado && (
                                     <div className="grid grid-cols-2 gap-3 mt-3">
                                         <input type="date" className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-orange-400" value={newRoute.scheduledDate} onChange={(e) => setNewRoute({...newRoute, scheduledDate: e.target.value})} />
-                                        <input type="time" className="w-full bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-orange-400" value={newRoute.scheduledTime} onChange={(e) => setNewRoute({...newRoute, scheduledTime: e.target.value})} />
+                                        <TimeField value={newRoute.scheduledTime} onChange={(value) => setNewRoute({...newRoute, scheduledTime: value})} />
                                     </div>
                                 )}
 

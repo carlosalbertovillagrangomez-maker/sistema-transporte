@@ -15,7 +15,7 @@ import CompanyMonitor from './CompanyMonitor';
 
 // FIREBASE
 import { db } from './firebase';
-import { collection, onSnapshot, query, orderBy, updateDoc, doc, arrayUnion } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, updateDoc, doc, arrayUnion, runTransaction } from 'firebase/firestore';
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
 const containerStyle = { width: '100%', height: '100%' };
@@ -886,18 +886,36 @@ function App() {
       if (overdue.length === 0) return;
 
       overdue.slice(0, 20).forEach(route => {
-          const now = new Date().toISOString();
-          updateDoc(doc(db, 'rutas', route.id), {
-              status: 'No realizado',
-              reviewRequired: true,
-              reviewReason: 'Servicio vencido sin inicio registrado',
-              missedTripAt: now,
-              missedTripPreviousStatus: route?.status || '',
-              ofertaEstado: 'Vencida',
-              ofertaPara: '',
-              ofertaNombre: '',
-              'proximityAlert.active': false,
-              lastUpdate: now
+          const routeRef = doc(db, 'rutas', route.id);
+
+          // El monitor puede tener un snapshot unos milisegundos detrás del conductor.
+          // Releemos el documento dentro de una transacción antes de marcarlo como
+          // "No realizado" para no pisar un Inicio de viaje que acaba de guardarse.
+          runTransaction(db, async transaction => {
+              const freshSnapshot = await transaction.get(routeRef);
+              if (!freshSnapshot.exists()) return;
+
+              const freshRoute = {
+                  id: freshSnapshot.id,
+                  ...freshSnapshot.data()
+              };
+              const nowMs = Date.now();
+
+              if (!isOverdueUnexecutedRoute(freshRoute, nowMs)) return;
+
+              const now = new Date(nowMs).toISOString();
+              transaction.update(routeRef, {
+                  status: 'No realizado',
+                  reviewRequired: true,
+                  reviewReason: 'Servicio vencido sin inicio registrado',
+                  missedTripAt: now,
+                  missedTripPreviousStatus: freshRoute?.status || '',
+                  ofertaEstado: 'Vencida',
+                  ofertaPara: '',
+                  ofertaNombre: '',
+                  'proximityAlert.active': false,
+                  lastUpdate: now
+              });
           }).catch(error => console.warn('No se pudo archivar un servicio vencido:', route.id, error));
       });
   }, [liveRoutes, clockTick, currentUser?.id, currentUser?.role]);

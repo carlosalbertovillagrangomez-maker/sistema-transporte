@@ -12,10 +12,11 @@ import Clientes from './Clientes';
 import Login from './Login';
 import AccesosEmpresas from './AccesosEmpresas';
 import CompanyMonitor from './CompanyMonitor';
+import Recuperaciones from './Recuperaciones';
 
 // FIREBASE
 import { db } from './firebase';
-import { collection, onSnapshot, query, orderBy, updateDoc, doc, arrayUnion } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, updateDoc, doc, arrayUnion, runTransaction } from 'firebase/firestore';
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0"; 
 const containerStyle = { width: '100%', height: '100%' };
@@ -886,18 +887,36 @@ function App() {
       if (overdue.length === 0) return;
 
       overdue.slice(0, 20).forEach(route => {
-          const now = new Date().toISOString();
-          updateDoc(doc(db, 'rutas', route.id), {
-              status: 'No realizado',
-              reviewRequired: true,
-              reviewReason: 'Servicio vencido sin inicio registrado',
-              missedTripAt: now,
-              missedTripPreviousStatus: route?.status || '',
-              ofertaEstado: 'Vencida',
-              ofertaPara: '',
-              ofertaNombre: '',
-              'proximityAlert.active': false,
-              lastUpdate: now
+          const routeRef = doc(db, 'rutas', route.id);
+
+          // El monitor puede tener un snapshot unos milisegundos detrás del conductor.
+          // Releemos el documento dentro de una transacción antes de marcarlo como
+          // "No realizado" para no pisar un Inicio de viaje que acaba de guardarse.
+          runTransaction(db, async transaction => {
+              const freshSnapshot = await transaction.get(routeRef);
+              if (!freshSnapshot.exists()) return;
+
+              const freshRoute = {
+                  id: freshSnapshot.id,
+                  ...freshSnapshot.data()
+              };
+              const nowMs = Date.now();
+
+              if (!isOverdueUnexecutedRoute(freshRoute, nowMs)) return;
+
+              const now = new Date(nowMs).toISOString();
+              transaction.update(routeRef, {
+                  status: 'No realizado',
+                  reviewRequired: true,
+                  reviewReason: 'Servicio vencido sin inicio registrado',
+                  missedTripAt: now,
+                  missedTripPreviousStatus: freshRoute?.status || '',
+                  ofertaEstado: 'Vencida',
+                  ofertaPara: '',
+                  ofertaNombre: '',
+                  'proximityAlert.active': false,
+                  lastUpdate: now
+              });
           }).catch(error => console.warn('No se pudo archivar un servicio vencido:', route.id, error));
       });
   }, [liveRoutes, clockTick, currentUser?.id, currentUser?.role]);
@@ -1516,6 +1535,7 @@ const getFilteredAndSortedRoutes = () => {
           <button onClick={() => setActiveTab('planificacion')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'planificacion' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><MapIcon className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Planificación</span></button>
           <button onClick={() => setActiveTab('clientes')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'clientes' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><Briefcase className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Clientes</span></button>
           <button onClick={() => setActiveTab('conductores')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'conductores' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><Users className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Conductores</span></button>
+          <button onClick={() => setActiveTab('recuperaciones')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'recuperaciones' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><ShieldCheck className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Recuperaciones</span></button>
           <button onClick={() => setActiveTab('reportes')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'reportes' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><FileText className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Reportes</span></button>
           <button onClick={() => setActiveTab('accesos')} className={`w-full flex items-center gap-3 px-4 py-3 rounded-xl transition-all ${activeTab === 'accesos' ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20' : 'hover:bg-slate-800 hover:text-white'}`}><KeyRound className="w-5 h-5" /><span className="hidden xl:inline font-bold text-sm">Accesos Empresas</span></button>
         </nav>
@@ -1526,7 +1546,7 @@ const getFilteredAndSortedRoutes = () => {
 
       <main className="flex-1 flex flex-col min-w-0 min-h-0 relative overflow-hidden pb-[calc(4rem+env(safe-area-inset-bottom))] md:pb-0">
         <header className="h-14 md:h-16 bg-white border-b border-slate-200 flex items-center justify-between px-3 sm:px-4 md:px-6 xl:px-8 shadow-sm z-10 shrink-0">
-          <h1 className="text-base md:text-xl font-black text-slate-800 tracking-tight">{activeTab === 'monitoreo' && 'Torre de Control'}{activeTab === 'planificacion' && 'Planificación de Rutas'}{activeTab === 'clientes' && 'Cartera de Clientes'}{activeTab === 'conductores' && 'Directorio de Conductores'}{activeTab === 'reportes' && 'Historial y Reportes'}{activeTab === 'accesos' && 'Accesos Empresariales'}</h1>
+          <h1 className="text-base md:text-xl font-black text-slate-800 tracking-tight">{activeTab === 'monitoreo' && 'Torre de Control'}{activeTab === 'planificacion' && 'Planificación de Rutas'}{activeTab === 'clientes' && 'Cartera de Clientes'}{activeTab === 'conductores' && 'Directorio de Conductores'}{activeTab === 'recuperaciones' && 'Recuperación de Cuentas'}{activeTab === 'reportes' && 'Historial y Reportes'}{activeTab === 'accesos' && 'Accesos Empresariales'}</h1>
           <div className="flex items-center gap-2 sm:gap-4">
               <button type="button" onClick={() => setShowNotifications(value => !value)} className="relative cursor-pointer p-2 rounded-xl hover:bg-slate-100 transition" aria-label="Ver notificaciones">
                   <Bell className="text-slate-400 hover:text-slate-800 w-6 h-6 transition" />
@@ -2055,16 +2075,18 @@ const getFilteredAndSortedRoutes = () => {
         {activeTab === 'planificacion' && <SectionErrorBoundary><Planificacion currentUser={currentUser} /></SectionErrorBoundary>}
         {activeTab === 'clientes' && <SectionErrorBoundary><Clientes /></SectionErrorBoundary>}
         {activeTab === 'conductores' && <SectionErrorBoundary><Conductores /></SectionErrorBoundary>}
+        {activeTab === 'recuperaciones' && <SectionErrorBoundary><Recuperaciones currentUser={currentUser} /></SectionErrorBoundary>}
         {activeTab === 'reportes' && <SectionErrorBoundary><Historial /></SectionErrorBoundary>}
         {activeTab === 'accesos' && <SectionErrorBoundary><AccesosEmpresas currentUser={currentUser} /></SectionErrorBoundary>}
       </main>
 
-      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-[2100] grid grid-cols-6 bg-slate-950 border-t border-slate-800 pb-[max(0.35rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.28)]">
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 z-[2100] grid grid-cols-7 bg-slate-950 border-t border-slate-800 pb-[max(0.35rem,env(safe-area-inset-bottom))] shadow-[0_-8px_24px_rgba(15,23,42,0.28)]">
           {[
               ['monitoreo', Monitor, 'Monitor'],
               ['planificacion', MapIcon, 'Planear'],
               ['clientes', Briefcase, 'Clientes'],
               ['conductores', Users, 'Choferes'],
+              ['recuperaciones', ShieldCheck, 'Recuperar'],
               ['reportes', FileText, 'Reportes'],
               ['accesos', KeyRound, 'Accesos']
           ].map(([tab, Icon, label]) => (

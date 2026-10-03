@@ -22,6 +22,61 @@ const libraries = ['places', 'geometry'];
 const FINAL_DESTINATION_EARLY_MINS = 10;
 const PASSENGER_PICKUP_BUFFER_MINS = 5;
 
+const TRIPLOGIX_COUNTRY_PRICING = Object.freeze({
+    México: Object.freeze({
+        currency: 'MXN',
+        baseFare: '35',
+        perKm: '15',
+        perMinute: '1.5',
+        serviceFee: '12',
+        minimumFare: '75'
+    }),
+    Colombia: Object.freeze({
+        currency: 'COP',
+        baseFare: '8000',
+        perKm: '3500',
+        perMinute: '350',
+        serviceFee: '3000',
+        minimumFare: '18000'
+    })
+});
+
+const getCountryFromTimezone = () => {
+    try {
+        const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        if (/Bogota|Colombia/i.test(timezone)) return 'Colombia';
+        if (/Mexico|Monterrey|Chihuahua|Tijuana|Hermosillo|Mazatlan|Merida|Cancun/i.test(timezone)) return 'México';
+    } catch (_) {}
+    return 'México';
+};
+
+const getCountryFromPoint = (rawPoint) => {
+    const lat = Number(rawPoint?.lat);
+    const lng = Number(rawPoint?.lng ?? rawPoint?.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return '';
+    if (lat >= 14 && lat <= 33.5 && lng >= -119 && lng <= -86) return 'México';
+    if (lat >= -5 && lat <= 13.8 && lng >= -82 && lng <= -66) return 'Colombia';
+    return '';
+};
+
+const getPricingDefaultsForCountry = (country) => (
+    TRIPLOGIX_COUNTRY_PRICING[country] || TRIPLOGIX_COUNTRY_PRICING.México
+);
+
+const createWalkUpPricingDefaults = (country = getCountryFromTimezone()) => {
+    const profile = getPricingDefaultsForCountry(country);
+    return {
+        currency: profile.currency,
+        quotedTotal: '',
+        recalculateAtEnd: true,
+        baseFare: profile.baseFare,
+        perKm: profile.perKm,
+        perMinute: profile.perMinute,
+        serviceFee: profile.serviceFee,
+        minimumFare: profile.minimumFare
+    };
+};
+
 const parseTimeKeyToDate = (timeKey) => {
     const [h, m] = String(timeKey || '').split(':').map(Number);
     const date = new Date();
@@ -591,19 +646,27 @@ export default function Planificacion() {
   // === SERVICIO OCASIONAL / CENTRO DE ACOPIO ===
   const [walkUpMode, setWalkUpMode] = useState(false);
   const [walkUpPassengers, setWalkUpPassengers] = useState([{ name: '', phone: '' }]);
-  const [walkUpPricing, setWalkUpPricing] = useState({
-      currency: 'MXN',
-      quotedTotal: '',
-      recalculateAtEnd: true,
-      baseFare: '35',
-      perKm: '15',
-      perMinute: '1.5',
-      serviceFee: '12',
-      minimumFare: '75'
-  });
+  const [walkUpPricing, setWalkUpPricing] = useState(() => createWalkUpPricingDefaults());
   const [editingPlannedRouteId, setEditingPlannedRouteId] = useState(null);
 
   const isProgramado = newRoute.serviceType === 'Programado';
+
+  useEffect(() => {
+      if (!walkUpMode || !startPoint?.lat || !startPoint?.lng) return;
+
+      const detectedCountry = getCountryFromPoint(startPoint);
+      if (!detectedCountry) return;
+      const defaults = createWalkUpPricingDefaults(detectedCountry);
+
+      setWalkUpPricing(prev => {
+          if (String(prev.quotedTotal || '').trim()) return prev;
+          if (prev.currency === defaults.currency) return prev;
+          return {
+              ...prev,
+              ...defaults
+          };
+      });
+  }, [walkUpMode, startPoint?.lat, startPoint?.lng]);
 
   useEffect(() => {
       if(isLoaded && mapRef.current) {
@@ -775,16 +838,7 @@ export default function Planificacion() {
       setEditingPlannedRouteId(null);
       setWalkUpMode(false);
       setWalkUpPassengers([{ name: '', phone: '' }]);
-      setWalkUpPricing({
-          currency: 'MXN',
-          quotedTotal: '',
-          recalculateAtEnd: true,
-          baseFare: '35',
-          perKm: '15',
-          perMinute: '1.5',
-          serviceFee: '12',
-          minimumFare: '75'
-      });
+      setWalkUpPricing(createWalkUpPricingDefaults());
       setNewRoute({ client: '', requestUser: '', driver: '', driverId: '', status: 'Pendiente', serviceType: 'Programado', scheduledDate: '', scheduledTime: '' });
       setStartPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' });
       setEndPoint({ address: '', lat: null, lng: null, contact: '', passengerName: '', phone: '' });
@@ -833,6 +887,9 @@ export default function Planificacion() {
 
       const nowIso = new Date().toISOString();
       const today = nowIso.split('T')[0];
+      const serviceCountry = getCountryFromPoint(startPoint) || getCountryFromTimezone();
+      const countryPricing = getPricingDefaultsForCountry(serviceCountry);
+      const serviceCurrency = String(countryPricing.currency || 'MXN').toUpperCase();
       const existingRoute = editingPlannedRouteId
           ? routesList.find(item => item.id === editingPlannedRouteId)
           : null;
@@ -925,6 +982,9 @@ export default function Planificacion() {
           end: endPoint.address,
           tripSource: 'dispatcher',
           createdBy: 'dispatcher',
+          serviceCountry,
+          serviceCurrency,
+          currency: existingRoute?.currency || serviceCurrency,
           chat: existingRoute?.chat || [],
           startCoords: startCoordsSave,
           endCoords: {
@@ -965,7 +1025,8 @@ export default function Planificacion() {
           rutaSave.pricingVisibility = 'visible';
           rutaSave.showPricingDuringTrip = true;
           rutaSave.pricingPolicy = 'dispatcher_visible_quote';
-          rutaSave.currency = String(walkUpPricing.currency || 'MXN').toUpperCase();
+          rutaSave.currency = String(walkUpPricing.currency || serviceCurrency).toUpperCase();
+          rutaSave.serviceCurrency = rutaSave.currency;
           rutaSave.recalculateAtEnd = Boolean(walkUpPricing.recalculateAtEnd);
           rutaSave.pricingMode = walkUpPricing.recalculateAtEnd ? 'quoted_then_recalculate' : 'fixed_quote';
           rutaSave.pricing = {
@@ -1099,15 +1160,17 @@ export default function Planificacion() {
                   }))
                   : [{ name: route.startCoords?.passengerName || '', phone: route.startCoords?.phone || '' }]
           );
+          const routeCountry = route.serviceCountry || getCountryFromPoint(route.startCoords) || getCountryFromTimezone();
+          const routeDefaults = getPricingDefaultsForCountry(routeCountry);
           setWalkUpPricing({
-              currency: route.pricing?.currency || route.currency || 'MXN',
+              currency: route.pricing?.currency || route.currency || route.serviceCurrency || routeDefaults.currency,
               quotedTotal: String(route.pricing?.quotedTotal ?? route.pricing?.initialQuote ?? route.pricing?.total ?? ''),
               recalculateAtEnd: route.pricing?.recalculateAtEnd !== false && route.recalculateAtEnd !== false,
-              baseFare: String(route.pricing?.baseFare ?? 35),
-              perKm: String(route.pricing?.perKm ?? 15),
-              perMinute: String(route.pricing?.perMinute ?? 1.5),
-              serviceFee: String(route.pricing?.serviceFee ?? 12),
-              minimumFare: String(route.pricing?.minimumFare ?? 75)
+              baseFare: String(route.pricing?.baseFare ?? routeDefaults.baseFare),
+              perKm: String(route.pricing?.perKm ?? routeDefaults.perKm),
+              perMinute: String(route.pricing?.perMinute ?? routeDefaults.perMinute),
+              serviceFee: String(route.pricing?.serviceFee ?? routeDefaults.serviceFee),
+              minimumFare: String(route.pricing?.minimumFare ?? routeDefaults.minimumFare)
           });
       }
 
@@ -2191,6 +2254,9 @@ export default function Planificacion() {
                   ofertaEstado: 'Pendiente',
                   ofertaTiempo: Date.now(),
                   serviceType: 'Programado',
+                  serviceCountry: getCountryFromPoint(startCoordsSave) || getCountryFromTimezone(),
+                  serviceCurrency: getPricingDefaultsForCountry(getCountryFromPoint(startCoordsSave) || getCountryFromTimezone()).currency,
+                  currency: getPricingDefaultsForCountry(getCountryFromPoint(startCoordsSave) || getCountryFromTimezone()).currency,
                   tripSource: 'dispatcher',
                   createdBy: 'dispatcher',
                   pricingVisibility: 'hidden_during_trip',

@@ -24,6 +24,15 @@ const DEFAULT_MAP_CENTER = { lat: 19.4326, lng: -99.1332 };
 const COLOMBIA_MAP_CENTER = { lat: 4.7110, lng: -74.0721 };
 const CONTROL_ROOM_FORWARD_PHONE = '62142479068';
 
+const AUTO_ASSIGN_RADIUS_KM = 15;
+const AUTO_ASSIGN_MAX_PICKUP_MINUTES = 30;
+const AUTO_ASSIGN_AVERAGE_KMH = 30;
+
+const estimatePickupMinutes = (distanceKm) => {
+    const safeKm = Math.max(0, Number(distanceKm) || 0);
+    return Math.max(1, Math.ceil((safeKm / AUTO_ASSIGN_AVERAGE_KMH) * 60));
+};
+
 const getCountryFromTimezone = () => {
     try {
         const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
@@ -956,31 +965,49 @@ function App() {
           const choferesOcupadosIds = liveRoutes.filter(r => r.status === 'En Ruta' && r.driverId).map(r => r.driverId);
           const choferesQueRechazaron = viaje.rechazadoPor || [];
 
+          const routeCountry = getRouteCountry(viaje);
           const choferesElegibles = onlineDrivers.filter(d => 
-              !choferesOcupadosIds.includes(d.id) && 
-              !choferesQueRechazaron.includes(d.id)
+              !choferesOcupadosIds.includes(d.id) &&
+              !choferesQueRechazaron.includes(d.id) &&
+              (!routeCountry || routeCountry === 'Sin ubicación' || routeCountry === 'Otros' || getDriverCountry(d) === routeCountry)
           );
 
           if (choferesElegibles.length === 0) return;
 
           let choferMasCercano = null;
           let menorDistancia = Infinity;
+          let menorEsperaMinutos = Infinity;
 
           choferesElegibles.forEach(chofer => {
-              const dist = (chofer.currentLocation && viaje.startCoords) ? getDistance(chofer.currentLocation, viaje.startCoords) : 0;
-              if (dist < menorDistancia) {
+              const dist = (chofer.currentLocation && viaje.startCoords)
+                  ? getDistance(chofer.currentLocation, viaje.startCoords)
+                  : Infinity;
+              const esperaMinutos = estimatePickupMinutes(dist);
+
+              if (
+                  Number.isFinite(dist) &&
+                  dist <= AUTO_ASSIGN_RADIUS_KM &&
+                  esperaMinutos <= AUTO_ASSIGN_MAX_PICKUP_MINUTES &&
+                  (esperaMinutos < menorEsperaMinutos || (esperaMinutos === menorEsperaMinutos && dist < menorDistancia))
+              ) {
                   menorDistancia = dist;
+                  menorEsperaMinutos = esperaMinutos;
                   choferMasCercano = chofer;
               }
           });
 
-          if (choferMasCercano && menorDistancia <= 50) {
+          if (choferMasCercano) {
               try {
                   await updateDoc(doc(db, "rutas", viaje.id), {
                       ofertaPara: choferMasCercano.id,
                       ofertaNombre: choferMasCercano.name,
                       ofertaEstado: 'Pendiente',
-                      ofertaTiempo: new Date().getTime()
+                      ofertaTiempo: new Date().getTime(),
+                      assignmentDistanceMeters: Math.round(menorDistancia * 1000),
+                      assignmentEtaMinutes: menorEsperaMinutos,
+                      assignmentSearchRadiusKm: AUTO_ASSIGN_RADIUS_KM,
+                      assignmentMaxEtaMinutes: AUTO_ASSIGN_MAX_PICKUP_MINUTES,
+                      assignmentCountry: routeCountry
                   });
               } catch (assignmentError) {
                   console.error('No se pudo asignar automáticamente el viaje:', assignmentError);

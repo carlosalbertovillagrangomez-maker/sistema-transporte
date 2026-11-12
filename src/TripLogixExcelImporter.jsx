@@ -1,4 +1,5 @@
 import React, { useRef, useState } from 'react';
+import TripLogixGoogleSheetsImporter from './TripLogixGoogleSheetsImporter';
 import * as XLSX from 'xlsx';
 import { db } from './firebase';
 import { addDoc, collection, getDocs } from 'firebase/firestore';
@@ -153,17 +154,13 @@ export default function TripLogixExcelImporter() {
     XLSX.writeFile(wb, 'Plantilla_TripLogix_Rutas.xlsx');
   };
 
-  const importFile = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file) return;
+  const importRows = async (rows, sourceMetadata = {}) => {
+    if (!Array.isArray(rows) || rows.length === 0) throw new Error('No se encontraron filas en la importación.');
+    if (rows.length > 4500) throw new Error('Importa hasta 4500 filas por operación.');
+    const routeCount = new Set(rows.map((row, index) => clean(getCell(row, ['RUTA','ID_RUTA','CLAVE_RUTA'])) || `RUTA-${index + 1}`)).size;
+    if (!window.confirm(`Se crearán ${routeCount} ruta(s) nuevas desde ${sourceMetadata.source === 'google_sheets' ? 'Google Sheets' : 'Excel'}. ¿Confirmar importación?`)) return;
     setBusy(true);
     try {
-      const data = await file.arrayBuffer();
-      const wb = XLSX.read(data, { type: 'array' });
-      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
-      if (!rows.length) throw new Error('El Excel está vacío.');
-
       const driverSnap = await getDocs(collection(db, 'conductores'));
       const drivers = driverSnap.docs.map(d => ({ id: d.id, ...d.data() }));
       const driverByName = (name) => drivers.find(d => norm(d.name) === norm(name));
@@ -297,7 +294,9 @@ export default function TripLogixExcelImporter() {
           pricingVisibility: 'hidden_during_trip',
           showPricingDuringTrip: false,
           pricingPolicy: 'dispatcher_hidden_during_trip',
-          importedFromExcel: true,
+          importedFromExcel: sourceMetadata.source !== 'google_sheets',
+          importedFromGoogleSheets: sourceMetadata.source === 'google_sheets',
+          ...(sourceMetadata.sheetId ? { importSheetId: sourceMetadata.sheetId, importSheetTab: sourceMetadata.tabTitle || '' } : {}),
           importRouteKey: routeKey,
           createdDate: nowIso,
           ...(driver ? {
@@ -315,9 +314,24 @@ export default function TripLogixExcelImporter() {
       alert(`✅ Importación terminada: ${created} ruta(s) creadas. Revisa la planificación antes de iniciar los viajes.`);
     } catch (error) {
       console.error(error);
-      alert(`No se pudo importar: ${error.message || error}`);
+      throw error;
     } finally {
       setBusy(false);
+    }
+  };
+
+  const importFile = async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    if (!file) return;
+    try {
+      const data = await file.arrayBuffer();
+      const wb = XLSX.read(data, { type: 'array' });
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
+      await importRows(rows, { source: 'excel' });
+    } catch(error) {
+      console.error(error);
+      alert(`No se pudo importar: ${error.message || error}`);
     }
   };
 
@@ -330,6 +344,7 @@ export default function TripLogixExcelImporter() {
       <button type="button" disabled={busy} onClick={() => inputRef.current?.click()} className="bg-emerald-600 text-white px-3 py-2 rounded-lg text-xs font-bold hover:bg-emerald-700 disabled:opacity-50">
         {busy ? 'Importando...' : 'Importar Excel'}
       </button>
+      <TripLogixGoogleSheetsImporter onImportRows={importRows} busy={busy} />
     </div>
   );
 }

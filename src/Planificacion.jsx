@@ -979,6 +979,7 @@ export default function Planificacion() {
           client: walkUpMode ? (newRoute.client || 'Servicio ocasional') : newRoute.client,
           driver: newRoute.driver,
           driverId: newRoute.driverId,
+          driverQuickRegistration: Boolean(availableDrivers.find(d => d.id === newRoute.driverId)?.quickRegistration),
           status: existingRoute?.status || (newRoute.driver ? 'Aceptada' : 'Pendiente'),
           start: startPoint.address,
           end: endPoint.address,
@@ -2248,6 +2249,7 @@ export default function Planificacion() {
                   client: newRoute.client,
                   driver: g.driverName,
                   driverId: g.driverId,
+                  driverQuickRegistration: Boolean(availableDrivers.find(d => d.id === g.driverId)?.quickRegistration),
                   status: 'Aceptada',
                   assignmentRequestedAt: createdAt,
                   assignedAt: createdAt,
@@ -2310,6 +2312,7 @@ export default function Planificacion() {
           await updateDoc(doc(db, "rutas", routeToAssign.id), {
               driver: newRoute.driver,
               driverId: newRoute.driverId,
+              driverQuickRegistration: Boolean(availableDrivers.find(d => d.id === newRoute.driverId)?.quickRegistration),
               status: 'Aceptada',
               assignmentRequestedAt: assignedAt,
               assignedAt,

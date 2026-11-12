@@ -8,6 +8,7 @@ import { db } from './firebase';
 import { collection, addDoc, onSnapshot, doc, query, orderBy, deleteDoc, updateDoc } from 'firebase/firestore';
 import TripLogixExcelImporter from './TripLogixExcelImporter';
 import TripLogixWhatsAppActions from './TripLogixWhatsAppActions';
+import TripLogixQuickDriver from './TripLogixQuickDriver';
 import TripLogixAIAssistant from './TripLogixAIAssistant';
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0";
@@ -588,6 +589,7 @@ export default function Planificacion() {
   const [showModal, setShowModal] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [routeToAssign, setRouteToAssign] = useState(null);
+  const [quickDriverTarget, setQuickDriverTarget] = useState(null);
 
   const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries, language: 'es' });
   const mapRef = useRef(null);
@@ -2545,8 +2547,10 @@ export default function Planificacion() {
                       <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
                           <label className="text-xs font-bold text-slate-500 uppercase">Unidad / Conductor</label>
                           <select className="w-full mt-1.5 bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-orange-400 font-bold text-slate-700" value={newRoute.driver} onChange={handleDriverChange}>
-                              <option value="">Seleccionar conductor...</option>{availableDrivers.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                              <option value="">Seleccionar conductor...</option>{availableDrivers.map(d => <option key={d.id} value={d.name}>{d.name}{d.quickRegistration ? " · Alta rápida" : ""}</option>)}
                           </select>
+                          <button type="button" onClick={() => setQuickDriverTarget({ mode: 'assign' })} className="mt-3 text-xs font-bold text-orange-600 hover:underline">+ Registrar conductor nuevo (nombre, vehículo y placas)</button>
+                          {availableDrivers.find(d => d.id === newRoute.driverId)?.quickRegistration && <p className="text-[11px] text-amber-700 mt-2">Este conductor tiene alta operativa, pero no acceso a la app Conductor hasta completar su registro.</p>
                       </div>
                   </div>
                   <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 shrink-0">
@@ -2779,8 +2783,9 @@ export default function Planificacion() {
                                                           <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5">Conductor Asignado</label>
                                                           <select className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-xs font-bold text-slate-700 outline-none focus:border-orange-400" value={grupo.driverId} onChange={(e) => setGroupDriver(grupo.id, e.target.value)}>
                                                               <option value="">👤 Seleccionar chofer...</option>
-                                                              {availableDrivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                                                              {availableDrivers.map(d => <option key={d.id} value={d.id}>{d.name}{d.quickRegistration ? ' · Alta rápida' : ''}</option>)}
                                                           </select>
+                                                          <button type="button" onClick={() => setQuickDriverTarget({ mode: 'group', groupId: grupo.id })} className="text-[10px] text-orange-600 font-bold mt-1 hover:underline">+ Registrar conductor nuevo</button>
                                                           {grupo.aiImported && grupo.driverName && (
                                                               <p className={grupo.driverId ? 'mt-1 text-[9px] font-bold text-emerald-600' : 'mt-1 text-[9px] font-bold text-amber-600'}>
                                                                   {grupo.driverId ? '✓ Conductor tomado del archivo: ' : '⚠ Conductor indicado en archivo, sin coincidencia automática: '}{grupo.driverName}
@@ -3272,8 +3277,9 @@ export default function Planificacion() {
                                 <label className="text-xs font-bold text-slate-500 uppercase">Unidad / Conductor Asignado</label>
                                 <select className="w-full mt-1.5 bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-orange-400" value={newRoute.driver} onChange={handleDriverChange}>
                                     <option value="">Dejar huérfano para Auto-Asignación (Opcional)</option>
-                                    {availableDrivers.map(d => <option key={d.id} value={d.name}>{d.name}</option>)}
+                                    {availableDrivers.map(d => <option key={d.id} value={d.name}>{d.name}{d.quickRegistration ? ' · Alta rápida' : ''}</option>)}
                                 </select>
+                                <button type="button" onClick={() => setQuickDriverTarget({ mode: 'manual' })} className="mt-2 text-xs font-bold text-orange-600 hover:underline">+ Registrar conductor nuevo</button>
                             </div>
                         </div>
                     </div>
@@ -3296,6 +3302,19 @@ export default function Planificacion() {
         </div>
       )}
 
+      {quickDriverTarget && <TripLogixQuickDriver
+        existing={availableDrivers}
+        onCancel={() => setQuickDriverTarget(null)}
+        onCreated={driver => {
+          setAvailableDrivers(prev => prev.some(d => d.id === driver.id) ? prev : [...prev, driver].sort(comparePeopleAZ));
+          if (quickDriverTarget.mode === 'group') {
+            setCarpoolGroups(prev => prev.map(group => group.id === quickDriverTarget.groupId ? { ...group, driverId: driver.id, driverName: driver.name } : group));
+          } else {
+            setNewRoute(prev => ({ ...prev, driver: driver.name, driverId: driver.id }));
+          }
+          setQuickDriverTarget(null);
+        }}
+      />}
       {/* ESTILOS DEL AUTOCOMPLETE Y SCROLLBAR */}
       <style>{`
         .pac-container { z-index: 20000 !important; border-radius: 8px; margin-top: 5px; box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.1); font-family: inherit; min-width: 400px !important; }

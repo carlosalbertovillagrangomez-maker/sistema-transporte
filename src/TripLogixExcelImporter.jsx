@@ -41,10 +41,15 @@ const parseDateTime = (date, time) => {
 const hhmm = (date) => `${String(date.getHours()).padStart(2,'0')}:${String(date.getMinutes()).padStart(2,'0')}`;
 const addMins = (date, mins) => new Date(date.getTime() + Number(mins || 0) * 60000);
 
+const parseCoord = value => {
+  if (value === '' || value == null) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+};
 const toLocation = (point) => {
-  const lat = Number(point.lat);
-  const lng = Number(point.lng);
-  if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+  const lat = parseCoord(point.lat);
+  const lng = parseCoord(point.lng);
+  if (lat !== null && lng !== null && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return { lat, lng };
   if (clean(point.address)) return point.address;
   return null;
 };
@@ -158,8 +163,14 @@ export default function TripLogixExcelImporter() {
   const importRows = async (rows, sourceMetadata = {}) => {
     if (!Array.isArray(rows) || rows.length === 0) throw new Error('No se encontraron filas en la importación.');
     if (rows.length > 4500) throw new Error('Importa hasta 4500 filas por operación.');
-    const routeCount = new Set(rows.map((row, index) => clean(getCell(row, ['RUTA','ID_RUTA','CLAVE_RUTA'])) || `RUTA-${index + 1}`)).size;
-    if (!window.confirm(`Se crearán ${routeCount} ruta(s) nuevas desde ${sourceMetadata.source === 'google_sheets' ? 'Google Sheets' : 'Excel'}. ¿Confirmar importación?`)) return;
+    const groupFor = (row, index) => {
+      const name = clean(getCell(row, ['RUTA','ID_RUTA','CLAVE_RUTA'])) || `RUTA-${index + 1}`;
+      const date = clean(getCell(row, ['FECHA','FECHA_SERVICIO']));
+      const sheetSource = clean(row.__triplogix_sheet_source || sourceMetadata.sheetId || sourceMetadata.importMethod || '');
+      return [sheetSource, date, name].join('::');
+    };
+    const routeCount = new Set(rows.map(groupFor)).size;
+    if (!window.confirm(`Se importarán hasta ${routeCount} ruta(s) nuevas desde ${sourceMetadata.source === 'google_sheets' ? 'Google Sheets' : 'Excel'}. ¿Confirmar importación?`)) return false;
     setBusy(true);
     try {
       const driverSnap = await getDocs(collection(db, 'conductores'));
@@ -182,19 +193,23 @@ export default function TripLogixExcelImporter() {
           phone: digitsOnly(getCell(row, ['TELEFONO','WHATSAPP','CELULAR'])),
           whatsappOptIn: optIn(getCell(row,['WHATSAPP_AUTORIZADO','AUTORIZA_WHATSAPP','CONSENTIMIENTO_WHATSAPP'])),
           address: clean(getCell(row, ['DIRECCION','DOMICILIO'])),
-          lat: Number(getCell(row, ['LATITUD','LAT'])),
-          lng: Number(getCell(row, ['LONGITUD','LNG','LON']))
+          lat: parseCoord(getCell(row, ['LATITUD','LAT'])),
+          lng: parseCoord(getCell(row, ['LONGITUD','LNG','LON'])),
+          sourceSheetId: clean(row.__triplogix_sheet_id || sourceMetadata.sheetId || ''),
+          sourceSheetTab: clean(row.__triplogix_sheet_tab || sourceMetadata.tabTitle || '')
         };
         if (!point.date || !point.objectiveTime || !point.address) {
           throw new Error(`Fila ${index + 2}: faltan FECHA, HORA_OBJETIVO o DIRECCION.`);
         }
-        if (!groups.has(routeKey)) groups.set(routeKey, []);
-        groups.get(routeKey).push(point);
+        const groupKey = groupFor(row, index);
+        if (!groups.has(groupKey)) groups.set(groupKey, []);
+        groups.get(groupKey).push(point);
       });
 
       let created = 0;
-      for (const [routeKey, rawPoints] of groups) {
+      for (const [, rawPoints] of groups) {
         const points = [...rawPoints].sort((a,b) => a.order - b.order);
+        const routeKey = points[0].routeKey;
         if (points.length < 2) throw new Error(`${routeKey}: necesita mínimo 2 puntos.`);
         const base = points[0];
         const google = await calcGoogleRoute(points);
@@ -257,7 +272,7 @@ export default function TripLogixExcelImporter() {
         };
 
         const payload = {
-          client: base.company || 'Importación Excel',
+          client: base.company || (sourceMetadata.source === 'google_sheets' ? 'Importación Google Sheets' : 'Importación Excel'),
           requestUser: passengerSchedule.map(p => p.passengerName).join(', '),
           driver: driver?.name || base.driverName || '',
           driverId: driver?.id || '',
@@ -300,7 +315,7 @@ export default function TripLogixExcelImporter() {
           pricingPolicy: 'dispatcher_hidden_during_trip',
           importedFromExcel: sourceMetadata.source !== 'google_sheets',
           importedFromGoogleSheets: sourceMetadata.source === 'google_sheets',
-          ...(sourceMetadata.sheetId ? { importSheetId: sourceMetadata.sheetId, importSheetTab: sourceMetadata.tabTitle || '' } : {}),
+          ...(base.sourceSheetId ? { importSheetId: base.sourceSheetId, importSheetTab: base.sourceSheetTab || '' } : {}),
           importRouteKey: routeKey,
           createdDate: nowIso,
           ...(driver ? {
@@ -316,6 +331,7 @@ export default function TripLogixExcelImporter() {
       }
 
       alert(`✅ Importación terminada: ${created} ruta(s) creadas. Revisa la planificación antes de iniciar los viajes.`);
+      return created;
     } catch (error) {
       console.error(error);
       throw error;

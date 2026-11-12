@@ -69,7 +69,7 @@ const contactsFor = route => {
   return [...result.values()];
 };
 const recentAssigned = route => {
-  if(!['Aceptada','En Ruta'].includes(route.status)||!route.driver||!route.driverId||route.quickRegistration) return false;
+  if(!['Aceptada','En Ruta'].includes(route.status)||!route.driver||!route.driverId||route.driverQuickRegistration) return false;
   const date = new Date(route.assignedAt||route.assignmentRequestedAt||route.createdDate||0).getTime();
   if(!Number.isFinite(date)||Date.now()-date>7*86400000||date>Date.now()+600000) return false;
   const scheduled = route.scheduledDate||route.finalDate||'';

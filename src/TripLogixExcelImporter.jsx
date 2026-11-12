@@ -136,6 +136,7 @@ const buildSchedules = ({ points, route, mode, date, objectiveTime }) => {
 };
 
 const normalizeMode = (value) => /SALIDA|REGRESO/i.test(clean(value)) ? 'Regreso' : 'Ida';
+const optIn = value => ['SI','SÍ','YES','TRUE','1','AUTORIZADO'].includes(norm(value));
 
 export default function TripLogixExcelImporter() {
   const inputRef = useRef(null);
@@ -143,7 +144,7 @@ export default function TripLogixExcelImporter() {
 
   const downloadTemplate = () => {
     const sample = [
-      { RUTA:'ENTRADA-001', ORDEN:1, FECHA:'2026-08-22', HORA_OBJETIVO:'08:00', MODO:'ENTRADA', EMPRESA:'Club San Francisco', CONDUCTOR:'Jonathan Antonio Cifuentes Cabrera', TIPO_PUNTO:'PASAJERO', PASAJERO:'Ana Pérez', TELEFONO:'6141234567', DIRECCION:'Dirección pasajero 1, Chihuahua', LATITUD:'', LONGITUD:'' },
+      { RUTA:'ENTRADA-001', ORDEN:1, FECHA:'2026-08-22', HORA_OBJETIVO:'08:00', MODO:'ENTRADA', EMPRESA:'Club San Francisco', CONDUCTOR:'Jonathan Antonio Cifuentes Cabrera', TIPO_PUNTO:'PASAJERO', PASAJERO:'Ana Pérez', TELEFONO:'6141234567', WHATSAPP_AUTORIZADO:'SI', DIRECCION:'Dirección pasajero 1, Chihuahua', LATITUD:'', LONGITUD:'' },
       { RUTA:'ENTRADA-001', ORDEN:2, FECHA:'2026-08-22', HORA_OBJETIVO:'08:00', MODO:'ENTRADA', EMPRESA:'Club San Francisco', CONDUCTOR:'Jonathan Antonio Cifuentes Cabrera', TIPO_PUNTO:'PASAJERO', PASAJERO:'Carlos López', TELEFONO:'6141234568', DIRECCION:'Dirección pasajero 2, Chihuahua', LATITUD:'', LONGITUD:'' },
       { RUTA:'ENTRADA-001', ORDEN:3, FECHA:'2026-08-22', HORA_OBJETIVO:'08:00', MODO:'ENTRADA', EMPRESA:'Club San Francisco', CONDUCTOR:'Jonathan Antonio Cifuentes Cabrera', TIPO_PUNTO:'EMPRESA', PASAJERO:'Oficina Central', TELEFONO:'', DIRECCION:'Dirección final de la empresa', LATITUD:'', LONGITUD:'' },
       { RUTA:'SALIDA-001', ORDEN:1, FECHA:'2026-08-22', HORA_OBJETIVO:'17:00', MODO:'SALIDA', EMPRESA:'Club San Francisco', CONDUCTOR:'', TIPO_PUNTO:'EMPRESA', PASAJERO:'Oficina Central', TELEFONO:'', DIRECCION:'Dirección de la empresa', LATITUD:'', LONGITUD:'' },
@@ -179,6 +180,7 @@ export default function TripLogixExcelImporter() {
           pointType: /EMPRESA|OFICINA|DESTINO/i.test(clean(getCell(row, ['TIPO_PUNTO','PUNTO']))) ? 'EMPRESA' : 'PASAJERO',
           passengerName: clean(getCell(row, ['PASAJERO','NOMBRE','USUARIO'])),
           phone: digitsOnly(getCell(row, ['TELEFONO','WHATSAPP','CELULAR'])),
+          whatsappOptIn: optIn(getCell(row,['WHATSAPP_AUTORIZADO','AUTORIZA_WHATSAPP','CONSENTIMIENTO_WHATSAPP'])),
           address: clean(getCell(row, ['DIRECCION','DOMICILIO'])),
           lat: Number(getCell(row, ['LATITUD','LAT'])),
           lng: Number(getCell(row, ['LONGITUD','LNG','LON']))
@@ -219,6 +221,7 @@ export default function TripLogixExcelImporter() {
           contact: p.passengerName,
           passengerName: p.passengerName,
           phone: p.phone,
+          whatsappOptIn: p.whatsappOptIn,
           pickupTime: base.mode === 'Ida' ? p.plannedTime : '',
           dropoffTime: base.mode === 'Regreso' ? p.plannedTime : '',
           stopType: p.pointType === 'EMPRESA' ? 'office' : 'passenger'
@@ -230,6 +233,7 @@ export default function TripLogixExcelImporter() {
           .map(({p, i}) => ({
             passengerName: p.passengerName,
             phone: p.phone,
+            whatsappOptIn: p.whatsappOptIn,
             stopIndex: i,
             pickupTime: base.mode === 'Ida' ? p.plannedTime : '',
             dropoffTime: base.mode === 'Regreso' ? p.plannedTime : '',

@@ -59,7 +59,7 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, busy }) {
         q: "mimeType='application/vnd.google-apps.spreadsheet' and trashed=false",
         fields: 'nextPageToken,files(id,name,modifiedTime,webViewLink)',
         orderBy: 'modifiedTime desc',
-        page_size: '100'
+        pageSize: '100'
       });
       const data = await googleFetch('https://www.googleapis.com/drive/v3/files?' + params.toString(), accessToken);
       setItems(data.files || []);

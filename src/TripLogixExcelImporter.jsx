@@ -2,7 +2,7 @@ import React, { useRef, useState } from 'react';
 import TripLogixGoogleSheetsImporter from './TripLogixGoogleSheetsImporter';
 import * as XLSX from 'xlsx';
 import { db } from './firebase';
-import { addDoc, collection, getDocs } from 'firebase/firestore';
+import { addDoc, collection, getDocs, query, where } from 'firebase/firestore';
 
 const FINAL_DESTINATION_EARLY_MINS = 10;
 const PASSENGER_BUFFER_MINS = 5;
@@ -207,11 +207,28 @@ export default function TripLogixExcelImporter() {
       });
 
       let created = 0;
+      let skipped = 0;
       for (const [, rawPoints] of groups) {
         const points = [...rawPoints].sort((a,b) => a.order - b.order);
         const routeKey = points[0].routeKey;
         if (points.length < 2) throw new Error(`${routeKey}: necesita mínimo 2 puntos.`);
         const base = points[0];
+        // Sólo se omiten duplicados exactos de la misma pestaña de Google Sheets,
+        // mismo día y clave de ruta. No se modifica ningún documento existente.
+        if (sourceMetadata.source === 'google_sheets' && base.sourceSheetId) {
+          const existing = await getDocs(query(collection(db, 'rutas'), where('importRouteKey', '==', routeKey)));
+          const duplicate = existing.docs.some(docSnap => {
+            const saved = docSnap.data();
+            return saved.importedFromGoogleSheets === true &&
+              saved.importSheetId === base.sourceSheetId &&
+              String(saved.importSheetTab || '') === String(base.sourceSheetTab || '') &&
+              saved.scheduledDate === base.date;
+          });
+          if (duplicate) {
+            skipped += 1;
+            continue;
+          }
+        }
         const google = await calcGoogleRoute(points);
         const schedule = buildSchedules({
           points,
@@ -330,7 +347,7 @@ export default function TripLogixExcelImporter() {
         created += 1;
       }
 
-      alert(`✅ Importación terminada: ${created} ruta(s) creadas. Revisa la planificación antes de iniciar los viajes.`);
+      alert(`✅ Importación terminada: ${created} ruta(s) creadas${skipped ? ` y ${skipped} duplicado(s) omitido(s)` : ''}. Revisa la planificación antes de iniciar los viajes.`);
       return created;
     } catch (error) {
       console.error(error);

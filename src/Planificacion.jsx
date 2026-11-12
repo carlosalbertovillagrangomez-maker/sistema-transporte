@@ -2553,7 +2553,7 @@ export default function Planificacion() {
                               <option value="">Seleccionar conductor...</option>{availableDrivers.map(d => <option key={d.id} value={d.name}>{d.name}{d.quickRegistration ? " · Alta rápida" : ""}</option>)}
                           </select>
                           <button type="button" onClick={() => setQuickDriverTarget({ mode: 'assign' })} className="mt-3 text-xs font-bold text-orange-600 hover:underline">+ Registrar conductor nuevo (nombre, vehículo y placas)</button>
-                          {availableDrivers.find(d => d.id === newRoute.driverId)?.quickRegistration && <p className="text-[11px] text-amber-700 mt-2">Este conductor tiene alta operativa, pero no acceso a la app Conductor hasta completar su registro.</p>
+                          {availableDrivers.find(d => d.id === newRoute.driverId)?.quickRegistration && <p className="text-[11px] text-amber-700 mt-2">Este conductor tiene alta operativa, pero no acceso a la app Conductor hasta completar su registro.</p>}
                       </div>
                   </div>
                   <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 shrink-0">

@@ -5,7 +5,20 @@
 - El nuevo conductor rápido pide sólo nombre, vehículo y placas. Se guarda en `conductores` con `status=Pendiente`, `quickRegistration=true`, `isOnline=false`. Es un conductor de administración sin acceso a la app ni notificaciones de conductor hasta completar su registro y aprobación.
 - WhatsApp manual por wa.me sigue disponible. El automático usa exclusivamente API oficial de Meta, plantilla aprobada, consentimiento expreso del pasajero y un cron protegido en backend.
 
-## Google Sheets
+## Google Sheets — modo flexible sin configuración (noviembre 2026)
+Desde **Planificación → Importar Google Sheets**, el despachador tiene dos métodos inmediatos:
+
+1. **Copiar y pegar** (recomendado para datos privados): abrir cualquier Google Sheets que la persona ya pueda consultar, seleccionar el rango completo incluida la fila de encabezados, copiar y pegar en el cuadro de TripLogix, luego confirmar. No requiere Google Cloud, permisos adicionales ni compartir públicamente información de pasajeros.
+2. **Varios enlaces por operación**: pegar uno o más enlaces originales de Google Sheets, elegir **+ Agregar otro enlace** para cada archivo/día y pulsar **Importar enlaces**. TripLogix lee la pestaña indicada por `gid` en cada URL, agrupa las rutas por **archivo + fecha + clave de ruta**, valida el formato de Excel y solicita confirmación **una sola vez**. La operación no queda vinculada a una cuenta, Drive o enlace fijo. Los enlaces de esta opción sólo funcionan cuando Google permite consultar la hoja sin iniciar sesión (acceso de lectura mediante enlace); no pueden acceder a archivos restringidos. Para datos personales, usar copiar y pegar.
+
+La lectura de enlaces usa la función de servidor `/api/sheets/leer-publico`, que únicamente consulta URLs construidas internamente en `docs.google.com`, sin credenciales, con límite de 2 MB por pestaña. No almacena los CSV en disco ni se registran los contenidos. El formulario permite hasta 15 enlaces y 4500 filas en total. Las importaciones repetidas desde el mismo documento/pestaña/fecha/clave se omiten para evitar duplicados.
+
+**Formato de datos**: utilizar la plantilla **Plantilla Excel** ya existente. Deben estar las columnas `FECHA`, `HORA_OBJETIVO` y `DIRECCION` (o alias compatibles). Las columnas `RUTA`, `ORDEN`, `PASAJERO`, `WHATSAPP_AUTORIZADO` y demás funcionan igual que en Excel. Sólo se crean rutas nuevas; se conserva el plan original y la lógica de rutas Google Directions.
+
+### Opcional: seleccionar hojas privadas desde Drive conectado
+El modo avanzado conserva OAuth y el explorador de Drive. Si se requiere el acceso directo a hojas privadas mediante API (sin copiar), entonces sí se debe habilitar Google Drive API + Sheets API, crear un cliente OAuth web y configurar `VITE_GOOGLE_CLIENT_ID` en Vercel, con sus orígenes JavaScript autorizados. **No es obligatorio para los métodos rápidos**. Un enlace restringido sin consentimiento OAuth nunca permite lectura automática; no se deben publicar documentos sensibles sólo para importar.
+
+## Google Sheets — configuración OAuth avanzada
 1. En Google Cloud Console habilitar **Google Drive API** y **Google Sheets API** y configurar pantalla de consentimiento.
 2. Crear **OAuth client ID** tipo **Web application**. Configurar los JavaScript origins de todos los dominios Vercel del Despachador y el dominio final, por ejemplo `https://app-transporte.vercel.app`.
 3. En Vercel, poner `VITE_GOOGLE_CLIENT_ID` (es un identificador público, no un client secret) y volver a desplegar para inyectarlo en el bundle web.

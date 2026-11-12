@@ -53,16 +53,13 @@ export default async function handler(req, res) {
       chunks.push(value);
     }
 
-    const csv = new TextDecoder('utf-8').decode(
-      Uint8Array.from({ length: byteCount }, (_, index) => {
-        let offset = index;
-        for (const chunk of chunks) {
-          if (offset < chunk.byteLength) return chunk[offset];
-          offset -= chunk.byteLength;
-        }
-        return 0;
-      })
-    );
+    const buffer = new Uint8Array(byteCount);
+    let offset = 0;
+    for (const chunk of chunks) {
+      buffer.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    const csv = new TextDecoder('utf-8').decode(buffer);
     if (!csv.trim() || /^\s*<(?:!doctype|html)/i.test(csv)) {
       return res.status(403).json({ error: 'No recibimos un CSV válido. Usa una hoja accesible con el enlace o pega las celdas directamente.' });
     }

@@ -119,3 +119,13 @@ test('preserva grupo y conductor para Regreso, sin inventar horas',()=>{
   assert.equal(row.meetingPointAddress,'Calle Entrega 4321, Chihuahua');
   assert.equal(row.sourceAddressAuthoritative,true);
 });
+
+test('reconoce pegado de filas Programación sin cabecera, sin inventar dirección',()=>{
+  const row=['22.00','','Persona sin cabecera','21.30','Calle Independencia 4321, Chihuahua','','Calle Entrega 900, Chihuahua','','R-5',2,'Chofer Temporal','','','','6140000000'];
+  const parsed=parseOperationalClipboard(row.join('\t'));
+  assert.equal(parsed.entries.length,1);
+  assert.equal(parsed.rosterSource,'Programación');
+  assert.equal(parsed.entries[0].entradaTime,'22:00');
+  assert.equal(parsed.entries[0].entradaRoute,'R-5');
+  assert.ok(parsed.warnings.some(w=>w.includes('sin encabezados')));
+});

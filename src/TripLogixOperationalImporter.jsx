@@ -11,7 +11,7 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
   const [search, setSearch] = useState('');
   const [selected, setSelected] = useState(() => new Set(
     data.rosterSource === 'Programación'
-      ? data.entries.filter(entry => entry.entradaTime || entry.salidaTime || entry.entradaRoute || entry.salidaRoute).map(entry => entry.id)
+      ? data.entries.filter(entry => entry.entradaTime || entry.entradaRoute).map(entry => entry.id)
       : []
   ));
   const [loading, setLoading] = useState(false);
@@ -22,9 +22,27 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
   })), [data, mode, officialTime]);
   const shown = useMemo(() => records.filter(entry => norm(entry.name).includes(norm(search)) || norm(entry.homeAddress).includes(norm(search))), [records, search]);
   const active = records.filter(entry => selected.has(entry.id));
+  const duplicates = new Set();
+  const seen = new Set();
+  for (const entry of active) {
+    const key = norm(entry.name);
+    if (seen.has(key)) duplicates.add(entry.name);
+    seen.add(key);
+  }
   const missingTime = active.filter(entry => !formatOperationalTime(entry.planning.time));
   const missingAddress = active.filter(entry => !entry.planning.address && !entry.planning.meetingPointAddress);
 
+  const changeMode = value => {
+    setMode(value);
+    if (data.rosterSource === 'Programación') {
+      setSelected(new Set(data.entries.filter(entry => value === 'Ida'
+        ? Boolean(entry.entradaTime || entry.entradaRoute)
+        : Boolean(entry.salidaTime || entry.salidaRoute)
+      ).map(entry => entry.id)));
+    } else {
+      setSelected(new Set());
+    }
+  };
   const chooseVisible = () => setSelected(prev => new Set([...prev, ...shown.map(entry => entry.id)]));
   const clearAll = () => setSelected(new Set());
   const toggle = id => setSelected(prev => {
@@ -41,6 +59,7 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
     }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return setMessage('Selecciona la fecha del servicio.');
     if (!active.length) return setMessage('Selecciona a las personas que realmente viajarán ese día.');
+    if (duplicates.size > 0) return setMessage('Hay personas repetidas en la selección: ' + [...duplicates].slice(0,5).join(', ') + '. Selecciona sólo una fila por persona y sentido.');
     if (active.length > 120) return setMessage('Selecciona hasta 120 personas por operación para revisar los recorridos por grupos.');
     if (missingTime.length) return setMessage('Falta hora oficial para ' + missingTime.length + ' persona(s). Escribe la hora de entrada/salida arriba.');
     if (missingAddress.length) return setMessage('Falta domicilio/dirección para ' + missingAddress.length + ' persona(s). Revisa la hoja BD o Programación.');
@@ -81,7 +100,7 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
             <input type="date" className="block w-full mt-1.5 rounded-lg p-3 border border-slate-300 bg-white" value={date} onChange={event => setDate(event.target.value)} />
           </label>
           <label className="text-xs font-bold text-slate-700">Sentido de las rutas
-            <select className="block w-full mt-1.5 rounded-lg p-3 border border-slate-300 bg-white" value={mode} onChange={event => setMode(event.target.value)}>
+            <select className="block w-full mt-1.5 rounded-lg p-3 border border-slate-300 bg-white" value={mode} onChange={event => changeMode(event.target.value)}>
               <option value="Ida">ENTRADA → Empresa</option><option value="Regreso">SALIDA → Domicilios</option>
             </select>
           </label>
@@ -114,6 +133,7 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
         <div className="flex flex-col sm:flex-row gap-2 justify-between items-start sm:items-center">
           <div className="text-xs text-slate-600 space-y-1">
             <p>{missingTime.length ? '⚠ ' + missingTime.length + ' seleccionados sin hora oficial.' : '✓ Horarios completos para la selección.'}</p>
+            {duplicates.size > 0 && <p className="text-amber-700">⚠ {duplicates.size} nombres repetidos: revisa antes de continuar.</p>}
             <p>{missingAddress.length ? '⚠ ' + missingAddress.length + ' seleccionados sin domicilio.' : '✓ Los pasajeros seleccionados tienen dirección de referencia.'}</p>
             <p>Los conductores temporales se agregan después, en <strong>Cuadrillas armadas → + Registrar conductor nuevo</strong> (nombre, vehículo y placas).</p>
           </div>

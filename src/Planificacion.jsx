@@ -592,6 +592,7 @@ export default function Planificacion() {
   const [routeToAssign, setRouteToAssign] = useState(null);
   const [quickDriverTarget, setQuickDriverTarget] = useState(null);
   const [operationalWorkbook, setOperationalWorkbook] = useState(null);
+  const [temporaryDriverSuggestions, setTemporaryDriverSuggestions] = useState([]);
 
   const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries, language: 'es' });
   const mapRef = useRef(null);
@@ -2416,7 +2417,10 @@ export default function Planificacion() {
           </div>
           <div className="grid grid-cols-1 sm:flex gap-2 sm:gap-3 flex-wrap sm:justify-end w-full lg:w-auto">
               <TripLogixAIAssistant clients={availableClients} onApply={applyAiScheduleToCarpool} />
-              <TripLogixExcelImporter onOperationalWorkbook={setOperationalWorkbook} />
+              <TripLogixExcelImporter onOperationalWorkbook={data => {
+                setTemporaryDriverSuggestions(Array.isArray(data.drivers) ? data.drivers : []);
+                setOperationalWorkbook(data);
+              }} />
               <button onClick={openCarpoolModal} className="bg-orange-100 text-orange-700 border border-orange-200 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-orange-200 transition"><Network className="w-4 h-4" /> Optimizar Grupos de Personal</button>
               <button onClick={() => { setViewRoute(null); setEditingPlannedRouteId(null); setWalkUpMode(false); setShowModal(true); }} className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg hover:bg-slate-900 transition"><Plus className="w-4 h-4" /> Nueva Ruta Manual</button>
           </div>
@@ -3321,6 +3325,7 @@ export default function Planificacion() {
       />}
       {quickDriverTarget && <TripLogixQuickDriver
         existing={availableDrivers}
+        suggestedDrivers={temporaryDriverSuggestions}
         onCancel={() => setQuickDriverTarget(null)}
         onCreated={driver => {
           setAvailableDrivers(prev => prev.some(d => d.id === driver.id) ? prev : [...prev, driver].sort(comparePeopleAZ));

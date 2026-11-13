@@ -7,6 +7,7 @@ import { GoogleMap, useJsApiLoader, Marker, Polyline, Autocomplete } from '@reac
 import { db } from './firebase';
 import { collection, addDoc, onSnapshot, doc, query, orderBy, deleteDoc, updateDoc } from 'firebase/firestore';
 import TripLogixExcelImporter from './TripLogixExcelImporter';
+import TripLogixOperationalImporter from './TripLogixOperationalImporter';
 import TripLogixWhatsAppActions from './TripLogixWhatsAppActions';
 import TripLogixQuickDriver from './TripLogixQuickDriver';
 import TripLogixAIAssistant from './TripLogixAIAssistant';
@@ -590,6 +591,7 @@ export default function Planificacion() {
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [routeToAssign, setRouteToAssign] = useState(null);
   const [quickDriverTarget, setQuickDriverTarget] = useState(null);
+  const [operationalWorkbook, setOperationalWorkbook] = useState(null);
 
   const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries, language: 'es' });
   const mapRef = useRef(null);
@@ -1289,11 +1291,13 @@ export default function Planificacion() {
           const rawAddress = sourceAddressAuthoritative
               ? aiMeetingPointAddress
               : (hasExplicitMeetingPoint
-                  ? (configuredMeetingLocation?.address || aiMeetingPointAddress || '')
+                  ? (configuredMeetingLocation?.address || aiMeetingPointAddress || row?.address || '')
                   : (homeSavedLocation?.address || row?.address || ''));
 
-          let lat = Number(savedLocation?.lat);
-          let lng = Number(savedLocation?.lng ?? savedLocation?.lon);
+          let lat = savedLocation?.lat === null || savedLocation?.lat === undefined || savedLocation?.lat === ''
+              ? NaN : Number(savedLocation.lat);
+          const savedLng = savedLocation?.lng ?? savedLocation?.lon;
+          let lng = savedLng === null || savedLng === undefined || savedLng === '' ? NaN : Number(savedLng);
           let finalAddress = rawAddress;
 
           if ((!Number.isFinite(lat) || !Number.isFinite(lng)) && rawAddress) {
@@ -1309,6 +1313,9 @@ export default function Planificacion() {
           if (!Number.isFinite(lat) || !Number.isFinite(lng)) missing.push(personName);
 
           const officialTime = String(row?.time || '').trim();
+          if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(officialTime)) {
+              throw new Error('Falta la hora oficial del servicio para ' + personName + '. Selecciona la hora en el importador.');
+          }
           prepared.push({
               ...(savedLocation || {}),
               assignedTo: personName,
@@ -2409,7 +2416,7 @@ export default function Planificacion() {
           </div>
           <div className="grid grid-cols-1 sm:flex gap-2 sm:gap-3 flex-wrap sm:justify-end w-full lg:w-auto">
               <TripLogixAIAssistant clients={availableClients} onApply={applyAiScheduleToCarpool} />
-              <TripLogixExcelImporter />
+              <TripLogixExcelImporter onOperationalWorkbook={setOperationalWorkbook} />
               <button onClick={openCarpoolModal} className="bg-orange-100 text-orange-700 border border-orange-200 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-orange-200 transition"><Network className="w-4 h-4" /> Optimizar Grupos de Personal</button>
               <button onClick={() => { setViewRoute(null); setEditingPlannedRouteId(null); setWalkUpMode(false); setShowModal(true); }} className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg hover:bg-slate-900 transition"><Plus className="w-4 h-4" /> Nueva Ruta Manual</button>
           </div>
@@ -3305,6 +3312,13 @@ export default function Planificacion() {
         </div>
       )}
 
+      {operationalWorkbook && <TripLogixOperationalImporter
+        key={operationalWorkbook.importKey || 'operational-data'}
+        data={operationalWorkbook}
+        clients={availableClients}
+        onApply={applyAiScheduleToCarpool}
+        onClose={() => setOperationalWorkbook(null)}
+      />}
       {quickDriverTarget && <TripLogixQuickDriver
         existing={availableDrivers}
         onCancel={() => setQuickDriverTarget(null)}

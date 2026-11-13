@@ -197,13 +197,28 @@ export const parseOperationalClipboard = input => {
   if (headings.includes('HORA ENTRADA') && headings.includes('NOMBRE')) type = 'Programación';
   else if (headings.includes('NOMBRES') && headings.includes('DIRECCION')) type = 'BD';
   else if (headings.includes('NOMBRECOMPLETO') && headings.includes('DOMICILIO')) type = 'Directorio';
+  // Algunas personas copian únicamente las filas del día (sin las dos filas
+  // de encabezados de Programación). Reconocemos esa estructura SOLO cuando
+  // conserva las posiciones A:O y hay nombre + horario + domicilio reconocibles.
+  const first = rows[0] || [];
+  const looksLikeProgramData = !type && first.length >= 11 &&
+    clean(first[2]).length >= 6 &&
+    /[A-Za-zÁÉÍÓÚÑáéíóúñ]/.test(clean(first[2])) &&
+    Boolean(formatOperationalTime(first[0]) || formatOperationalTime(first[1])) &&
+    Boolean(clean(first[4]) || clean(first[6]));
+  if (looksLikeProgramData) type = 'Programación';
   if (!type) return null;
 
   const workbook = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(rows), type);
-  // Programación separa cabeceras en dos filas: completa segunda si no venía en el pegado.
-  if (type === 'Programación' && norm(rows[1]?.[2]) === 'NOMBRE') {
-    // No hay segundo encabezado real en esta plantilla; mantiene las filas existentes.
+  const inputRows = looksLikeProgramData ? [
+    ['HORA ENTRADA','HORA SALIDA','NOMBRE','HORA PASO','PUNTO DE RECOGIDA','','PUNTO DE DESCARGUE','','ENTRADA','','','SALIDA','','','TELEFONO USUARIO'],
+    ['','','','','DIRECCIÓN','','DIRECCIÓN','','RUTA','PUESTO','COND','RUTA','PUESTO','COND',''],
+    ...rows
+  ] : rows;
+  XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(inputRows), type);
+  const extracted = extractOperationalWorkbook(workbook);
+  if (looksLikeProgramData) {
+    extracted.warnings.unshift('Se detectaron filas de Programación sin encabezados usando sus columnas A:O. Comprueba nombres, direcciones y horas antes de confirmar.');
   }
-  return extractOperationalWorkbook(workbook);
+  return extracted;
 };

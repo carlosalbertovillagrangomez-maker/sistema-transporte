@@ -721,7 +721,8 @@ class SectionErrorBoundary extends React.Component {
         <div className="flex-1 m-6 p-8 rounded-2xl border border-red-200 bg-red-50 text-red-700">
           <h2 className="font-black text-lg">No fue posible abrir este módulo</h2>
           <p className="text-sm mt-2">{this.state.message}</p>
-          <button type="button" onClick={() => this.setState({ hasError: false, message: '' })} className="mt-4 px-4 py-2 rounded-lg bg-red-600 text-white font-bold">Reintentar</button>
+          <p className="text-xs mt-2">Si el navegador está traduciendo TripLogix, desactiva la traducción automática. Los cambios del navegador sobre el texto pueden interferir con Planificación.</p>
+          <button type="button" onClick={() => window.location.reload()} className="mt-4 px-4 py-2 rounded-lg bg-red-600 text-white font-bold">Recargar aplicación</button>
         </div>
       );
     }

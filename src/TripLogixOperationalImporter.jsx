@@ -60,7 +60,7 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return setMessage('Selecciona la fecha del servicio.');
     if (!active.length) return setMessage('Selecciona a las personas que realmente viajarán ese día.');
     if (duplicates.size > 0) return setMessage('Hay personas repetidas en la selección: ' + [...duplicates].slice(0,5).join(', ') + '. Selecciona sólo una fila por persona y sentido.');
-    if (active.length > 120) return setMessage('Selecciona hasta 120 personas por operación para revisar los recorridos por grupos.');
+    if (active.length > 300) return setMessage('Selecciona hasta 300 personas por operación y revisa los recorridos por grupos.');
     if (missingTime.length) return setMessage('Falta hora oficial para ' + missingTime.length + ' persona(s). Escribe la hora de entrada/salida arriba.');
     if (missingAddress.length) return setMessage('Falta domicilio/dirección para ' + missingAddress.length + ' persona(s). Revisa la hoja BD o Programación.');
     if (!window.confirm('Preparar ' + active.length + ' pasajero(s) para ' + (mode === 'Ida' ? 'ENTRADA' : 'SALIDA') + ' el ' + date + ' en ' + company + '? No se guardarán rutas hasta confirmar el último paso.')) return;

@@ -46,9 +46,7 @@ test('detecta cuatro pestañas y no crea rutas de un directorio sin Programació
 });
 
 test('lee rutas, conductores y horarios oficiales desde Programación con dos cabeceras',()=>{
-  const wb=base();
-  const sheet=wb.worksheets.get_item?.('Programación');
-  // Crea otra hoja desde AOA para asegurar no depender de API mutables.
+  // Crea las hojas desde AOA para reflejar la distribución de la plantilla.
   const custom=book({
     programRows:[
       firstHeader,secondHeader,

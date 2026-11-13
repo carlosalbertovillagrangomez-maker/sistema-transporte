@@ -44,7 +44,7 @@ export default function TripLogixQuickDriver({ existing = [], suggestedDrivers =
         {suggestedDrivers.length > 0 && <label className="block text-xs font-bold text-slate-700">
           Buscar en la pestaña Conductores del Excel (opcional)
           <select className="mt-1 block w-full p-3 border border-slate-300 rounded-lg bg-blue-50" defaultValue="" onChange={event => {
-            const driver = suggestedDrivers[Number(event.target.value)];
+            const driver = event.target.value === '' ? null : suggestedDrivers[Number(event.target.value)];
             if (driver) {
               setName(driver.name || '');
               setVehicleModel(driver.vehicleModel || '');

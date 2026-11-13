@@ -75,7 +75,7 @@ const mergedLookup = (book) => {
 
 export const isOperationalWorkbook = book => {
   const names = (book?.SheetNames || []).map(norm);
-  return names.includes('PROGRAMACION') || (names.includes('BD') && names.includes('DIRECTORIO'));
+  return names.includes('PROGRAMACION') || names.includes('BD') || names.includes('DIRECTORIO');
 };
 
 export const extractOperationalWorkbook = book => {

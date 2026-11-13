@@ -1,5 +1,6 @@
 import React, { useRef, useState } from 'react';
 import TripLogixGoogleSheetsImporter from './TripLogixGoogleSheetsImporter';
+import { extractOperationalWorkbook, isOperationalWorkbook } from './triplogixWorkbook';
 import * as XLSX from 'xlsx';
 import { db } from './firebase';
 import { addDoc, collection, getDocs, query, where } from 'firebase/firestore';
@@ -143,7 +144,7 @@ const buildSchedules = ({ points, route, mode, date, objectiveTime }) => {
 const normalizeMode = (value) => /SALIDA|REGRESO/i.test(clean(value)) ? 'Regreso' : 'Ida';
 const optIn = value => ['SI','SÍ','YES','TRUE','1','AUTORIZADO'].includes(norm(value));
 
-export default function TripLogixExcelImporter() {
+export default function TripLogixExcelImporter({ onOperationalWorkbook }) {
   const inputRef = useRef(null);
   const [busy, setBusy] = useState(false);
 
@@ -364,6 +365,11 @@ export default function TripLogixExcelImporter() {
     try {
       const data = await file.arrayBuffer();
       const wb = XLSX.read(data, { type: 'array' });
+      if (isOperationalWorkbook(wb)) {
+        if (!onOperationalWorkbook) throw new Error('El módulo de planificación no pudo abrir el formato empresarial.');
+        onOperationalWorkbook({ ...extractOperationalWorkbook(wb), importKey: String(Date.now()) });
+        return;
+      }
       const rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' });
       await importRows(rows, { source: 'excel' });
     } catch(error) {
@@ -379,9 +385,9 @@ export default function TripLogixExcelImporter() {
         Plantilla Excel
       </button>
       <button type="button" disabled={busy} onClick={() => inputRef.current?.click()} className="bg-emerald-600 text-white px-3 py-2 rounded-lg text-xs font-bold hover:bg-emerald-700 disabled:opacity-50">
-        {busy ? 'Importando...' : 'Importar Excel'}
+        {busy ? 'Importando...' : 'Importar Excel / Plantilla empresa'}
       </button>
-      <TripLogixGoogleSheetsImporter onImportRows={importRows} busy={busy} />
+      <TripLogixGoogleSheetsImporter onImportRows={importRows} onOperationalWorkbook={onOperationalWorkbook} busy={busy} />
     </div>
   );
 }

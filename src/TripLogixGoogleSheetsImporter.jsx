@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
+import { parseOperationalClipboard } from './triplogixWorkbook';
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 const SCOPES = 'https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/spreadsheets.readonly';
@@ -73,7 +74,7 @@ const loadIdentity = () => new Promise((resolve, reject) => {
   script.addEventListener('error', () => reject(new Error('No se pudo cargar el acceso de Google.')), { once: true });
 });
 
-export default function TripLogixGoogleSheetsImporter({ onImportRows, busy }) {
+export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperationalWorkbook, busy }) {
   const [open, setOpen] = useState(false);
   const [links, setLinks] = useState([{ key: 1, url: '' }]);
   const [nextKey, setNextKey] = useState(2);
@@ -109,6 +110,14 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, busy }) {
         const response = await fetch(`/api/sheets/leer-publico?sheetId=${encodeURIComponent(id)}&gid=${encodeURIComponent(gid)}`, { cache: 'no-store' });
         const data = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(`Enlace ${i + 1}: ${data.error || 'No se pudo abrir la pestaña.'}`);
+        const recognized = parseOperationalClipboard(data.csv);
+        if (recognized) {
+          if (parsed.length > 1) throw new Error('Para el formato Programación/BD importa un enlace por vez, porque cada archivo puede corresponder a otra fecha. Para varios días usa los enlaces con la plantilla normal que incluye FECHA.');
+          if (!onOperationalWorkbook) throw new Error('No se pudo abrir la planificación empresarial.');
+          onOperationalWorkbook({ ...recognized, importKey: String(Date.now()) });
+          setOpen(false);
+          return;
+        }
         const rows = parseDelimitedRows(data.csv);
         rows.forEach(row => allRows.push({ ...row, __triplogix_sheet_source: id + ':' + gid, __triplogix_sheet_id: id, __triplogix_sheet_tab: gid }));
       }
@@ -122,6 +131,14 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, busy }) {
   const importPasted = async () => {
     setLoading(true); setMessage('');
     try {
+      const recognized = parseOperationalClipboard(pastedText);
+      if (recognized) {
+        if (!onOperationalWorkbook) throw new Error('No se pudo abrir la planificación empresarial.');
+        onOperationalWorkbook({ ...recognized, importKey: String(Date.now()) });
+        setOpen(false);
+        setPastedText('');
+        return;
+      }
       const rows = parseDelimitedRows(pastedText, true);
       const result = await onImportRows(rows, { source: 'google_sheets', importMethod: 'clipboard' });
       if (result !== false) { setOpen(false); setPastedText(''); }
@@ -198,8 +215,8 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, busy }) {
 
             <section className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-4 space-y-3">
               <h4 className="font-black text-emerald-900 text-sm">Opción rápida y privada · copiar y pegar</h4>
-              <p className="text-xs text-emerald-900">En cualquier Google Sheets (aunque sea privado), selecciona todas las celdas con encabezados, copia (Ctrl+C) y pégalas aquí (Ctrl+V). No requiere Google Cloud ni cambiar permisos.</p>
-              <textarea rows={4} className="w-full bg-white border border-emerald-200 rounded-lg p-3 text-xs" placeholder="Pega aquí las filas copiadas de Google Sheets, incluyendo la fila de encabezados..." value={pastedText} onChange={event => setPastedText(event.target.value)} />
+              <p className="text-xs text-emerald-900">En cualquier Google Sheets (aunque sea privado), copia el rango con sus encabezados y pégalo aquí (Ctrl+C / Ctrl+V). TripLogix reconoce automáticamente la hoja Programación, BD, Directorio o la plantilla normal de rutas. No necesitas Google Cloud.</p>
+              <textarea rows={4} className="w-full bg-white border border-emerald-200 rounded-lg p-3 text-xs" placeholder="Pega aquí las filas y encabezados de Programación, BD o de la plantilla normal..." value={pastedText} onChange={event => setPastedText(event.target.value)} />
               <button type="button" onClick={importPasted} disabled={loading || busy || !pastedText.trim()} className="bg-emerald-700 text-white px-4 py-2.5 rounded-lg text-xs font-black disabled:opacity-50">Importar datos pegados</button>
             </section>
 
@@ -217,7 +234,7 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, busy }) {
                 <button type="button" onClick={addLink} className="px-3 py-2 bg-slate-100 border text-slate-700 font-bold rounded-lg text-xs">+ Agregar otro enlace</button>
                 <button type="button" onClick={importLinks} disabled={loading || busy || !links.some(item => clean(item.url))} className="bg-blue-600 text-white px-4 py-2 rounded-lg font-black text-xs disabled:opacity-50">Importar enlaces</button>
               </div>
-              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-3">Los enlaces se pueden importar sin OAuth sólo si Google permite su lectura sin iniciar sesión. <strong>No hagas públicos datos personales de pasajeros</strong>: para hojas privadas usa la opción de copiar y pegar de arriba.</p>
+              <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-lg p-3">Los enlaces se pueden importar sin OAuth sólo si Google permite su lectura sin iniciar sesión. <strong>No hagas públicos datos personales de pasajeros</strong>: para una plantilla con cuatro pestañas, utiliza el botón Importar Excel / Plantilla empresa y selecciona el archivo completo; también puedes copiar y pegar el rango de Programación.</p>
             </section>
 
             <details className="border border-slate-200 rounded-xl p-4">

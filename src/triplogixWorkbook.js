@@ -82,7 +82,8 @@ export const extractOperationalWorkbook = book => {
   if (!isOperationalWorkbook(book)) throw new Error('No se detectaron las pestañas Programación / BD / Directorio.');
   const { names, database, directory } = mergedLookup(book);
   const program = sheetRows(book, 'Programación');
-  const programmed = program.slice(2).map((row, index) => {
+  const headerRows = norm(program[1]?.[4]) === 'DIRECCION' || norm(program[1]?.[8]) === 'RUTA' ? 2 : 1;
+  const programmed = program.slice(headerRows).map((row, index) => {
     const name = clean(row?.[2]);
     if (!name) return null;
     const reference = names.get(norm(name)) || {};
@@ -91,8 +92,8 @@ export const extractOperationalWorkbook = book => {
     const entradaIntermediate = reference.entradaIntermediate || '';
     const salidaIntermediate = reference.salidaIntermediate || '';
     return {
-      id: 'program-' + (index + 3) + '-' + norm(name),
-      source: 'Programación', sourceRow: index + 3,
+      id: 'program-' + (index + headerRows + 1) + '-' + norm(name),
+      source: 'Programación', sourceRow: index + headerRows + 1,
       name,
       phone: normalizePhone(row?.[14]) || reference.phone || '',
       homeAddress: reference.homeAddress || '',

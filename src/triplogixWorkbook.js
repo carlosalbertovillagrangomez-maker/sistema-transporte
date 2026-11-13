@@ -18,7 +18,8 @@ export const formatOperationalTime = raw => {
     const minutes = Math.round(excelNumber * 1440) % 1440;
     return String(Math.floor(minutes / 60)).padStart(2, '0') + ':' + String(minutes % 60).padStart(2, '0');
   }
-  const matched = input.match(/^(\d{1,2})(?:[:.](\d{1,2}))?$/);
+  const normalizedInput = input.replace(/^(\d{1,2}:\d{2}):00$/, '$1');
+  const matched = normalizedInput.match(/^(\d{1,2})(?:[:.](\d{1,2}))?$/);
   if (!matched) return '';
   let hours = Number(matched[1]);
   let mins = matched[2] ? Number(matched[2].length === 1 ? matched[2] + '0' : matched[2]) : 0;

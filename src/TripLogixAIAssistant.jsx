@@ -345,11 +345,52 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
 
   const analyze = async () => {
     const cleanKey = apiKey.trim();
-    if (!cleanKey) return setError('Agrega tu API key de Gemini antes de analizar.');
     if (!selectedCompany) return setError('Selecciona la empresa antes de analizar.');
     if (!selectedDate) return setError('Selecciona la fecha del servicio antes de analizar.');
     if (fileLoading) return setError('Espera a que termine de preparar el archivo antes de analizar.');
     if (!userText.trim() && !preparedFile) return setError('Pega texto o selecciona una foto/Excel.');
+
+    // La plantilla reconocida se lee directamente: para un Excel estructurado
+    // Gemini no aporta nada y a veces confunde Entrada con Salida.
+    const sourceRows = preparedFile?.kind === 'workbook' &&
+      Array.isArray(preparedFile?.structuredRows) ? preparedFile.structuredRows : [];
+    if (sourceRows.length) {
+      const isExit = selectedMode === 'Regreso';
+      const relevant = sourceRows.filter(row => isExit
+        ? (row.salidaTime || row.salidaRoute)
+        : (row.entradaTime || row.entradaRoute));
+      if(!relevant.length) return setError('El Excel no tiene servicios de ' + (isExit ? 'SALIDA' : 'ENTRADA') + '. Comprueba el sentido elegido.');
+      const resultRows = relevant.map((row,index) => {
+        const meetingPointAddress = String(isExit ? row.dropoffAddress : row.pickupAddress || '').trim();
+        return {
+          name: String(row.name || '').trim(),
+          time: cleanTime(isExit ? row.salidaTime : row.entradaTime),
+          referenceTime: cleanTime(row.referenceTime),
+          address: String(row.homeAddress || '').trim(),
+          meetingPoint: meetingPointAddress,
+          meetingPointAddress,
+          sourceAddressAuthoritative:Boolean(meetingPointAddress),
+          phone:normalizeWorkbookPhone(row.phone),
+          driver:String(isExit ? row.salidaDriver || '' : row.entradaDriver || ''),
+          route:String(isExit ? row.salidaRoute || '' : row.entradaRoute || ''),
+          order:Number(isExit ? row.salidaOrder : row.entradaOrder) || index + 1
+        };
+      });
+      const missingAddresses=resultRows.filter(row => !row.address && !row.meetingPointAddress).length;
+      setResult({
+        company:selectedCompany,date:selectedDate,mode:selectedMode,
+        summary:'Se identificaron '+resultRows.length+' servicios de '+(isExit?'SALIDA':'ENTRADA')+' directamente del Excel, sin Gemini.',
+        notes:[
+          'No se mezclaron entradas y salidas. BD y Directorio sólo aportan datos de ubicación.',
+          ...(missingAddresses ? [missingAddresses+' registros no incluyen domicilio. Revisa BD/Directorio o Clientes antes de crear rutas.'] : [])
+        ],
+        rows:resultRows
+      });
+      setApplyResult(null);
+      setError('');
+      return;
+    }
+    if (!cleanKey) return setError('Agrega tu API key de Gemini para analizar texto o imágenes sin estructura reconocida.');
 
     setLoading(true);
     setError('');
@@ -633,7 +674,7 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
               </div>
 
               <button type="button" disabled={loading || fileLoading} onClick={analyze} className="w-full rounded-2xl bg-violet-600 hover:bg-violet-700 text-white py-3.5 font-black text-sm flex items-center justify-center gap-2 disabled:opacity-60">
-                {loading ? <><Loader2 className="w-5 h-5 animate-spin"/> Analizando programación...</> : <><Sparkles className="w-5 h-5"/> Analizar con Gemini</>}
+                {loading ? <><Loader2 className="w-5 h-5 animate-spin"/> Analizando programación...</> : <><Sparkles className="w-5 h-5"/> {preparedFile?.structuredRows?.length ? 'Leer entradas/salidas del Excel (sin Gemini)' : 'Analizar con Gemini'}</>}
               </button>
 
               {error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-bold text-red-700 flex items-start gap-2"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5"/>{error}</div>}

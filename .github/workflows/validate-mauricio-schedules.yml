@@ -1,0 +1,28 @@
+name: Validate Mauricio schedule corrections
+on:
+  push:
+    branches: [feature/fix-mauricio-schedules-2026-11-13]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Tests of directions, duplicates and spreadsheet imports
+        run: node --test tests/triplogixScheduleReview.test.js tests/triplogixWorkbook.test.js tests/leer-publico.test.js
+      - name: Build React production
+        run: npm run build
+      - name: Syntax check serverless endpoints
+        run: |
+          node --check api/whatsapp/sync.js
+          node --check api/sheets/leer-publico.js

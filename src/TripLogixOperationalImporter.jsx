@@ -1,11 +1,11 @@
 import React, { useMemo, useState } from 'react';
 import { formatOperationalTime, norm, parseOperationalClipboard, toPlanningRow } from './triplogixWorkbook';
-import { addressFromClientCatalog, groupScheduleForMode, normalizeIdentity } from './triplogixScheduleReview';
+import { addressFromClientCatalog, groupScheduleForMode, hasScheduledMode, normalizeIdentity } from './triplogixScheduleReview';
 
 const initialMode = data => {
   if (data.rosterSource !== 'Programación') return 'Ida';
-  const ida = data.entries.filter(row => row.entradaTime || row.entradaRoute).length;
-  const regreso = data.entries.filter(row => row.salidaTime || row.salidaRoute).length;
+  const ida = data.entries.filter(row => hasScheduledMode(row, 'Ida')).length;
+  const regreso = data.entries.filter(row => hasScheduledMode(row, 'Regreso')).length;
   return regreso > 0 && ida === 0 ? 'Regreso' : 'Ida';
 };
 

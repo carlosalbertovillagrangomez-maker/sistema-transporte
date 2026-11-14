@@ -380,8 +380,8 @@ const comparePeopleAZ = (a, b) => String(a?.assignedTo || a?.name || '').localeC
 
 const normalizeRosterIdentity = (value = '') => String(value || '')
     .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .replace(/s+/g, ' ')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ')
     .trim()
     .toLocaleLowerCase('es');
 
@@ -1250,16 +1250,24 @@ export default function Planificacion() {
       const prepared = [];
       const missing = [];
       let geocoded = 0;
-      const seenNames = new Set();
+      const seenNames = new Map();
 
       for (const row of rows) {
           const personName = String(row?.name || '').trim();
           const normalizedName = normalizeAiValue(personName);
-          if (!normalizedName || seenNames.has(normalizedName)) continue;
-          seenNames.add(normalizedName);
+          if (!normalizedName) continue;
+          const serviceIdentity = [String(row.time || '').trim(), normalizeAiValue(row.route),
+            normalizeAiValue(row.meetingPointAddress || row.address), String(row.order || '').trim()].join('|');
+          if (seenNames.has(normalizedName)) {
+              if (seenNames.get(normalizedName) === serviceIdentity) continue;
+              throw new Error('Hay más de un servicio de este sentido para ' + personName +
+                  '. Selecciona una sola fila en el importador antes de crear las rutas.');
+          }
+          seenNames.set(normalizedName, serviceIdentity);
 
           const userData = (clientObj.users || []).find(user => normalizeAiValue(user?.name) === normalizedName) || {};
           const homeSavedLocation = (clientObj.locations || []).find(location => normalizeAiValue(location?.assignedTo) === normalizedName) || null;
+          const homeUserAddress = String(userData?.address || userData?.domicilio || userData?.direccion || '').trim();
 
           const aiMeetingPointLabel = String(row?.meetingPoint || '').trim();
           const aiMeetingPointAddress = String(row?.meetingPointAddress || '').trim();
@@ -1292,8 +1300,8 @@ export default function Planificacion() {
           const rawAddress = sourceAddressAuthoritative
               ? aiMeetingPointAddress
               : (hasExplicitMeetingPoint
-                  ? (configuredMeetingLocation?.address || aiMeetingPointAddress || row?.address || '')
-                  : (homeSavedLocation?.address || row?.address || ''));
+                  ? (configuredMeetingLocation?.address || aiMeetingPointAddress || row?.address || homeUserAddress || '')
+                  : (homeSavedLocation?.address || row?.address || homeUserAddress || ''));
 
           let lat = savedLocation?.lat === null || savedLocation?.lat === undefined || savedLocation?.lat === ''
               ? NaN : Number(savedLocation.lat);
@@ -1311,7 +1319,9 @@ export default function Planificacion() {
               }
           }
 
-          if (!Number.isFinite(lat) || !Number.isFinite(lng)) missing.push(personName);
+          if (!Number.isFinite(lat) || !Number.isFinite(lng) || !finalAddress) {
+              missing.push(personName + (finalAddress ? ' (revisar ubicación)' : ' (sin domicilio)'));
+          }
 
           const officialTime = String(row?.time || '').trim();
           if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(officialTime)) {
@@ -1357,8 +1367,9 @@ export default function Planificacion() {
               ' pasajero' +
               (missing.length === 1 ? '' : 's') +
               ': ' +
-              missing.join(', ') +
-              '. La programación anterior se conserva sin cambios.'
+              missing.slice(0, 12).join(', ') +
+              (missing.length > 12 ? ' y ' + (missing.length - 12) + ' más' : '') +
+              '. Corrige las direcciones o incorpora la pestaña BD. Las rutas anteriores siguen intactas.'
           );
       }
 
@@ -1386,11 +1397,7 @@ export default function Planificacion() {
       setCarpoolStep(1);
       setShowCarpoolModal(true);
 
-      if (missing.length > 0) {
-          setTimeout(() => alert('Gemini preparó ' + prepared.length + ' personas, pero ' + missing.length + ' no tienen coordenadas válidas: ' + missing.join(', ') + '. Revisa sus domicilios o usa puntos de encuentro antes de guardar.'), 150);
-      }
-
-      return { matched: prepared.length, geocoded, missing };
+      return { matched: prepared.length, geocoded, missing: [] };
   };
 
   const updateRosterItem = (originalIndex, field, value) => {
@@ -1528,8 +1535,10 @@ export default function Planificacion() {
       }
 
       const incomplete = activeEmps.filter(employee => {
-          const lat = Number(employee?.lat);
-          const lng = Number(employee?.lng ?? employee?.lon);
+          const rawLat = employee?.lat;
+           const rawLng = employee?.lng ?? employee?.lon;
+           const lat = rawLat === null || rawLat === undefined || rawLat === '' ? NaN : Number(rawLat);
+           const lng = rawLng === null || rawLng === undefined || rawLng === '' ? NaN : Number(rawLng);
           return (
               !String(employee?.assignedTo || '').trim() ||
               !String(employee?.address || '').trim() ||

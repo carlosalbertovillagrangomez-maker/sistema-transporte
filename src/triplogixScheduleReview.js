@@ -7,9 +7,20 @@ export const normalizeIdentity = value => String(value || '').normalize('NFD')
 
 const text = value => String(value ?? '').trim();
 
-export const hasScheduledMode = (row, mode) => mode === 'Regreso'
-  ? Boolean(text(row.salidaTime) || text(row.salidaRoute))
-  : Boolean(text(row.entradaTime) || text(row.entradaRoute));
+export const hasScheduledMode = (row, mode) => {
+  const entradaTime = text(row.entradaTime);
+  const salidaTime = text(row.salidaTime);
+  // Un servicio con hora explícita sólo de SALIDA no se ofrece como ENTRADA,
+  // aunque haya texto heredado en la columna de ruta del sentido contrario.
+  if (mode === 'Regreso') {
+    if (salidaTime) return true;
+    if (entradaTime) return false;
+    return Boolean(text(row.salidaRoute));
+  }
+  if (entradaTime) return true;
+  if (salidaTime) return false;
+  return Boolean(text(row.entradaRoute));
+};
 
 const identityOfService = (entry, mode) => {
   const isExit = mode === 'Regreso';

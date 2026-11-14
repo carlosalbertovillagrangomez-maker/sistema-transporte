@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Sparkles, Upload, X, KeyRound, Loader2, FileSpreadsheet, Image as ImageIcon, FileText, Eye, EyeOff, CheckCircle2, AlertTriangle, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
+import { hasScheduledMode } from './triplogixScheduleReview';
 
 const GEMINI_KEY_STORAGE = 'triplogix_gemini_api_key';
 const GEMINI_MODEL_STORAGE = 'triplogix_gemini_model';
@@ -356,9 +357,7 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
       Array.isArray(preparedFile?.structuredRows) ? preparedFile.structuredRows : [];
     if (sourceRows.length) {
       const isExit = selectedMode === 'Regreso';
-      const relevant = sourceRows.filter(row => isExit
-        ? (row.salidaTime || row.salidaRoute)
-        : (row.entradaTime || row.entradaRoute));
+      const relevant = sourceRows.filter(row => hasScheduledMode(row, selectedMode));
       if(!relevant.length) return setError('El Excel no tiene servicios de ' + (isExit ? 'SALIDA' : 'ENTRADA') + '. Comprueba el sentido elegido.');
       const resultRows = relevant.map((row,index) => {
         const meetingPointAddress = String((isExit ? row.dropoffAddress : row.pickupAddress) || '').trim();

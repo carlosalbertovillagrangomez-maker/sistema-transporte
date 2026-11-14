@@ -361,7 +361,7 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
         : (row.entradaTime || row.entradaRoute));
       if(!relevant.length) return setError('El Excel no tiene servicios de ' + (isExit ? 'SALIDA' : 'ENTRADA') + '. Comprueba el sentido elegido.');
       const resultRows = relevant.map((row,index) => {
-        const meetingPointAddress = String(isExit ? row.dropoffAddress : row.pickupAddress || '').trim();
+        const meetingPointAddress = String((isExit ? row.dropoffAddress : row.pickupAddress) || '').trim();
         return {
           name: String(row.name || '').trim(),
           time: cleanTime(isExit ? row.salidaTime : row.entradaTime),

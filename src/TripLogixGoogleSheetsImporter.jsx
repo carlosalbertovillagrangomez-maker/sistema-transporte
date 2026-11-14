@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import * as XLSX from 'xlsx';
-import { parseOperationalClipboard } from './triplogixWorkbook';
+import { extractOperationalWorkbook, isOperationalWorkbook, parseOperationalClipboard } from './triplogixWorkbook';
 
 const CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
 const SCOPES = 'https://www.googleapis.com/auth/drive.metadata.readonly https://www.googleapis.com/auth/spreadsheets.readonly';
@@ -188,15 +188,49 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperatio
     if (!selectedId || !tabTitle || !token) return;
     setLoading(true); setMessage('');
     try {
+      // Una sola autorización OAuth permite leer cualquier archivo al que el
+      // usuario tenga acceso, no se ata a un Drive o enlace específico.
+      const operationalNames = ['Programación','BD','Directorio','Conductores'];
+      const matchedNames = operationalNames.filter(name =>
+        tabs.some(tab => normalize(tab) === normalize(name))
+      );
+      if (matchedNames.length) {
+        const ranges = matchedNames.map(name => {
+          const actualName = tabs.find(tab => normalize(tab) === normalize(name));
+          return "'" + actualName.replace(/'/g, "''") + "'!A1:AZ5000";
+        });
+        const query = new URLSearchParams({ majorDimension: 'ROWS' });
+        ranges.forEach(range => query.append('ranges',range));
+        const workbookData = await googleFetch(
+          'https://sheets.googleapis.com/v4/spreadsheets/' + encodeURIComponent(selectedId) +
+          '/values:batchGet?' + query.toString(), token
+        );
+        const workbook = XLSX.utils.book_new();
+        (workbookData.valueRanges || []).forEach((item, index) => {
+          const title = matchedNames[index];
+          const values = Array.isArray(item.values) ? item.values : [];
+          XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(values), title);
+        });
+        if (!isOperationalWorkbook(workbook)) throw new Error('No se encontraron las pestañas Programación / BD / Directorio.');
+        const recognized = extractOperationalWorkbook(workbook);
+        if (!onOperationalWorkbook) throw new Error('No se pudo abrir la planificación empresarial.');
+        onOperationalWorkbook({ ...recognized, importKey:String(Date.now()), sheetId:selectedId });
+        setOpen(false);
+        return;
+      }
+      // Plantilla de rutas general: respeta su validación existente.
       const tab = "'" + tabTitle.replace(/'/g, "''") + "'";
-      const data = await googleFetch('https://sheets.googleapis.com/v4/spreadsheets/' + encodeURIComponent(selectedId) + '/values/' + encodeURIComponent(tab + '!A1:AZ5000'), token);
+      const data = await googleFetch(
+        'https://sheets.googleapis.com/v4/spreadsheets/' + encodeURIComponent(selectedId) +
+        '/values/' + encodeURIComponent(tab + '!A1:AZ5000'), token
+      );
       const values = data.values || [];
       const headers = values[0] || [];
       const rows = values.slice(1).filter(cells => cells.some(clean)).map(cells =>
         Object.fromEntries(headers.map((head, i) => [clean(head), cells[i] ?? '']))
       );
       if (!rows.length) throw new Error('La pestaña está vacía.');
-      const result = await onImportRows(rows, { source: 'google_sheets', sheetId: selectedId, tabTitle });
+      const result = await onImportRows(rows, { source: 'google_sheets', sheetId:selectedId, tabTitle });
       if (result !== false) setOpen(false);
       else setMessage('Importación cancelada.');
     } catch(error) { setMessage(error.message); } finally { setLoading(false); }
@@ -238,13 +272,13 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperatio
             </section>
 
             <details className="border border-slate-200 rounded-xl p-4">
-              <summary className="cursor-pointer text-sm font-bold text-slate-700">Acceso avanzado a Google Drive (opcional, para hojas privadas con OAuth)</summary>
+              <summary className="cursor-pointer text-sm font-bold text-slate-700">Conectar Google Drive (hojas privadas, sin descargar Excel)</summary>
               <div className="mt-3 space-y-3">
-                {!CLIENT_ID && <p className="text-xs text-slate-500">No está configurado el OAuth avanzado; los otros dos métodos funcionan sin VITE_GOOGLE_CLIENT_ID.</p>}
+                {!CLIENT_ID && <p className="text-xs text-slate-500">Para importar hojas privadas directamente por enlace hace falta conectar Google una sola vez. Solicita al administrador habilitar VITE_GOOGLE_CLIENT_ID en Vercel; no publiques datos de pasajeros.</p>}
                 <button type="button" onClick={connect} disabled={loading || busy || !CLIENT_ID} className="bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-40">Conectar cuenta Google / Ver mis Sheets</button>
                 <div className="flex gap-2"><input className="min-w-0 flex-1 border rounded-lg p-2 text-xs" placeholder="Pega un enlace privado de Sheets" value={privateLink} onChange={event=>setPrivateLink(event.target.value)} /><button type="button" disabled={!token || loading} onClick={() => chooseSheet(privateLink)} className="bg-blue-700 text-white rounded-lg p-2 text-xs disabled:opacity-40">Abrir hoja</button></div>
                 {items.length > 0 && <div className="border rounded-lg divide-y max-h-44 overflow-y-auto">{items.map(item => <button type="button" className="block w-full text-left p-2 text-xs hover:bg-blue-50" key={item.id} onClick={() => chooseSheet(item.id)}>{item.name}</button>)}</div>}
-                {tabs.length > 0 && <><select className="w-full border rounded-lg p-2 text-sm" value={tabTitle} onChange={event=>setTabTitle(event.target.value)}>{tabs.map(title=><option key={title} value={title}>{title}</option>)}</select><button type="button" onClick={importPrivate} disabled={loading || busy} className="bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-black disabled:opacity-50">Importar pestaña privada</button></>}
+                {tabs.length > 0 && <><select className="w-full border rounded-lg p-2 text-sm" value={tabTitle} onChange={event=>setTabTitle(event.target.value)}>{tabs.map(title=><option key={title} value={title}>{title}</option>)}</select><button type="button" onClick={importPrivate} disabled={loading || busy} className="bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-black disabled:opacity-50">Importar libro privado (Programación + BD + Directorio + Conductores)</button></>}
               </div>
             </details>
 

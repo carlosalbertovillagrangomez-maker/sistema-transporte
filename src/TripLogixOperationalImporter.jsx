@@ -10,8 +10,11 @@ const initialMode = data => {
 };
 
 export default function TripLogixOperationalImporter({ data, clients = [], onApply, onClose }) {
+  const [dayIndex, setDayIndex] = useState(data.defaultDayIndex || 0);
+  const weekDay = data.weeklyDays?.[dayIndex] || null;
+  const activeEntries = weekDay ? weekDay.entries : data.entries;
   const [company, setCompany] = useState('');
-  const [date, setDate] = useState('');
+  const [date, setDate] = useState(() => data.weeklyDays?.[data.defaultDayIndex||0]?.date || '');
   const [mode, setMode] = useState(() => initialMode(data));
   const [officialTime, setOfficialTime] = useState('');
   const [search, setSearch] = useState('');
@@ -22,12 +25,12 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
   const [message, setMessage] = useState('');
   const [supplementMessage, setSupplementMessage] = useState('');
 
-  const initialGroup = useMemo(() => groupScheduleForMode(data.entries, initialMode(data), data.rosterSource), [data]);
+  const initialGroup = useMemo(() => groupScheduleForMode(activeEntries, initialMode(data), data.rosterSource), [data, activeEntries]);
   const [selected, setSelected] = useState(() => new Set(initialGroup.selected));
 
   const group = useMemo(
-    () => groupScheduleForMode(data.entries, mode, data.rosterSource),
-    [data, mode]
+    () => groupScheduleForMode(activeEntries, mode, data.rosterSource),
+    [activeEntries, mode, data.rosterSource]
   );
   const selectedClient = useMemo(() => clients.find(client => client.name === company), [clients, company]);
   const referenceAddresses = useMemo(() => {
@@ -85,11 +88,26 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
 
   const changeMode = value => {
     setMode(value);
-    const otherGroup = groupScheduleForMode(data.entries, value, data.rosterSource);
+    const otherGroup = groupScheduleForMode(activeEntries, value, data.rosterSource);
     setSelected(new Set(otherGroup.selected));
     setMessage('');
     setSearch('');
     setOfficialTime('');
+  };
+  const changeDay = raw => {
+    const index=Number(raw);
+    const next=data.weeklyDays?.[index];
+    if(!next)return;
+    const nextData={rosterSource:data.rosterSource, entries:next.entries};
+    const nextMode=initialMode(nextData);
+    setDayIndex(index);
+    setDate(next.date || '');
+    setMode(nextMode);
+    setSelected(new Set(groupScheduleForMode(next.entries,nextMode,data.rosterSource).selected));
+    setOfficialTime('');
+    setSearch('');
+    setAddressOverrides({});
+    setMessage('');
   };
   const chooseVisible = () => setSelected(prev => {
     const next = new Set(prev);
@@ -173,11 +191,20 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
         <div className="flex justify-between gap-3 items-start">
           <div>
             <h3 className="text-xl font-black text-slate-900">Planificar desde la plantilla de la empresa</h3>
-            <p className="text-xs text-slate-500 mt-1">{data.sources.join(', ')} · {data.entries.length} filas originales · {data.drivers.length} conductores en directorio</p>
+            <p className="text-xs text-slate-500 mt-1">{data.weeklyDays?.length ? data.weeklyDays.length + ' días reconocidos' : data.sources.join(', ')} · {activeEntries.length} servicios del día · {data.drivers.length} conductores en directorio</p>
           </div>
           <button type="button" onClick={onClose} className="text-slate-500 text-2xl leading-none" aria-label="Cerrar importador">×</button>
         </div>
         {data.warnings.map((warning, index) => <p key={index} className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">{warning}</p>)}
+        {data.weeklyDays?.length > 1 && <label className="block bg-orange-50 rounded-xl border border-orange-200 p-4 text-sm font-bold text-slate-800">
+          Primero selecciona el día de la semana
+          <select className="block w-full mt-2 p-3 rounded-lg border border-orange-300 bg-white" value={dayIndex} onChange={event=>changeDay(event.target.value)}>
+            {data.weeklyDays.map((day,index)=><option key={day.name} value={index}>
+              {day.name} · {day.entradaCount} entradas · {day.salidaCount} salidas
+            </option>)}
+          </select>
+          <span className="block text-xs font-normal text-slate-600 mt-2">Al cambiar de día se reinician los pasajeros seleccionados para evitar mezclar jornadas.</span>
+        </label>}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 bg-blue-50/60 rounded-xl border border-blue-100 p-4">
           <label className="text-xs font-bold text-slate-700">Empresa registrada
             <select className="block w-full mt-1.5 rounded-lg p-3 border border-slate-300 bg-white" value={company} onChange={event => setCompany(event.target.value)}>

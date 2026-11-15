@@ -592,6 +592,7 @@ export default function Planificacion() {
   const [routeToAssign, setRouteToAssign] = useState(null);
   const [quickDriverTarget, setQuickDriverTarget] = useState(null);
   const [operationalWorkbook, setOperationalWorkbook] = useState(null);
+  const aiGeocodeCache = useRef(new Map());
   const [temporaryDriverSuggestions, setTemporaryDriverSuggestions] = useState([]);
 
   const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries, language: 'es' });
@@ -1228,18 +1229,31 @@ export default function Planificacion() {
   const geocodeAiAddress = async (address) => {
       const clean = String(address || '').trim();
       if (!clean || !isLoaded || !window.google?.maps?.Geocoder) return null;
-      const geocoder = new window.google.maps.Geocoder();
-      return new Promise(resolve => {
-          geocoder.geocode({ address: clean }, (results, status) => {
-              if (status !== 'OK' || !results?.[0]?.geometry?.location) return resolve(null);
-              const location = results[0].geometry.location;
-              resolve({
-                  address: results[0].formatted_address || clean,
-                  lat: location.lat(),
-                  lng: location.lng()
+      const key = clean.toLocaleLowerCase('es');
+      if (aiGeocodeCache.current.has(key)) return aiGeocodeCache.current.get(key);
+      const pending = new Promise(resolve => {
+          const geocoder = new window.google.maps.Geocoder();
+          const attempt = (tries = 0) => {
+              geocoder.geocode({ address: clean, region: 'MX' }, (results, status) => {
+                  if (status === 'OVER_QUERY_LIMIT' && tries < 2) {
+                      setTimeout(() => attempt(tries + 1), (tries + 1) * 650);
+                      return;
+                  }
+                  if (status !== 'OK' || !results?.[0]?.geometry?.location) return resolve(null);
+                  const location = results[0].geometry.location;
+                  resolve({
+                      address: results[0].formatted_address || clean,
+                      lat: location.lat(),
+                      lng: location.lng()
+                  });
               });
-          });
+          };
+          attempt();
       });
+      aiGeocodeCache.current.set(key, pending);
+      const found = await pending;
+      if (!found) aiGeocodeCache.current.delete(key);
+      return found;
   };
 
   const applyAiScheduleToCarpool = async ({ clientName, date, mode, rows = [] }) => {

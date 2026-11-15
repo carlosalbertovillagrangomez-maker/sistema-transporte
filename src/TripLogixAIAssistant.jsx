@@ -1,7 +1,8 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Sparkles, Upload, X, KeyRound, Loader2, FileSpreadsheet, Image as ImageIcon, FileText, Eye, EyeOff, CheckCircle2, AlertTriangle, Trash2 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-import { hasScheduledMode } from './triplogixScheduleReview';
+import { hasScheduledMode, groupScheduleForMode } from './triplogixScheduleReview';
+import { isOperationalWorkbook, extractOperationalWorkbook, toPlanningRow } from './triplogixWorkbook';
 
 const GEMINI_KEY_STORAGE = 'triplogix_gemini_api_key';
 const GEMINI_MODEL_STORAGE = 'triplogix_gemini_model';
@@ -151,9 +152,14 @@ const workbookToPromptText = async (file) => {
     return `HOJA: ${sheetName}\n${rows.map(row => row.map(cell => String(cell ?? '')).join(' | ')).join('\n')}`;
   });
 
+  const recognized=isOperationalWorkbook(workbook) ? extractOperationalWorkbook(workbook) : null;
   return {
-    text: sections.join('\n\n').slice(0, 70000),
-    structuredRows: buildStructuredWorkbookRows(workbook)
+    // Las hojas estructuradas se interpretan localmente, nunca se envían
+    // por error como texto a un servicio de IA externo.
+    text: recognized ? '' : sections.join('\n\n').slice(0, 70000),
+    structuredRows: recognized?.entries || buildStructuredWorkbookRows(workbook),
+    weeklyDays: recognized?.weeklyDays || [],
+    defaultDayIndex: recognized?.defaultDayIndex || 0
   };
 };
 
@@ -310,8 +316,14 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
           kind: 'workbook',
           name: selectedFile.name,
           text: workbookData.text,
-          structuredRows: workbookData.structuredRows
+          structuredRows: workbookData.structuredRows,
+          weeklyDays: workbookData.weeklyDays,
+          defaultDayIndex: workbookData.defaultDayIndex
         });
+        if(workbookData.weeklyDays?.length){
+          const firstDay=workbookData.weeklyDays[workbookData.defaultDayIndex||0];
+          if(firstDay?.date)setSelectedDate(firstDay.date);
+        }
       } else {
         const base64 = await fileToBase64(selectedFile);
         setPreparedFile({
@@ -353,34 +365,41 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
 
     // La plantilla reconocida se lee directamente: para un Excel estructurado
     // Gemini no aporta nada y a veces confunde Entrada con Salida.
-    const sourceRows = preparedFile?.kind === 'workbook' &&
-      Array.isArray(preparedFile?.structuredRows) ? preparedFile.structuredRows : [];
-    if (sourceRows.length) {
-      const isExit = selectedMode === 'Regreso';
-      const relevant = sourceRows.filter(row => hasScheduledMode(row, selectedMode));
-      if(!relevant.length) return setError('El Excel no tiene servicios de ' + (isExit ? 'SALIDA' : 'ENTRADA') + '. Comprueba el sentido elegido.');
-      const resultRows = relevant.map((row,index) => {
-        const meetingPointAddress = String((isExit ? row.dropoffAddress : row.pickupAddress) || '').trim();
+    const weeklyDays=preparedFile?.weeklyDays||[];
+    const selectedDay=weeklyDays.length ? weeklyDays.find(day=>day.date===selectedDate) : null;
+    if(weeklyDays.length && !selectedDay)return setError('La fecha seleccionada no corresponde a ninguna pestaña del Excel semanal. Elige un día de esa semana.');
+    const sourceRows=weeklyDays.length ? selectedDay.entries
+      : (preparedFile?.kind==='workbook' && Array.isArray(preparedFile.structuredRows) ? preparedFile.structuredRows : []);
+    if(sourceRows.length || weeklyDays.length){
+      const isExit=selectedMode==='Regreso';
+      const group=groupScheduleForMode(sourceRows,selectedMode,'Programación');
+      const relevant=group.rows.filter(row=>group.selected.includes(row.id));
+      if(!relevant.length)return setError('El archivo no tiene servicios de '+(isExit?'SALIDA':'ENTRADA')+' para '+selectedDate+'.');
+      const resultRows=relevant.map((row,index) => {
+        const plan=toPlanningRow(row,selectedMode,'');
+        const meetingPointAddress=String(plan.meetingPointAddress||'').trim();
         return {
-          name: String(row.name || '').trim(),
-          time: cleanTime(isExit ? row.salidaTime : row.entradaTime),
-          referenceTime: cleanTime(row.referenceTime),
-          address: String(row.homeAddress || '').trim(),
-          meetingPoint: meetingPointAddress,
+          ...plan,
+          name:String(row.name||'').trim(),
+          time:cleanTime(plan.time),
+          referenceTime:cleanTime(plan.referenceTime),
+          meetingPoint:plan.meetingPoint || meetingPointAddress,
           meetingPointAddress,
-          sourceAddressAuthoritative:Boolean(meetingPointAddress),
-          phone:normalizeWorkbookPhone(row.phone),
-          driver:String(isExit ? row.salidaDriver || '' : row.entradaDriver || ''),
-          route:String(isExit ? row.salidaRoute || '' : row.entradaRoute || ''),
-          order:Number(isExit ? row.salidaOrder : row.entradaOrder) || index + 1
+          sourceAddressAuthoritative:plan.sourceAddressAuthoritative,
+          phone:normalizeWorkbookPhone(plan.phone),
+          driver:String(plan.driver||''),
+          route:String(plan.route||''),
+          order:Number(plan.order)||index+1
         };
       });
       const missingAddresses=resultRows.filter(row => !row.address && !row.meetingPointAddress).length;
       setResult({
         company:selectedCompany,date:selectedDate,mode:selectedMode,
-        summary:'Se identificaron '+resultRows.length+' servicios de '+(isExit?'SALIDA':'ENTRADA')+' directamente del Excel, sin Gemini.',
+        summary:'Se identificaron '+resultRows.length+' servicios de '+(isExit?'SALIDA':'ENTRADA')+' para '+selectedDate+' directamente del Excel, sin Gemini.',
         notes:[
-          'No se mezclaron entradas y salidas. BD y Directorio sólo aportan datos de ubicación.',
+          'Sólo se utiliza el día y sentido seleccionados; no se crea ningún servicio de otros días.',
+          ...(group.conflictingNames.size ? ['Hay nombres con servicios distintos; utiliza Importar Excel / Plantilla empresa para escoger la variante correcta.'] : []),
+          'BD y Directorio sólo aportan datos de ubicación.',
           ...(missingAddresses ? [missingAddresses+' registros no incluyen domicilio. Revisa BD/Directorio o Clientes antes de crear rutas.'] : [])
         ],
         rows:resultRows
@@ -673,7 +692,7 @@ export default function TripLogixAIAssistant({ clients = [], onApply }) {
               </div>
 
               <button type="button" disabled={loading || fileLoading} onClick={analyze} className="w-full rounded-2xl bg-violet-600 hover:bg-violet-700 text-white py-3.5 font-black text-sm flex items-center justify-center gap-2 disabled:opacity-60">
-                {loading ? <><Loader2 className="w-5 h-5 animate-spin"/> Analizando programación...</> : <><Sparkles className="w-5 h-5"/> {preparedFile?.structuredRows?.length ? 'Leer entradas/salidas del Excel (sin Gemini)' : 'Analizar con Gemini'}</>}
+                {loading ? <><Loader2 className="w-5 h-5 animate-spin"/> Analizando programación...</> : <><Sparkles className="w-5 h-5"/> {(preparedFile?.structuredRows?.length || preparedFile?.weeklyDays?.length) ? 'Leer día y turno (sin Gemini)' : 'Analizar con Gemini'}</>}
               </button>
 
               {error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-xs font-bold text-red-700 flex items-start gap-2"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5"/>{error}</div>}

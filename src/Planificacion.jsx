@@ -1373,18 +1373,21 @@ export default function Planificacion() {
       }
 
       if (!prepared.length) throw new Error('No fue posible preparar ningún pasajero de la programación.');
-
-      if (missing.length > 0) {
-          throw new Error(
-              'No se aplicó la programación porque faltan ubicaciones válidas para ' +
-              missing.length +
-              ' pasajero' +
-              (missing.length === 1 ? '' : 's') +
-              ': ' +
-              missing.slice(0, 12).join(', ') +
-              (missing.length > 12 ? ' y ' + (missing.length - 12) + ' más' : '') +
-              '. Corrige las direcciones o incorpora la pestaña BD. Las rutas anteriores siguen intactas.'
+      const validPrepared=prepared.filter(item => Number.isFinite(item.lat) &&
+          Number.isFinite(item.lng) && String(item.address||'').trim());
+      if(!validPrepared.length)throw new Error(
+          'Google Maps no pudo validar la ubicación de ningún pasajero. Revisa las direcciones y vuelve a intentar; ninguna ruta fue alterada.'
+      );
+      if(missing.length>0){
+          const sample=missing.slice(0,10).join(', ') +
+              (missing.length>10 ? ' y '+(missing.length-10)+' más' : '');
+          const proceed=window.confirm(
+              'Google Maps no pudo localizar a '+missing.length+' pasajeros: '+sample+
+              '. ¿Continuar ÚNICAMENTE con los '+validPrepared.length+
+              ' que sí tienen ubicación validada? Los demás NO serán programados ni eliminados. '+
+              'Pulsa Cancelar si prefieres corregir los domicilios antes de continuar.'
           );
+          if(!proceed)throw new Error('No se generaron rutas. Corrige las direcciones pendientes y repite la importación.');
       }
 
       setSelectedClientData(clientObj);
@@ -1396,7 +1399,7 @@ export default function Planificacion() {
           scheduledDate: date || prev.scheduledDate
       }));
       setGlobalCarpool({ mode: mode === 'Regreso' ? 'Regreso' : 'Ida' });
-      setEmployeeRoster(prepared.sort((a, b) => {
+      setEmployeeRoster(validPrepared.sort((a, b) => {
           const routeA = normalizeAiValue(a?.aiRoute);
           const routeB = normalizeAiValue(b?.aiRoute);
           if (routeA !== routeB) return routeA.localeCompare(routeB, 'es');
@@ -1411,7 +1414,7 @@ export default function Planificacion() {
       setCarpoolStep(1);
       setShowCarpoolModal(true);
 
-      return { matched: prepared.length, geocoded, missing: [] };
+      return { matched: validPrepared.length, geocoded, missing };
   };
 
   const updateRosterItem = (originalIndex, field, value) => {

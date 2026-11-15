@@ -141,25 +141,26 @@ const workbookToPromptText = async (file) => {
   const buffer = await file.arrayBuffer();
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: false });
 
-  const sections = workbook.SheetNames.map((sheetName) => {
+  const recognized=isOperationalWorkbook(workbook) ? extractOperationalWorkbook(workbook) : null;
+  if(recognized){
+    return {text:'', structuredRows:recognized.entries||[],
+      weeklyDays:recognized.weeklyDays||[], defaultDayIndex:recognized.defaultDayIndex||0};
+  }
+  const sections = workbook.SheetNames.slice(0,5).map((sheetName) => {
     const rows = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
       header: 1,
       defval: '',
       raw: false,
       blankrows: false
-    });
+    }).slice(0,350);
 
     return `HOJA: ${sheetName}\n${rows.map(row => row.map(cell => String(cell ?? '')).join(' | ')).join('\n')}`;
   });
 
-  const recognized=isOperationalWorkbook(workbook) ? extractOperationalWorkbook(workbook) : null;
   return {
-    // Las hojas estructuradas se interpretan localmente, nunca se envían
-    // por error como texto a un servicio de IA externo.
-    text: recognized ? '' : sections.join('\n\n').slice(0, 70000),
-    structuredRows: recognized?.entries || buildStructuredWorkbookRows(workbook),
-    weeklyDays: recognized?.weeklyDays || [],
-    defaultDayIndex: recognized?.defaultDayIndex || 0
+    text:sections.join('\n\n').slice(0,70000),
+    structuredRows:buildStructuredWorkbookRows(workbook),
+    weeklyDays:[],defaultDayIndex:0
   };
 };
 

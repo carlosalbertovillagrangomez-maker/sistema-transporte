@@ -1,0 +1,31 @@
+name: Validate weekly Google Sheets planning
+on:
+  push:
+    branches:
+      - feature/weekly-sheets-assistant-2026-11-15
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Test weekly and legacy importers
+        run: node --test tests/triplogixWeeklyTemplate.test.js tests/triplogixWorkbook.test.js tests/triplogixScheduleReview.test.js tests/leer-publico.test.js
+      - name: Syntax check serverless API
+        run: |
+          node --check api/sheets/leer-libro.js
+          node --check api/sheets/leer-publico.js
+          node --check api/whatsapp/sync.js
+      - name: Compile Vite production
+        run: npm run build

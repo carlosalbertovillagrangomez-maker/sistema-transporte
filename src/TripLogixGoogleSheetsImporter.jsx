@@ -101,6 +101,21 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperatio
       const entries = links.map(link => link.url).filter(url => clean(url));
       if (!entries.length) throw new Error('Pega al menos un enlace de Google Sheets.');
       const parsed = entries.map(referenceFromLink);
+      // Un enlace al Panel Logístico identifica todo el libro semanal.
+      if (parsed.length === 1) {
+        const response = await fetch('/api/sheets/leer-libro?sheetId=' + encodeURIComponent(parsed[0].id), {cache:'no-store'});
+        if (response.ok) {
+          const book = XLSX.read(await response.arrayBuffer(),{type:'array'});
+          if (isOperationalWorkbook(book)) {
+            if(!onOperationalWorkbook)throw new Error('No se pudo abrir el asistente de planificación.');
+            onOperationalWorkbook({ ...extractOperationalWorkbook(book), importKey:String(Date.now()), sheetId:parsed[0].id });
+            setOpen(false);return;
+          }
+        } else {
+          const failure = await response.json().catch(()=>({}));
+          throw new Error(failure.error||'Google no permitió leer el libro. Conecta Google o utiliza copiar y pegar.');
+        }
+      }
       const unique = new Set(parsed.map(item => item.id + ':' + item.gid));
       if (unique.size !== parsed.length) throw new Error('Hay enlaces repetidos a la misma pestaña. Elimina los duplicados.');
       const allRows = [];
@@ -190,14 +205,19 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperatio
     try {
       // Una sola autorización OAuth permite leer cualquier archivo al que el
       // usuario tenga acceso, no se ata a un Drive o enlace específico.
-      const operationalNames = ['Programación','BD','Directorio','Conductores'];
-      const matchedNames = operationalNames.filter(name =>
-        tabs.some(tab => normalize(tab) === normalize(name))
+      const matchedNames = tabs.filter(name =>
+        ['PROGRAMACION','BD','DIRECTORIO','CONDUCTORES','PANEL_LOGISTICO','VIAJES_SEMANA'].includes(normalize(name)) ||
+        /^(LUNES|MARTES|MIERCOLES|JUEVES|VIERNES|SABADO|DOMINGO)_\d{1,2}_DE_/.test(normalize(name))
       );
       if (matchedNames.length) {
         const ranges = matchedNames.map(name => {
-          const actualName = tabs.find(tab => normalize(tab) === normalize(name));
-          return "'" + actualName.replace(/'/g, "''") + "'!A1:AZ5000";
+          const title = "'" + name.replace(/'/g, "''") + "'";
+          if(normalize(name)==='BD')return title+'!A1:I1200';
+          if(normalize(name)==='DIRECTORIO')return title+'!A1:E1200';
+          if(normalize(name)==='CONDUCTORES')return title+'!A1:D350';
+          if(normalize(name)==='PANEL_LOGISTICO')return title+'!A1:B5';
+          if(normalize(name)==='VIAJES_SEMANA')return title+'!A1:D3';
+          return title+'!A1:Y400';
         });
         const query = new URLSearchParams({ majorDimension: 'ROWS' });
         ranges.forEach(range => query.append('ranges',range));
@@ -243,7 +263,7 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperatio
         <div className="fixed inset-0 z-[10000] bg-slate-950/60 flex items-center justify-center p-3" onClick={() => setOpen(false)}>
           <div className="w-full max-w-3xl bg-white rounded-2xl p-5 shadow-2xl max-h-[90vh] overflow-y-auto space-y-5" onClick={event => event.stopPropagation()}>
             <div className="flex justify-between items-center gap-3">
-              <div><h3 className="font-black text-lg text-slate-900">Importar rutas de Google Sheets</h3><p className="text-xs text-slate-500">Cualquier archivo y cualquier día. No depende de una cuenta ni de un Drive fijo.</p></div>
+              <div><h3 className="font-black text-lg text-slate-900">Importar semana de Google Sheets</h3><p className="text-xs text-slate-500">Pega un enlace al Panel Logístico o a cualquier pestaña; TripLogix leerá todos los días y el directorio, cuando tenga permiso.</p></div>
               <button type="button" onClick={() => setOpen(false)} className="text-xl text-slate-500" aria-label="Cerrar">×</button>
             </div>
 
@@ -255,8 +275,8 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperatio
             </section>
 
             <section className="border border-slate-200 rounded-xl p-4 space-y-3">
-              <h4 className="font-black text-slate-800 text-sm">Importar uno o varios enlaces de Google Sheets</h4>
-              <p className="text-xs text-slate-600">Puedes agregar enlaces de distintos archivos, cuentas y días. Se leerá la pestaña seleccionada en cada enlace (gid). No se guardan ni vinculan a una cuenta fija.</p>
+              <h4 className="font-black text-slate-800 text-sm">Importar desde enlace de Google Sheets (sin Excel)</h4>
+              <p className="text-xs text-slate-600">Un solo enlace semanal permite seleccionar cualquier día y separar entrada o salida. Puedes utilizar archivos distintos cada semana. Los archivos privados necesitan acceso Google autorizado.</p>
               {links.map((link, i) => (
                 <div key={link.key} className="flex gap-2 items-center">
                   <label htmlFor={'triplogix-sheet-link-' + link.key} className="text-[11px] font-bold text-slate-500 w-6 shrink-0">{i + 1}.</label>
@@ -278,7 +298,7 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperatio
                 <button type="button" onClick={connect} disabled={loading || busy || !CLIENT_ID} className="bg-slate-800 text-white px-4 py-2 rounded-lg text-xs font-bold disabled:opacity-40">Conectar cuenta Google / Ver mis Sheets</button>
                 <div className="flex gap-2"><input className="min-w-0 flex-1 border rounded-lg p-2 text-xs" placeholder="Pega un enlace privado de Sheets" value={privateLink} onChange={event=>setPrivateLink(event.target.value)} /><button type="button" disabled={!token || loading} onClick={() => chooseSheet(privateLink)} className="bg-blue-700 text-white rounded-lg p-2 text-xs disabled:opacity-40">Abrir hoja</button></div>
                 {items.length > 0 && <div className="border rounded-lg divide-y max-h-44 overflow-y-auto">{items.map(item => <button type="button" className="block w-full text-left p-2 text-xs hover:bg-blue-50" key={item.id} onClick={() => chooseSheet(item.id)}>{item.name}</button>)}</div>}
-                {tabs.length > 0 && <><select className="w-full border rounded-lg p-2 text-sm" value={tabTitle} onChange={event=>setTabTitle(event.target.value)}>{tabs.map(title=><option key={title} value={title}>{title}</option>)}</select><button type="button" onClick={importPrivate} disabled={loading || busy} className="bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-black disabled:opacity-50">Importar libro privado (Programación + BD + Directorio + Conductores)</button></>}
+                {tabs.length > 0 && <><select className="w-full border rounded-lg p-2 text-sm" value={tabTitle} onChange={event=>setTabTitle(event.target.value)}>{tabs.map(title=><option key={title} value={title}>{title}</option>)}</select><button type="button" onClick={importPrivate} disabled={loading || busy} className="bg-emerald-700 text-white px-4 py-2 rounded-lg text-xs font-black disabled:opacity-50">Importar libro completo con las pestañas semanales</button></>}
               </div>
             </details>
 

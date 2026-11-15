@@ -21,7 +21,7 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
       - name: Test weekly and legacy importers
-        run: node --test tests/triplogixWeeklyTemplate.test.js tests/triplogixWorkbook.test.js tests/triplogixScheduleReview.test.js tests/leer-publico.test.js
+        run: node --test tests/triplogixWeeklyTemplate.test.js tests/triplogixWorkbook.test.js tests/triplogixScheduleReview.test.js tests/leer-publico.test.js tests/leer-libro.test.js
       - name: Syntax check serverless API
         run: |
           node --check api/sheets/leer-libro.js

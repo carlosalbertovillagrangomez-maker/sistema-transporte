@@ -1,4 +1,5 @@
 import * as XLSX from 'xlsx';
+import { isWeeklyWorkbook, extractWeeklyWorkbook } from './triplogixWeeklyTemplate.js';
 
 // Estructura de la plantilla operativa recibida en noviembre de 2026:
 // Programación (A:O), BD (A:I), Directorio (A:E), Conductores (A:D).
@@ -76,12 +77,18 @@ const mergedLookup = (book) => {
 
 export const isOperationalWorkbook = book => {
   const names = (book?.SheetNames || []).map(norm);
-  return names.includes('PROGRAMACION') || names.includes('BD') || names.includes('DIRECTORIO');
+  return names.includes('PROGRAMACION') || names.includes('BD') || names.includes('DIRECTORIO') || isWeeklyWorkbook(book,sheetRows,norm);
 };
 
 export const extractOperationalWorkbook = book => {
-  if (!isOperationalWorkbook(book)) throw new Error('No se detectaron las pestañas Programación / BD / Directorio.');
+  if (!isOperationalWorkbook(book)) throw new Error('No se detectaron pestañas de Programación, BD, Directorio o días de la semana.');
   const { names, database, directory } = mergedLookup(book);
+  const drivers = sheetRows(book, 'Conductores').slice(1)
+    .filter(row => clean(row?.[0]) && clean(row?.[1]) && clean(row?.[2]))
+    .map(row => ({ name: clean(row[0]), vehicleModel: clean(row[1]), vehiclePlate: clean(row[2]), phone: normalizePhone(row[3]) }));
+  if (isWeeklyWorkbook(book,sheetRows,norm)) return extractWeeklyWorkbook(book,{
+    sheetRows,norm,clean,formatTime:formatOperationalTime,normalizePhone,referenceByName:names,drivers
+  });
   const program = sheetRows(book, 'Programación');
   const headerRows = norm(program[1]?.[4]) === 'DIRECCION' || norm(program[1]?.[8]) === 'RUTA' ? 2 : 1;
   const programmed = program.slice(headerRows).map((row, index) => {
@@ -125,10 +132,6 @@ export const extractOperationalWorkbook = book => {
     entradaRoute: '', entradaOrder: 0, entradaDriver: '',
     salidaRoute: '', salidaOrder: 0, salidaDriver: ''
   }));
-
-  const drivers = sheetRows(book, 'Conductores').slice(1)
-    .filter(row => clean(row?.[0]) && clean(row?.[1]) && clean(row?.[2]))
-    .map(row => ({ name: clean(row[0]), vehicleModel: clean(row[1]), vehiclePlate: clean(row[2]), phone: normalizePhone(row[3]) }));
 
   return {
     format: 'triplogix-operational',
@@ -210,9 +213,14 @@ export const parseOperationalClipboard = input => {
   if (!type) return null;
 
   const workbook = XLSX.utils.book_new();
+  const weeklyStyle=looksLikeProgramData && first.length>=17;
   const inputRows = looksLikeProgramData ? [
-    ['HORA ENTRADA','HORA SALIDA','NOMBRE','HORA PASO','PUNTO DE RECOGIDA','','PUNTO DE DESCARGUE','','ENTRADA','','','SALIDA','','','TELEFONO USUARIO'],
-    ['','','','','DIRECCIÓN','','DIRECCIÓN','','RUTA','PUESTO','COND','RUTA','PUESTO','COND',''],
+    weeklyStyle
+      ? ['HORA ENTRADA','HORA SALIDA','NOMBRE','HORA PASO','PUNTO DE RECOGIDA','','','PUNTO DE DESCARGUE','','','ENTRADA','','','SALIDA','','','TELEFONO USUARIO']
+      : ['HORA ENTRADA','HORA SALIDA','NOMBRE','HORA PASO','PUNTO DE RECOGIDA','','PUNTO DE DESCARGUE','','ENTRADA','','','SALIDA','','','TELEFONO USUARIO'],
+    weeklyStyle
+      ? ['','','','','DIRECCIÓN','','','DIRECCIÓN','','','RUTA','PUESTO','COND','RUTA','PUESTO','COND','']
+      : ['','','','','DIRECCIÓN','','DIRECCIÓN','','RUTA','PUESTO','COND','RUTA','PUESTO','COND',''],
     ...rows
   ] : rows;
   XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(inputRows), type);

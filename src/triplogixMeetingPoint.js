@@ -18,7 +18,9 @@ export const isUsableStreetAddress = value => {
   const upper = normalized(raw);
   if (/^(?:RUTA|CHOFER|CONDUCTOR|HORARIO|NO\s+APLICA|N\/A|PENDIENTE)\b/.test(upper)) return false;
   if (raw.length < 11 || !/[A-Za-zÁÉÍÓÚÜÑáéíóúüñ]/.test(raw)) return false;
-  const streetNumber = /\b\d{1,4}[A-Za-z]?\b/.test(raw);
+  // La numeración de fincas en Chihuahua puede tener cinco cifras.
+  // Un CP aislado tras la coma no cuenta como número de calle.
+  const streetNumber = /\b\d{1,6}[A-Za-z]?\b/.test(raw.split(',')[0]);
   const intersection = /\b(?:AV\.?|AVENIDA|CALLE|C\.|PERIF\.?|PERIFERICO|BLVD\.?|BOULEVARD|CARRETERA)\b/i.test(upper) &&
     /\b(?:Y|ESQUINA|CRUCE)\b/i.test(upper);
   // No transformar un código postal de cinco dígitos o número de ruta

@@ -11,6 +11,7 @@ import TripLogixOperationalImporter from './TripLogixOperationalImporter';
 import TripLogixWhatsAppActions from './TripLogixWhatsAppActions';
 import TripLogixQuickDriver from './TripLogixQuickDriver';
 import TripLogixAIAssistant from './TripLogixAIAssistant';
+import { isMeetingInstruction } from './triplogixMeetingPoint.js';
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0";
 
@@ -1285,6 +1286,13 @@ export default function Planificacion() {
 
           const aiMeetingPointLabel = String(row?.meetingPoint || '').trim();
           const aiMeetingPointAddress = String(row?.meetingPointAddress || '').trim();
+          // Nunca convertir "PROGRAMAR RUTA A PUNTO DE ENCUENTRO" en un
+          // pin de Google Maps ni reemplazarlo silenciosamente por su casa.
+          if ((row?.requiresMeetingPoint === true && !aiMeetingPointAddress) ||
+              isMeetingInstruction(aiMeetingPointAddress)) {
+              missing.push(personName + ' (falta dirección del punto de encuentro)');
+              continue;
+          }
           const normalizedMeetingLabel = normalizeAiValue(aiMeetingPointLabel);
           const normalizedMeetingAddress = normalizeAiValue(aiMeetingPointAddress);
 

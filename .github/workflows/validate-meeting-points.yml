@@ -1,0 +1,28 @@
+name: Validate meeting point import fix
+on:
+  push:
+    branches: [feature/fix-meeting-point-placeholder-2026-11-16]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Regression tests for weekly template and meeting points
+        run: node --test tests/triplogixMeetingPoint.test.js tests/triplogixWeeklyTemplate.test.js tests/triplogixWorkbook.test.js tests/triplogixScheduleReview.test.js tests/leer-libro.test.js tests/leer-publico.test.js
+      - name: Check API syntax
+        run: |
+          node --check api/sheets/leer-libro.js
+          node --check api/sheets/leer-publico.js
+      - name: Build React app
+        run: npm run build

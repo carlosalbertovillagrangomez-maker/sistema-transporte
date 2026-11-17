@@ -23,6 +23,9 @@ test('no se interpreta "PROGRAMAR RUTA A PUNTO DE ENCUENTRO" como dirección de 
  assert.equal(isUsableStreetAddress(INSTRUCTION),false);
  assert.equal(isUsableStreetAddress('PUNTO DE ENCUENTRO'),false);
  assert.equal(isUsableStreetAddress('Diego Lucero, 31123 Chihuahua'),false);
+ const vague=chooseTripStop({primary:'Colonia Diego Lucero, Chihuahua'});
+ assert.equal(vague.requiresMeetingPoint,true);
+ assert.equal(vague.address,'');
  assert.equal(isUsableStreetAddress('Perif. de la Juventud 6300, Chihuahua'),true);
  assert.equal(isUsableStreetAddress('Av. Juan Escutia y Chucho Martinez'),true);
 });

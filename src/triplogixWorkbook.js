@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { isWeeklyWorkbook, extractWeeklyWorkbook } from './triplogixWeeklyTemplate.js';
+import { chooseTripStop } from './triplogixMeetingPoint.js';
 
 // Estructura de la plantilla operativa recibida en noviembre de 2026:
 // Programación (A:O), BD (A:I), Directorio (A:E), Conductores (A:D).
@@ -155,22 +156,27 @@ export const toPlanningRow = (entry, mode, defaultTime) => {
   const driver = ida ? entry.entradaDriver : entry.salidaDriver;
   const order = ida ? entry.entradaOrder : entry.salidaOrder;
   const explicit = ida ? entry.pickupAddress : entry.dropoffAddress;
+  const pointColumn = ida ? entry.pickupMeetingAddress : entry.dropoffMeetingAddress;
   const intermediate = ida ? entry.entradaIntermediate : entry.salidaIntermediate;
-  const sourceAddress = clean(explicit) || (addressLike(intermediate) ? intermediate : '');
+  const stop = chooseTripStop({ primary: explicit, meetingColumn:pointColumn, intermediate });
   const homeAddress = clean(entry.homeAddress);
   return {
     name: entry.name,
     time: official,
     referenceTime: entry.referenceTime,
-    address: homeAddress || sourceAddress,
-    meetingPoint: sourceAddress ? (entry.meetingLabel || sourceAddress) : '',
-    meetingPointAddress: sourceAddress,
+    address: homeAddress || stop.address,
+    // La dirección del punto físico tiene prioridad sobre etiquetas genéricas.
+    meetingPoint: stop.address || '',
+    meetingPointAddress: stop.address,
     phone: entry.phone,
     driver: driver,
     route: route,
     order: order,
-    sourceAddressAuthoritative: Boolean(sourceAddress),
-    sourceUsesIntermediate: Boolean(sourceAddress && intermediate && sourceAddress === intermediate)
+    sourceAddressAuthoritative: Boolean(stop.address),
+    sourceUsesIntermediate: stop.usesIntermediate,
+    requiresMeetingPoint: stop.requiresMeetingPoint,
+    locationSource: stop.source,
+    meetingPointAlias: stop.meetingLabel || ''
   };
 };
 

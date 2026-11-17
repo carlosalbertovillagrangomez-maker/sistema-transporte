@@ -30,6 +30,7 @@ const identityOfService = (entry, mode) => {
     normalizeIdentity(isExit ? entry.salidaRoute : entry.entradaRoute),
     isExit ? text(entry.salidaOrder) : text(entry.entradaOrder),
     normalizeIdentity(isExit ? entry.dropoffAddress : entry.pickupAddress),
+    normalizeIdentity(isExit ? entry.dropoffMeetingAddress : entry.pickupMeetingAddress),
     normalizeIdentity(isExit ? entry.salidaDriver : entry.entradaDriver)
   ].join('::');
 };

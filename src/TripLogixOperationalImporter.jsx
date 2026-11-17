@@ -219,6 +219,9 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
           <button type="button" onClick={onClose} className="text-slate-500 text-2xl leading-none" aria-label="Cerrar importador">×</button>
         </div>
         {data.warnings.map((warning, index) => <p key={index} className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800">{warning}</p>)}
+        {data.format === 'triplogix-weekly' && <p className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-900">
+          <strong>Puntos de encuentro:</strong> cuando el archivo dice «PROGRAMAR RUTA A PUNTO DE ENCUENTRO» en E/H, TripLogix utiliza la dirección física de F/I o la referencia precisa de BD. No enviará esa instrucción a Google Maps. Los puntos sin dirección suficiente aparecerán marcados para corregirlos.
+        </p>}
         {data.weeklyDays?.length > 1 && <label className="block bg-orange-50 rounded-xl border border-orange-200 p-4 text-sm font-bold text-slate-800">
           Primero selecciona el día de la semana
           <select className="block w-full mt-2 p-3 rounded-lg border border-orange-300 bg-white" value={dayIndex} onChange={event=>changeDay(event.target.value)}>

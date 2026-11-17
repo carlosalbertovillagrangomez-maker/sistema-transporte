@@ -23,6 +23,7 @@ test('no se interpreta "PROGRAMAR RUTA A PUNTO DE ENCUENTRO" como dirección de 
  assert.equal(isUsableStreetAddress(INSTRUCTION),false);
  assert.equal(isUsableStreetAddress('PUNTO DE ENCUENTRO'),false);
  assert.equal(isUsableStreetAddress('Diego Lucero, 31123 Chihuahua'),false);
+ assert.equal(isUsableStreetAddress('C. Monte Naranjo 12919, Quintas Carolinas, 31146 Chihuahua'),true);
  const vague=chooseTripStop({primary:'Colonia Diego Lucero, Chihuahua'});
  assert.equal(vague.requiresMeetingPoint,true);
  assert.equal(vague.address,'');

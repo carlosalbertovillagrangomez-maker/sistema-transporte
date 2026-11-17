@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 import { formatOperationalTime, norm, parseOperationalClipboard, toPlanningRow } from './triplogixWorkbook';
+import { isUsableStreetAddress } from './triplogixMeetingPoint.js';
 import { addressFromClientCatalog, groupScheduleForMode, hasScheduledMode, normalizeIdentity } from './triplogixScheduleReview';
 
 const initialMode = data => {
@@ -40,6 +41,8 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
       const old = byName.get(key) || {};
       byName.set(key, {
         address: entry.homeAddress || old.address || '',
+        entradaIntermediate: entry.entradaIntermediate || old.entradaIntermediate || '',
+        salidaIntermediate: entry.salidaIntermediate || old.salidaIntermediate || '',
         phone: entry.phone || old.phone || ''
       });
     }
@@ -51,21 +54,40 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
     const supplement = referenceAddresses.get(key) || {};
     const catalogAddress = addressFromClientCatalog(selectedClient, entry.name);
     const editedAddress = String(addressOverrides[entry.id] || '').trim();
-    const source = toPlanningRow(entry, mode, officialTime);
+    const validCorrection = isUsableStreetAddress(editedAddress) ? editedAddress : '';
+    const withReferences = {
+      ...entry,
+      homeAddress:entry.homeAddress || supplement.address || catalogAddress || '',
+      entradaIntermediate:entry.entradaIntermediate || supplement.entradaIntermediate || '',
+      salidaIntermediate:entry.salidaIntermediate || supplement.salidaIntermediate || ''
+    };
+    const source = toPlanningRow(withReferences, mode, officialTime);
     const homeAddress = source.address || supplement.address || catalogAddress || '';
-    const plannedAddress = editedAddress || source.meetingPointAddress || homeAddress;
+    // La plantilla usa "PROGRAMAR RUTA A PUNTO DE ENCUENTRO" como
+    // instrucción, NO como domicilio del pasajero.
+    const needsMeetingPoint = source.requiresMeetingPoint && !validCorrection;
+    const plannedAddress = needsMeetingPoint ? '' : (validCorrection || source.meetingPointAddress || homeAddress);
     return {
       ...entry,
       planning: {
         ...source,
         address: homeAddress || plannedAddress,
         phone: source.phone || supplement.phone || '',
-        meetingPoint: editedAddress ? editedAddress : source.meetingPoint,
-        meetingPointAddress: editedAddress || source.meetingPointAddress,
-        sourceAddressAuthoritative: Boolean(editedAddress) || source.sourceAddressAuthoritative
+        meetingPoint: validCorrection || source.meetingPoint,
+        meetingPointAddress: validCorrection || source.meetingPointAddress,
+        sourceAddressAuthoritative: Boolean(validCorrection) || source.sourceAddressAuthoritative,
+        requiresMeetingPoint: needsMeetingPoint
       },
       addressDisplay: plannedAddress,
-      addressOrigin: editedAddress ? 'Corregida' : source.meetingPointAddress ? 'Programación' : source.address ? 'BD / Directorio' : supplement.address ? 'BD pegada' : catalogAddress ? 'Clientes TripLogix' : 'Sin dirección'
+      invalidCorrection: Boolean(editedAddress && !validCorrection),
+      addressOrigin: needsMeetingPoint ? 'Falta dirección de punto de encuentro'
+        : validCorrection ? 'Corregida'
+        : source.locationSource === 'punto_de_encuentro_sheet' ? 'Punto de encuentro (F/I)'
+        : source.locationSource === 'punto_intermedio_bd' ? 'Punto intermedio (BD)'
+        : source.meetingPointAddress ? 'Programación'
+        : source.address ? 'BD / Directorio'
+        : supplement.address ? 'BD pegada'
+        : catalogAddress ? 'Clientes TripLogix' : 'Sin dirección'
     };
   }), [group, mode, officialTime, selectedClient, referenceAddresses, addressOverrides]);
 
@@ -164,7 +186,8 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
     if (missingTime.length) return setMessage('Falta hora de entrada/salida para ' + missingTime.length + ' pasajero(s). Indica la hora oficial en el campo superior.');
     if (missingAddress.length) {
       setSearch('');
-      return setMessage('Falta dirección para ' + missingAddress.length + ' pasajero(s). Escribe las direcciones junto a sus nombres, pega también la pestaña BD o desmarca a los que aún no viajarán.');
+      return setMessage('Falta la dirección válida del punto de encuentro o domicilio de ' + missingAddress.length +
+        ' pasajero(s). Revisa las columnas F/I, pega la BD o escribe una calle y número reales junto a cada persona. No se usarán instrucciones como ubicaciones.');
     }
     if (!window.confirm('Preparar ' + active.length + ' pasajeros de ' +
       (mode === 'Ida' ? 'ENTRADA' : 'SALIDA') + ' para el ' + date +
@@ -257,7 +280,7 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
                   <input type="checkbox" checked={selected.has(entry.id)} onChange={() => toggle(entry)} className="w-4 h-4 accent-orange-600 shrink-0 mt-0.5" />
                   <span className="flex-1 min-w-0">
                     <span className="block text-xs font-black text-slate-800">{entry.name}{samePersonVariants && <span className="ml-2 text-amber-600 font-medium">Variantes de servicio</span>}</span>
-                    <span className="block text-[11px] text-slate-600 break-words">{entry.addressDisplay || '⚠ Falta dirección'} <span className="text-slate-400">· {entry.addressOrigin}</span></span>
+                    <span className="block text-[11px] text-slate-600 break-words">{entry.addressDisplay || '⚠ Falta dirección de punto de encuentro'} <span className="text-slate-400">· {entry.addressOrigin}</span></span>
                   </span>
                   <span className="text-[10px] text-slate-600 shrink-0 text-right">{entry.planning.time || 'Sin hora'}<br/>{entry.planning.route ? 'Ruta ' + entry.planning.route : 'Sin ruta fija'}</span>
                 </label>
@@ -265,6 +288,7 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
                   Dirección de recogida/entrega de este servicio
                   <input type="text" value={addressOverrides[entry.id] || ''} onChange={event => setAddressOverrides(prev => ({ ...prev, [entry.id]: event.target.value }))} className="mt-1 w-full border border-amber-300 bg-amber-50 p-2 rounded-lg text-xs text-slate-700" placeholder="Calle, número, colonia y ciudad" />
                 </label>}
+                {entry.invalidCorrection && <p className="ml-7 mt-1 text-xs text-red-700">Ingresa una dirección con calle y número o una intersección identificable; no una instrucción o sólo colonia.</p>}
                 {selected.has(entry.id) && entry.addressDisplay && <button type="button" className="ml-7 mt-1 text-[10px] text-blue-600 hover:underline" onClick={() => setAddressOverrides(prev => ({ ...prev, [entry.id]: prev[entry.id] || entry.addressDisplay }))}>Corregir esta dirección</button>}
               </div>
             );

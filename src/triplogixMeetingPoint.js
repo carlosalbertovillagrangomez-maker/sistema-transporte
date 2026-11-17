@@ -40,7 +40,9 @@ export const chooseTripStop = ({primary,meetingColumn,intermediate} = {}) => {
   if (isUsableStreetAddress(bd)) {
     return {address:bd,source:'punto_intermedio_bd',requiresMeetingPoint:false,usesIntermediate:true};
   }
-  const expectsMeeting = isInstruction || Boolean(meet);
+  // Si E/H contiene un lugar o instrucción sin dirección precisa,
+  // NO asumir que el punto de encuentro es el domicilio del pasajero.
+  const expectsMeeting = isInstruction || Boolean(main) || Boolean(meet);
   return {address:'',source:expectsMeeting?'punto_de_encuentro_pendiente':'sin_direccion',
     requiresMeetingPoint:expectsMeeting,usesIntermediate:false,
     meetingLabel:!isUsableStreetAddress(meet)&&!isMeetingInstruction(meet)?meet:''};

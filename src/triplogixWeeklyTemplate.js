@@ -43,11 +43,17 @@ const layoutOf=(rows,norm)=>{
   const salIndex=findTop(head,'SALIDA',norm);
   const tel=head.findIndex(cell=>norm(cell).includes('TELEFONO USUARIO'));
   const paso=head.findIndex(cell=>norm(cell).includes('HORA PASO'));
-  if([name,entrada,salida,pickup,dropoff,entIndex,salIndex].some(i=>i<0) ||
-     norm(lower[entIndex])!=='RUTA'||norm(lower[salIndex])!=='RUTA')
-    return null;
+  // Algunas semanas (por ejemplo el sábado) dejan K2 y N2 sin el texto
+  // RUTA; K1=ENTRADA y N1=SALIDA mantienen los bloques K:M y N:P.
+  if([name,entrada,salida,pickup,dropoff,entIndex,salIndex].some(i=>i<0))return null;
+  const inSub=norm(lower[entIndex]);
+  const outSub=norm(lower[salIndex]);
+  if ((inSub && inSub!=='RUTA') || (outSub && outSub!=='RUTA') ||
+      !(entIndex+2<salIndex && salIndex+2<tel))return null;
   return {
     name,entrada,salida,pickup,dropoff,tel,paso,
+    pickupMeeting:pickup+1,dropoffMeeting:dropoff+1,
+    inferredRouteHeaders:!inSub||!outSub,
     entradaRoute:entIndex,entradaOrder:entIndex+1,entradaDriver:entIndex+2,
     salidaRoute:salIndex,salidaOrder:salIndex+1,salidaDriver:salIndex+2,
     headerRows:2
@@ -65,10 +71,12 @@ export const extractWeeklyWorkbook=(book,{sheetRows,norm,clean,formatTime,normal
   if(!dayNames.length)dayNames.push('Programación');
   const weeklyDays=[];
   const ignored=[];
+  const inferredDays=[];
   for(const name of dayNames){
     const rows=sheetRows(book,name);
     const layout=layoutOf(rows,norm);
     if(!layout){ignored.push(name);continue;}
+    if(layout.inferredRouteHeaders)inferredDays.push(name);
     const entries=[];
     for(let ri=layout.headerRows;ri<rows.length;ri++){
       const row=rows[ri];
@@ -86,6 +94,8 @@ export const extractWeeklyWorkbook=(book,{sheetRows,norm,clean,formatTime,normal
         name:passenger,source:name,sourceRow:ri+1,sourceDay:name,
         homeAddress:ref.homeAddress||'',phone:normalizePhone(row[layout.tel])||ref.phone||'',
         pickupAddress:clean(row[layout.pickup]),dropoffAddress:clean(row[layout.dropoff]),
+        pickupMeetingAddress:clean(row[layout.pickupMeeting]),
+        dropoffMeetingAddress:clean(row[layout.dropoffMeeting]),
         entradaIntermediate:ref.entradaIntermediate||'',
         salidaIntermediate:ref.salidaIntermediate||'',
         meetingLabel:ref.meetingLabel||'',
@@ -116,6 +126,7 @@ export const extractWeeklyWorkbook=(book,{sheetRows,norm,clean,formatTime,normal
     warnings:[
       ...(!year?['No se encontró el año en las hojas de resumen. Selecciona la fecha real del día antes de generar rutas.']:[]),
       ...(ignored.length?['No se pudieron leer las pestañas: '+ignored.join(', ')]:[]),
+      ...(inferredDays.length?['Se reconocieron las columnas de rutas por sus títulos principales en '+inferredDays.join(', ')+' (encabezados RUTA secundarios vacíos).']:[]),
       'Se importaron únicamente las pestañas diarias; Panel Logístico y los informes no generan servicios.'
     ],
     summary:{programRows:activeDay.entries.length,weeklyRows:weeklyDays.reduce((sum,day)=>sum+day.entries.length,0),days:weeklyDays.length,drivers:drivers.length}

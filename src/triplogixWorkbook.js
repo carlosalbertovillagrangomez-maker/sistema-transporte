@@ -215,12 +215,18 @@ export const parseOperationalClipboard = input => {
     /[A-Za-zÁÉÍÓÚÑáéíóúñ]/.test(clean(first[2])) &&
     Boolean(formatOperationalTime(first[0]) || formatOperationalTime(first[1])) &&
     Boolean(clean(first[4]) || clean(first[6]));
-  if (looksLikeProgramData) type = 'Programación';
+  const looksLikeCompactData = !type && first.length === 4 &&
+    clean(first[2]).length >= 3 &&
+    /[A-Za-zÁÉÍÓÚÑáéíóúñ]/.test(clean(first[2])) &&
+    Boolean(formatOperationalTime(first[0]) || formatOperationalTime(first[1]));
+  if (looksLikeProgramData || looksLikeCompactData) type = 'Programación';
   if (!type) return null;
 
   const workbook = XLSX.utils.book_new();
   const weeklyStyle=looksLikeProgramData && first.length>=17;
-  const inputRows = looksLikeProgramData ? [
+  const inputRows = looksLikeCompactData
+    ? [['HORA ENTRADA','HORA SALIDA','NOMBRE','CONDUCTOR'], ...rows]
+    : looksLikeProgramData ? [
     weeklyStyle
       ? ['HORA ENTRADA','HORA SALIDA','NOMBRE','HORA PASO','PUNTO DE RECOGIDA','','','PUNTO DE DESCARGUE','','','ENTRADA','','','SALIDA','','','TELEFONO USUARIO']
       : ['HORA ENTRADA','HORA SALIDA','NOMBRE','HORA PASO','PUNTO DE RECOGIDA','','PUNTO DE DESCARGUE','','ENTRADA','','','SALIDA','','','TELEFONO USUARIO'],
@@ -233,6 +239,8 @@ export const parseOperationalClipboard = input => {
   const extracted = extractOperationalWorkbook(workbook);
   if (looksLikeProgramData) {
     extracted.warnings.unshift('Se detectaron filas de Programación sin encabezados usando sus columnas A:O. Comprueba nombres, direcciones y horas antes de confirmar.');
+  } else if (looksLikeCompactData) {
+    extracted.warnings.unshift('Se detectaron cuatro columnas A:D sin encabezados: Entrada, Salida, Nombre y Conductor. Comprueba los datos antes de confirmar.');
   }
   return extracted;
 };

@@ -6,6 +6,7 @@ export default function TripLogixQuickDriver({ existing = [], suggestedDrivers =
   const [name, setName] = useState('');
   const [vehicleModel, setVehicleModel] = useState('');
   const [vehiclePlate, setVehiclePlate] = useState('');
+  const [phone, setPhone] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -14,7 +15,9 @@ export default function TripLogixQuickDriver({ existing = [], suggestedDrivers =
     const cleanName = name.trim().replace(/\s+/g, ' ');
     const cleanVehicle = vehicleModel.trim().replace(/\s+/g, ' ');
     const cleanPlate = vehiclePlate.trim().toUpperCase().replace(/\s+/g, '');
-    if (!cleanName || !cleanVehicle || !cleanPlate) return setError('Completa nombre, vehículo y placas.');
+    const cleanPhone = phone.replace(/\D/g, '');
+    if (!cleanName || !cleanVehicle || !cleanPlate || !cleanPhone) return setError('Completa nombre, vehículo, placas y celular.');
+    if (cleanPhone.length < 10 || cleanPhone.length > 15) return setError('Ingresa un celular válido de 10 a 15 dígitos, incluyendo lada internacional si corresponde.');
     if (existing.some(driver => String(driver.vehiclePlate || '').replace(/\s+/g, '').toUpperCase() === cleanPlate)) return setError('Las placas ya existen en el catálogo de conductores.');
     setSaving(true); setError('');
     try {
@@ -23,6 +26,7 @@ export default function TripLogixQuickDriver({ existing = [], suggestedDrivers =
         name: cleanName,
         vehicleModel: cleanVehicle,
         vehiclePlate: cleanPlate,
+        phone: cleanPhone,
         vehiculo: `${cleanVehicle} (${cleanPlate})`,
         status: 'Pendiente',
         isOnline: false,
@@ -49,6 +53,7 @@ export default function TripLogixQuickDriver({ existing = [], suggestedDrivers =
               setName(driver.name || '');
               setVehicleModel(driver.vehicleModel || '');
               setVehiclePlate(driver.vehiclePlate || '');
+              setPhone(driver.phone || '');
               setError('');
             }
           }}>
@@ -59,6 +64,7 @@ export default function TripLogixQuickDriver({ existing = [], suggestedDrivers =
         <label className="block text-xs font-bold text-slate-700">Nombre completo<input required maxLength={100} value={name} onChange={e => setName(e.target.value)} className="mt-1 block w-full p-3 border border-slate-300 rounded-lg" /></label>
         <label className="block text-xs font-bold text-slate-700">Vehículo / modelo<input required maxLength={100} value={vehicleModel} onChange={e => setVehicleModel(e.target.value)} className="mt-1 block w-full p-3 border border-slate-300 rounded-lg" /></label>
         <label className="block text-xs font-bold text-slate-700">Placas<input required maxLength={25} value={vehiclePlate} onChange={e => setVehiclePlate(e.target.value)} className="mt-1 block w-full p-3 border border-slate-300 rounded-lg uppercase" /></label>
+        <label className="block text-xs font-bold text-slate-700">Celular / WhatsApp del conductor<input type="tel" required maxLength={22} autoComplete="tel" placeholder="Ej. 6141234567" value={phone} onChange={e => setPhone(e.target.value)} className="mt-1 block w-full p-3 border border-slate-300 rounded-lg" /></label>
         {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
         <div className="flex justify-end gap-2"><button type="button" onClick={onCancel} className="p-3 text-xs rounded-lg border">Cancelar</button><button disabled={saving} type="submit" className="p-3 bg-orange-500 rounded-lg text-white font-black text-xs disabled:opacity-50">{saving ? 'Guardando...' : 'Registrar y seleccionar'}</button></div>
       </form>

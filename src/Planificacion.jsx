@@ -12,6 +12,8 @@ import TripLogixWhatsAppActions from './TripLogixWhatsAppActions';
 import TripLogixQuickDriver from './TripLogixQuickDriver';
 import TripLogixAIAssistant from './TripLogixAIAssistant';
 import { isMeetingInstruction } from './triplogixMeetingPoint.js';
+import { FINAL_DESTINATION_EARLY_MINS, PASSENGER_PICKUP_BUFFER_MINS, DROPOFF_BUFFER_MINS } from './triplogixCarpoolPolicy.js';
+import { bucketByTimeAndDriver } from './triplogixAutomaticGroups.js';
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0";
 
@@ -19,11 +21,8 @@ const containerStyle = { width: '100%', height: '100%' };
 const centerMX = { lat: 19.4326, lng: -99.1332 };
 const libraries = ['places', 'geometry'];
 
-// --- CONFIGURACIÓN DE TIEMPOS CARPOOLING ---
-// Para viajes de Ida, el destino final debe alcanzarse mínimo 10 minutos antes.
-// Además, se agrega una tolerancia operativa de 5 minutos por cada pasajero.
-const FINAL_DESTINATION_EARLY_MINS = 10;
-const PASSENGER_PICKUP_BUFFER_MINS = 5;
+// Horarios netos: duración calculada por Google Directions y sin esperas
+// fijas por pasajero. Se conserva la llegada anticipada ya existente.
 
 const TRIPLOGIX_COUNTRY_PRICING = Object.freeze({
     México: Object.freeze({
@@ -1649,7 +1648,7 @@ export default function Planificacion() {
           // Una ruta explícita de archivo conserva puntos individuales y no fuerza
           // punto compartido: el archivo manda sobre la optimización automática.
           let isShared = false;
-          if (!routeLabel) {
+          if (!routeLabel && !orderedEmployees.some(emp => emp?.aiImported)) {
               const hourStr = tKey ? tKey.split(':')[0] : '8';
               const hour = parseInt(hourStr, 10) || 8;
               if (mode === 'Ida' && hour >= 7) isShared = true;
@@ -1705,16 +1704,12 @@ export default function Planificacion() {
       });
 
       // B) PERSONAS SIN RUTA EXPLÍCITA: conservan la optimización automática existente.
-      const timeBuckets = {};
-      automaticEmployees.forEach(emp => {
-          const tKey = getOfficialTime(emp);
-          if(!timeBuckets[tKey]) timeBuckets[tKey] = [];
-          timeBuckets[tKey].push(emp);
-      });
-
-      Object.keys(timeBuckets).forEach(tKey => {
-          let unassignedValid = timeBuckets[tKey].filter(e => e.lat);
-          const invalidEmps = timeBuckets[tKey].filter(e => !e.lat);
+      // Agrupar por turno y conductor elegido en D; para quienes no indican
+      // conductor se conserva el agrupamiento geográfico existente.
+      const timeBuckets = bucketByTimeAndDriver(automaticEmployees, getOfficialTime, normalizeAiValue);
+      timeBuckets.forEach(({ tKey, employees }) => {
+          let unassignedValid = employees.filter(e => e.lat);
+          const invalidEmps = employees.filter(e => !e.lat);
 
           while(unassignedValid.length > 0) {
               let currentGrp = [];
@@ -1992,6 +1987,11 @@ export default function Planificacion() {
 
       for (const group of validGroups) {
           if(!group.driverId) return alert("⚠️ Todos los grupos deben tener un conductor asignado.");
+          if (!Array.isArray(group.routeGeometry) || group.routeGeometry.length < 2 ||
+              !Array.isArray(group.routeSegments) || !group.routeSegments.length ||
+              !Number.isFinite(Number(group.totalDurationMins))) {
+              return alert("⚠️ Google Maps no ha confirmado un recorrido vial para una de las unidades. Recalcula la ruta antes de guardar; no se crearán trayectos en línea recta.");
+          }
 
           for (const point of getGroupMeetingPoints(group)) {
               if (!point.address || !Number.isFinite(Number(point.lat)) || !Number.isFinite(Number(point.lng ?? point.lon))) {
@@ -2105,8 +2105,8 @@ export default function Planificacion() {
                       stop.employees.forEach(employee => {
                           dropoffTimeByPassenger.set(employee.assignedTo, currentTime);
                       });
-                      // Margen breve para descenso antes de continuar al siguiente punto.
-                      dropoffCursor = addMinutesToDate(dropoffCursor, Math.max(1, stop.employees.length * 2));
+                      // Tiempo neto: sin minutos adicionales por descenso.
+                      dropoffCursor = addMinutesToDate(dropoffCursor, DROPOFF_BUFFER_MINS);
                   });
               }
 
@@ -2526,7 +2526,7 @@ export default function Planificacion() {
                     <div className="flex justify-between items-start mb-2">
                           {ruta.serviceType === 'Prioritario' ? <span className="text-[10px] font-bold px-2 py-1 rounded bg-orange-100 text-orange-700 flex items-center gap-1"><Zap className="w-3 h-3"/> INMEDIATO</span> : <span className="text-[10px] font-bold px-2 py-1 rounded bg-slate-100 text-slate-700 flex items-center gap-1"><Calendar className="w-3 h-3"/> {ruta.scheduledDate} {ruta.scheduledTime}</span>}
                           <div className="flex gap-1">
-                              <TripLogixWhatsAppActions route={ruta} />
+                              <TripLogixWhatsAppActions route={ruta} drivers={availableDrivers} />
                               {!ruta.actualStartTimestamp && !['En Ruta', 'Finalizado', 'Completado', 'Cancelado'].includes(ruta.status) && (
                                   <button
                                       type="button"
@@ -2597,7 +2597,7 @@ export default function Planificacion() {
                           <select className="w-full mt-1.5 bg-white border border-slate-300 rounded-lg p-2.5 text-sm outline-none focus:border-orange-400 font-bold text-slate-700" value={newRoute.driver} onChange={handleDriverChange}>
                               <option value="">Seleccionar conductor...</option>{availableDrivers.map(d => <option key={d.id} value={d.name}>{d.name}{d.quickRegistration ? " · Alta rápida" : ""}</option>)}
                           </select>
-                          <button type="button" onClick={() => setQuickDriverTarget({ mode: 'assign' })} className="mt-3 text-xs font-bold text-orange-600 hover:underline">+ Registrar conductor nuevo (nombre, vehículo y placas)</button>
+                          <button type="button" onClick={() => setQuickDriverTarget({ mode: 'assign' })} className="mt-3 text-xs font-bold text-orange-600 hover:underline">+ Registrar conductor nuevo (nombre, vehículo, placas y celular)</button>
                           {availableDrivers.find(d => d.id === newRoute.driverId)?.quickRegistration && <p className="text-[11px] text-amber-700 mt-2">Este conductor tiene alta operativa, pero no acceso a la app Conductor hasta completar su registro.</p>}
                       </div>
                   </div>

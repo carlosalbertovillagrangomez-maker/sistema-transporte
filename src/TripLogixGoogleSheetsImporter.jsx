@@ -210,7 +210,9 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperatio
         /^(LUNES|MARTES|MIERCOLES|JUEVES|VIERNES|SABADO|DOMINGO)_\d{1,2}_DE_/.test(normalize(name))
       );
       if (matchedNames.length) {
-        const ranges = matchedNames.map(name => {
+        // Añadir la pestaña elegida aunque se llame "Hoja1": puede contener A:D.
+        const importNames = matchedNames.includes(tabTitle) ? matchedNames : [...matchedNames, tabTitle];
+        const ranges = importNames.map(name => {
           const title = "'" + name.replace(/'/g, "''") + "'";
           if(normalize(name)==='BD')return title+'!A1:I1200';
           if(normalize(name)==='DIRECTORIO')return title+'!A1:E1200';
@@ -227,7 +229,7 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperatio
         );
         const workbook = XLSX.utils.book_new();
         (workbookData.valueRanges || []).forEach((item, index) => {
-          const title = matchedNames[index];
+          const title = importNames[index];
           const values = Array.isArray(item.values) ? item.values : [];
           XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(values), title);
         });
@@ -245,6 +247,16 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperatio
         '/values/' + encodeURIComponent(tab + '!A1:AZ5000'), token
       );
       const values = data.values || [];
+      // Hoja privada con cuatro columnas sin pestañas auxiliares: misma
+      // planificación empresarial que se utiliza con el enlace público.
+      const compactBook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(compactBook, XLSX.utils.aoa_to_sheet(values), tabTitle);
+      if (isOperationalWorkbook(compactBook)) {
+        if (!onOperationalWorkbook) throw new Error('No se pudo abrir la planificación empresarial.');
+        onOperationalWorkbook({ ...extractOperationalWorkbook(compactBook), importKey:String(Date.now()), sheetId:selectedId });
+        setOpen(false);
+        return;
+      }
       const headers = values[0] || [];
       const rows = values.slice(1).filter(cells => cells.some(clean)).map(cells =>
         Object.fromEntries(headers.map((head, i) => [clean(head), cells[i] ?? '']))
@@ -269,7 +281,7 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperatio
 
             <section className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-4 space-y-3">
               <h4 className="font-black text-emerald-900 text-sm">Opción rápida y privada · copiar y pegar</h4>
-              <p className="text-xs text-emerald-900">En cualquier Google Sheets (aunque sea privado), copia el rango con sus encabezados y pégalo aquí (Ctrl+C / Ctrl+V). TripLogix reconoce automáticamente la hoja Programación, BD, Directorio o la plantilla normal de rutas. No necesitas Google Cloud.</p>
+              <p className="text-xs text-emerald-900">En cualquier Google Sheets (aunque sea privado), copia el rango con sus encabezados y pégalo aquí (Ctrl+C / Ctrl+V). TripLogix reconoce las cuatro columnas A:D (Hora entrada, Hora salida, Nombre, Conductor), la hoja Programación, BD, Directorio y las plantillas anteriores. No necesitas Google Cloud.</p>
               <textarea rows={4} className="w-full bg-white border border-emerald-200 rounded-lg p-3 text-xs" placeholder="Pega aquí las filas y encabezados de Programación, BD o de la plantilla normal..." value={pastedText} onChange={event => setPastedText(event.target.value)} />
               <button type="button" onClick={importPasted} disabled={loading || busy || !pastedText.trim()} className="bg-emerald-700 text-white px-4 py-2.5 rounded-lg text-xs font-black disabled:opacity-50">Importar datos pegados</button>
             </section>

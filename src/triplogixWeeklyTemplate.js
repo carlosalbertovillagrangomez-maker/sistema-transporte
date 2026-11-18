@@ -24,10 +24,16 @@ const findTop=(headers,word,norm)=>{
   return headers.findIndex(cell=>norm(cell)===word);
 };
 export const hasWeeklyTab=(name,norm)=>WEEKDAY.test(norm(name));
+const hasCompactHeader=(head,norm)=>
+  norm(head[0])==='HORA ENTRADA' && norm(head[1])==='HORA SALIDA' &&
+  norm(head[2])==='NOMBRE' &&
+  /^(CONDUCTOR(?: ASIGNADO)?|CHOFER|OPERADOR|UNIDAD|GRUPO \/ CONDUCTOR|CONDUCTOR \/ GRUPO)$/.test(norm(head[3]));
 export const isWeeklyWorkbook=(book,sheetRows,norm)=>{
   if((book.SheetNames||[]).some(name=>hasWeeklyTab(name,norm)))return true;
+  if((book.SheetNames||[]).some(name=>hasCompactHeader((sheetRows(book,name)[0]||[]),norm)))return true;
   const program=sheetRows(book,'Programación');
   const top=program[0]||[];
+  if (hasCompactHeader(top,norm)) return true;
   return norm(top[2])==='NOMBRE'&&
     norm(top[7]).includes('PUNTO DE DESCARGUE')&&
     norm(top[10])==='ENTRADA'&&norm(top[13])==='SALIDA';
@@ -43,6 +49,16 @@ const layoutOf=(rows,norm)=>{
   const salIndex=findTop(head,'SALIDA',norm);
   const tel=head.findIndex(cell=>norm(cell).includes('TELEFONO USUARIO'));
   const paso=head.findIndex(cell=>norm(cell).includes('HORA PASO'));
+  // Formato reducido A:D: hora entrada, hora salida, nombre y conductor.
+  // D no es hora de paso; ubicaciones y teléfonos se obtienen del directorio.
+  const compact=hasCompactHeader(head,norm);
+  if(compact)return {
+    name,entrada,salida,pickup:-1,dropoff:-1,tel:-1,paso:-1,
+    pickupMeeting:-1,dropoffMeeting:-1,
+    entradaRoute:-1,entradaOrder:-1,entradaDriver:3,
+    salidaRoute:-1,salidaOrder:-1,salidaDriver:3,
+    headerRows:1,inferredRouteHeaders:false
+  };
   // Algunas semanas (por ejemplo el sábado) dejan K2 y N2 sin el texto
   // RUTA; K1=ENTRADA y N1=SALIDA mantienen los bloques K:M y N:P.
   if([name,entrada,salida,pickup,dropoff,entIndex,salIndex].some(i=>i<0))return null;
@@ -68,7 +84,9 @@ const dateFromTab=(name,year,norm)=>{
 export const extractWeeklyWorkbook=(book,{sheetRows,norm,clean,formatTime,normalizePhone,referenceByName,drivers})=>{
   const year=yearFromWorkbook(book,sheetRows);
   const dayNames=(book.SheetNames||[]).filter(name=>hasWeeklyTab(name,norm));
-  if(!dayNames.length)dayNames.push('Programación');
+  if(!dayNames.length)dayNames.push(
+    (book.SheetNames||[]).find(name=>hasCompactHeader((sheetRows(book,name)[0]||[]),norm)) || 'Programación'
+  );
   const weeklyDays=[];
   const ignored=[];
   const inferredDays=[];
@@ -127,6 +145,7 @@ export const extractWeeklyWorkbook=(book,{sheetRows,norm,clean,formatTime,normal
       ...(!year?['No se encontró el año en las hojas de resumen. Selecciona la fecha real del día antes de generar rutas.']:[]),
       ...(ignored.length?['No se pudieron leer las pestañas: '+ignored.join(', ')]:[]),
       ...(inferredDays.length?['Se reconocieron las columnas de rutas por sus títulos principales en '+inferredDays.join(', ')+' (encabezados RUTA secundarios vacíos).']:[]),
+      'Con cuatro columnas (Entrada, Salida, Nombre, Conductor), TripLogix completa direcciones desde BD/Directorio/Clientes y calcula las rutas y horas de paso.',
       'Se importaron únicamente las pestañas diarias; Panel Logístico y los informes no generan servicios.'
     ],
     summary:{programRows:activeDay.entries.length,weeklyRows:weeklyDays.reduce((sum,day)=>sum+day.entries.length,0),days:weeklyDays.length,drivers:drivers.length}

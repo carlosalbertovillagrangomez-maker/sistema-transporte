@@ -19,6 +19,10 @@ const decode = value => {
 };
 const fields = payload => Object.fromEntries(Object.entries(payload.fields || {}).map(([key,value])=>[key,decode(value)]));
 const stringField = value => ({ stringValue: String(value) });
+const secureEqual = (a,b) => {
+  const aa=Buffer.from(String(a||'')),bb=Buffer.from(String(b||''));
+  return aa.length===bb.length && aa.length>0 && crypto.timingSafeEqual(aa,bb);
+};
 const rsaToken = async service => {
   const now = Math.floor(Date.now()/1000);
   const enc = obj => Buffer.from(JSON.stringify(obj)).toString('base64url');
@@ -66,10 +70,10 @@ const contactsFor = route => {
     push(point);
     (point.passengersSchedule||[]).forEach(push);
   });
-  return [...result.values()];
+  return [...result.values()].map(person => ({...person,recipientType:'passenger'}));
 };
-const recentAssigned = route => {
-  if(!['Aceptada','En Ruta'].includes(route.status)||!route.driver||!route.driverId||route.driverQuickRegistration) return false;
+const recentAssigned = (route, allowQuickRegistration = false) => {
+  if(!['Aceptada','En Ruta'].includes(route.status)||!route.driver||!route.driverId||(route.driverQuickRegistration&&!allowQuickRegistration)) return false;
   const date = new Date(route.assignedAt||route.assignmentRequestedAt||route.createdDate||0).getTime();
   if(!Number.isFinite(date)||Date.now()-date>7*86400000||date>Date.now()+600000) return false;
   const scheduled = route.scheduledDate||route.finalDate||'';
@@ -81,10 +85,24 @@ const recentAssigned = route => {
 };
 
 export default async function handler(req,res){
-  if(req.method!=='GET') return res.status(405).json({error:'Método no permitido'});
-  if(req.query?.check==='1') return res.status(200).json({configured:configured(),automaticConfigured:configured()});
-  if(!process.env.CRON_SECRET||req.headers.authorization!==`Bearer ${process.env.CRON_SECRET}`)return res.status(401).json({error:'No autorizado'});
+  const direct=req.method==='POST';
+  if(!direct&&req.method!=='GET') return res.status(405).json({error:'Método no permitido'});
+  if(!direct&&req.query?.check==='1') return res.status(200).json({configured:configured(),automaticConfigured:configured(),directConfigured:configured()&&Boolean(process.env.WHATSAPP_DISPATCH_KEY)});
   if(!configured())return res.status(503).json({error:'Falta configurar WhatsApp y Firebase en Vercel.'});
+  const expected=direct?process.env.WHATSAPP_DISPATCH_KEY:process.env.CRON_SECRET;
+  const bearer=String(req.headers.authorization||'').replace(/^Bearer /,'');
+  if(!secureEqual(bearer,expected))return res.status(401).json({error:'Clave de envíos incorrecta o no configurada.'});
+  let requestedIds=[];
+  if(direct){
+    let body=req.body;
+    if(typeof body==='string'){try{body=JSON.parse(body);}catch(_){return res.status(400).json({error:'JSON inválido.'});}}
+    requestedIds=body?.routeIds;
+    if(!Array.isArray(requestedIds)||requestedIds.length<1||requestedIds.length>80||
+      requestedIds.some(id=>typeof id!=='string'||!/^[A-Za-z0-9_-]{10,128}$/.test(id))||
+      new Set(requestedIds).size!==requestedIds.length){
+      return res.status(400).json({error:'Envía de 1 a 80 identificadores únicos de rutas guardadas.'});
+    }
+  }
   let service;
   try {service=JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_JSON);}catch(_){return res.status(503).json({error:'FIREBASE_SERVICE_ACCOUNT_JSON inválido'});}
   if(!service.project_id||!service.private_key||!service.client_email)return res.status(503).json({error:'Firebase service account incompleto'});
@@ -93,19 +111,39 @@ export default async function handler(req,res){
     const root=`https://firestore.googleapis.com/v1/projects/${encodeURIComponent(service.project_id)}/databases/(default)/documents`;
     const config=await firestoreRequest(root+'/integraciones/whatsapp',token).catch(e=>e.code===404?{fields:{}}:Promise.reject(e));
     const settings=fields(config);
-    if(settings.enabled!==true)return res.status(200).json({status:'disabled',sent:0});
+    if(settings.enabled!==true)return res.status(direct?409:200).json({status:'disabled',sent:0,error:'Activa primero WhatsApp en Configuración y registra las plantillas aprobadas.'});
     if(!/^[a-z0-9_]+$/.test(settings.templateName||''))throw new Error('Plantilla WhatsApp no configurada.');
-    const snapshot=await firestoreRequest(root+':runQuery',token,{method:'POST',body:JSON.stringify({
-      structuredQuery:{from:[{collectionId:'rutas'}],orderBy:[{field:{fieldPath:'createdDate'},direction:'DESCENDING'}],limit:100}
-    })});
+    // Modo inmediato: los IDs provienen de las rutas recién guardadas.
+    // No se aceptan teléfonos, contenidos ni plantillas dictados por el navegador.
+    const snapshot=direct
+      ? await Promise.all(requestedIds.map(async id=>{
+          const document=await firestoreRequest(root+'/rutas/'+encodeURIComponent(id),token).catch(error=>error.code===404?null:Promise.reject(error));
+          return {document};
+        }))
+      : await firestoreRequest(root+':runQuery',token,{method:'POST',body:JSON.stringify({
+          structuredQuery:{from:[{collectionId:'rutas'}],orderBy:[{field:{fieldPath:'createdDate'},direction:'DESCENDING'}],limit:100}
+        })});
     let sent=0,skipped=0,failed=0,checked=0;
     for(const item of snapshot){
       const document=item.document;
-      if(!document||!recentAssigned(fields(document)))continue;
+      if(!document||!recentAssigned(fields(document),direct))continue;
       const route=fields(document);const routeId=document.name.split('/').pop();
-      for(const person of contactsFor(route)){
+      const recipients=contactsFor(route);
+      if(direct&&req.body?.includeDrivers===true&&route.driverId&&settings.driverTemplateName){
+        // El consentimiento del conductor se consulta directamente de su ficha,
+        // nunca se acepta como valor proporcionado por el navegador.
+        const driverDoc=await firestoreRequest(root+'/conductores/'+encodeURIComponent(route.driverId),token)
+          .catch(error=>error.code===404?null:Promise.reject(error));
+        const driver=driverDoc?fields(driverDoc):null;
+        const phone=normalizePhone(driver?.phone||driver?.telefono||driver?.celular,countryFor(route));
+        if(driver?.whatsappOptIn===true&&phone){
+          recipients.push({recipientType:'driver',name:String(driver.name||route.driver||'conductor'),
+            phone,plannedTime:route.startTime||route.scheduledTime||''});
+        }
+      }
+      for(const person of recipients){
         if(checked++>=35)break;
-        const recipientHash=crypto.createHash('sha256').update(routeId+':'+person.phone).digest('hex').slice(0,35);
+        const recipientHash=crypto.createHash('sha256').update(routeId+':'+(person.recipientType==='driver'?'driver:':'')+person.phone).digest('hex').slice(0,35);
         const id='route_'+recipientHash;
         const marker={fields:{
           routeId:stringField(routeId),status:stringField('processing'),createdAt:stringField(new Date().toISOString()),
@@ -118,15 +156,18 @@ export default async function handler(req,res){
         try{
           const url=`https://graph.facebook.com/${process.env.WHATSAPP_GRAPH_VERSION||'v25.0'}/${encodeURIComponent(process.env.WHATSAPP_PHONE_NUMBER_ID)}/messages`;
           const tracking=(settings.clientTrackingUrl||'https://app-cliente-five.vercel.app').replace(/\/$/,'')+'/?trip='+encodeURIComponent(routeId);
+          // Dos plantillas diferentes: pasajero (4 variables) y
+          // conductor (4 variables). Ambas requieren aprobación en Meta.
+          const parameters=person.recipientType==='driver'
+            ? [person.name,String((route.scheduledDate||'')+' '+(person.plannedTime||'')).trim(),
+               String(route.start||'Origen sin definir'),String(route.end||'Destino sin definir')]
+            : [person.name,String(route.driver||'Conductor asignado'),
+               String((route.scheduledDate||'')+' '+(person.plannedTime||route.scheduledTime||'')).trim(),tracking];
           const meta=await fetch(url,{method:'POST',headers:{Authorization:'Bearer '+process.env.WHATSAPP_ACCESS_TOKEN,'Content-Type':'application/json'},body:JSON.stringify({
             messaging_product:'whatsapp',to:person.phone,type:'template',
-            template:{name:settings.templateName,language:{code:settings.templateLanguage||'es_MX'},
-              components:[{type:'body',parameters:[
-                {type:'text',text:person.name.slice(0,100)},
-                {type:'text',text:String(route.driver).slice(0,100)},
-                {type:'text',text:String((route.scheduledDate||'')+' '+(person.plannedTime||route.scheduledTime||'')).trim().slice(0,100)},
-                {type:'text',text:tracking}
-              ]}]}
+            template:{name:person.recipientType==='driver'?settings.driverTemplateName:settings.templateName,
+              language:{code:settings.templateLanguage||'es_MX'},
+              components:[{type:'body',parameters:parameters.map(value=>({type:'text',text:String(value).slice(0,1000)}))}]}
           })});
           const response=await meta.json().catch(()=>({}));
           if(!meta.ok)throw new Error('Meta rechazó el mensaje: '+(response.error?.code||meta.status));
@@ -143,6 +184,6 @@ export default async function handler(req,res){
       }
       if(checked>=35)break;
     }
-    return res.status(200).json({status:'processed',sent,skipped,failed,checked});
+    return res.status(200).json({status:'processed',sent,skipped,failed,checked,limitReached:checked>=35,mode:direct?'direct':'scheduled'});
   }catch(error){return res.status(500).json({error:String(error.message||error).slice(0,250)});}
 }

@@ -7,6 +7,7 @@ export default function TripLogixQuickDriver({ existing = [], suggestedDrivers =
   const [vehicleModel, setVehicleModel] = useState('');
   const [vehiclePlate, setVehiclePlate] = useState('');
   const [phone, setPhone] = useState('');
+  const [whatsappOptIn, setWhatsappOptIn] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
@@ -27,13 +28,15 @@ export default function TripLogixQuickDriver({ existing = [], suggestedDrivers =
         vehicleModel: cleanVehicle,
         vehiclePlate: cleanPlate,
         phone: cleanPhone,
+        whatsappOptIn: whatsappOptIn === true,
         vehiculo: `${cleanVehicle} (${cleanPlate})`,
         status: 'Pendiente',
         isOnline: false,
         quickRegistration: true,
         accountAccessEnabled: false,
         createdBy: 'dispatcher',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        created: new Date().toISOString()
       };
       const result = await addDoc(collection(db, 'conductores'), value);
       onCreated({ id: result.id, ...value });
@@ -65,6 +68,7 @@ export default function TripLogixQuickDriver({ existing = [], suggestedDrivers =
         <label className="block text-xs font-bold text-slate-700">Vehículo / modelo<input required maxLength={100} value={vehicleModel} onChange={e => setVehicleModel(e.target.value)} className="mt-1 block w-full p-3 border border-slate-300 rounded-lg" /></label>
         <label className="block text-xs font-bold text-slate-700">Placas<input required maxLength={25} value={vehiclePlate} onChange={e => setVehiclePlate(e.target.value)} className="mt-1 block w-full p-3 border border-slate-300 rounded-lg uppercase" /></label>
         <label className="block text-xs font-bold text-slate-700">Celular / WhatsApp del conductor<input type="tel" required maxLength={22} autoComplete="tel" placeholder="Ej. 6141234567" value={phone} onChange={e => setPhone(e.target.value)} className="mt-1 block w-full p-3 border border-slate-300 rounded-lg" /></label>
+        <label className="flex items-start gap-2 text-xs text-slate-700"><input type="checkbox" checked={whatsappOptIn} onChange={e=>setWhatsappOptIn(e.target.checked)} className="mt-0.5"/> Confirmo que el conductor autorizó expresamente recibir notificaciones de TRIPLOGIX por WhatsApp en este celular. Si no hay autorización, dejar desmarcado.</label>
         {error && <p className="text-xs text-red-600" role="alert">{error}</p>}
         <div className="flex justify-end gap-2"><button type="button" onClick={onCancel} className="p-3 text-xs rounded-lg border">Cancelar</button><button disabled={saving} type="submit" className="p-3 bg-orange-500 rounded-lg text-white font-black text-xs disabled:opacity-50">{saving ? 'Guardando...' : 'Registrar y seleccionar'}</button></div>
       </form>

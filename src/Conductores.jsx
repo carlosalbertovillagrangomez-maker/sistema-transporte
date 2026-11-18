@@ -22,7 +22,7 @@ export default function Conductores() {
     name: '', rfc: '', phone: '', email: '', password: '', address: '',
     licenseNumber: '', licenseType: 'Federal Tipo B', licenseExp: '', bloodType: 'O+',
     emergencyContact: '', vehicleModel: '', vehiclePlate: '', vehicleType: 'Caja Seca',
-    fotoPerfil: '', identificacion: ''
+    fotoPerfil: '', identificacion: '', whatsappOptIn: false
   });
 
   const [driversList, setDriversList] = useState([]);
@@ -96,7 +96,7 @@ export default function Conductores() {
           name: '', rfc: '', phone: '', email: '', password: '', address: '',
           licenseNumber: '', licenseType: 'Federal Tipo B', licenseExp: '', bloodType: 'O+',
           emergencyContact: '', vehicleModel: '', vehiclePlate: '', vehicleType: 'Caja Seca',
-          fotoPerfil: '', identificacion: ''
+          fotoPerfil: '', identificacion: '', whatsappOptIn: false
       });
   };
 
@@ -109,7 +109,7 @@ export default function Conductores() {
           licenseExp: selectedDriver.licenseExp || '', bloodType: selectedDriver.bloodType || 'O+',
           emergencyContact: selectedDriver.emergencyContact || '', vehicleModel: selectedDriver.vehicleModel || '', 
           vehiclePlate: selectedDriver.vehiclePlate || '', vehicleType: selectedDriver.vehicleType || 'Caja Seca',
-          fotoPerfil: selectedDriver.fotoPerfil || '', identificacion: selectedDriver.identificacion || ''
+          fotoPerfil: selectedDriver.fotoPerfil || '', identificacion: selectedDriver.identificacion || '', whatsappOptIn: selectedDriver.whatsappOptIn === true
       });
       setIsEditing(true);
   };
@@ -253,6 +253,10 @@ export default function Conductores() {
                                 <input type="text" placeholder="Ej. 5512345678" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm focus:border-orange-500 focus:ring-1 focus:ring-orange-500 outline-none" 
                                     value={newDriver.phone} onChange={e => setNewDriver({...newDriver, phone: e.target.value})} />
                             </div>
+                            <label className="col-span-2 flex gap-2 items-center text-xs font-bold text-slate-700">
+                                <input type="checkbox" checked={newDriver.whatsappOptIn === true} onChange={e => setNewDriver({...newDriver,whatsappOptIn:e.target.checked})} />
+                                El conductor autorizó expresamente recibir notificaciones por WhatsApp en este número.
+                            </label>
                             <div className="col-span-2">
                                 <label className="block text-[10px] font-black text-slate-500 uppercase mb-1.5 ml-1">DirecciÃ³n de Domicilio</label>
                                 <input type="text" className="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-sm" 

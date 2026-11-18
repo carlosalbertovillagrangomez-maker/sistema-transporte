@@ -5,6 +5,7 @@ import { doc, onSnapshot, setDoc } from 'firebase/firestore';
 const DEFAULTS = {
   enabled: false,
   templateName: 'triplogix_ruta_asignada',
+  driverTemplateName: 'triplogix_conductor_ruta',
   templateLanguage: 'es_MX',
   requireOptIn: true,
   clientTrackingUrl: 'https://app-cliente-five.vercel.app'
@@ -28,10 +29,12 @@ export default function TripLogixWhatsAppConfig() {
     event.preventDefault(); setSaving(true); setMessage('');
     try {
       if (!/^[a-z0-9_]+$/.test(config.templateName.trim())) throw new Error('La plantilla debe contener sólo letras minúsculas, números y guiones bajos.');
+      if (!/^[a-z0-9_]+$/.test((config.driverTemplateName || '').trim())) throw new Error('Indica una plantilla válida y aprobada para el conductor.');
       if (!/^https:\/\//.test(config.clientTrackingUrl)) throw new Error('Usa una URL HTTPS para el seguimiento.');
       await setDoc(doc(db,'integraciones','whatsapp'), {
         enabled: Boolean(config.enabled),
         templateName: config.templateName.trim(),
+        driverTemplateName: config.driverTemplateName.trim(),
         templateLanguage: config.templateLanguage.trim() || 'es_MX',
         requireOptIn: true,
         clientTrackingUrl: config.clientTrackingUrl.trim(),
@@ -49,16 +52,18 @@ export default function TripLogixWhatsAppConfig() {
           <h3 className="font-black text-slate-800 mb-2">Estado de infraestructura</h3>
           <p className="text-xs text-slate-600">{status ? (status.configured ? '✓ Variables del servidor detectadas.' : '⚠ Faltan variables en Vercel. La automatización permanecerá apagada.') : 'El servidor de WhatsApp aún no está accesible en este entorno.'}</p>
           <p className="text-xs text-slate-500 mt-3">En Vercel → Proyecto Despachador → Settings → Environment Variables registra:</p>
-          <code className="text-xs block bg-slate-50 p-3 rounded-xl mt-2 break-all">WHATSAPP_ACCESS_TOKEN · WHATSAPP_PHONE_NUMBER_ID · FIREBASE_SERVICE_ACCOUNT_JSON · CRON_SECRET</code>
+          <code className="text-xs block bg-slate-50 p-3 rounded-xl mt-2 break-all">WHATSAPP_ACCESS_TOKEN · WHATSAPP_PHONE_NUMBER_ID · FIREBASE_SERVICE_ACCOUNT_JSON · CRON_SECRET · WHATSAPP_DISPATCH_KEY</code>
           <p className="text-[11px] text-amber-700 mt-2">Nunca pegues el token de Meta ni la clave privada de Firebase en este formulario, Firestore o GitHub.</p>
         </div>
         <form onSubmit={save} className="bg-white rounded-2xl border border-slate-200 p-5 space-y-4">
           <label className="flex items-center gap-3 text-sm font-bold"><input type="checkbox" checked={config.enabled} onChange={event => setConfig(prev=>({...prev,enabled:event.target.checked}))} /> Activar envío automático (cuando el servidor tenga credenciales y haya consentimiento)</label>
           <label className="block text-xs font-bold text-slate-700">Nombre de plantilla aprobada en Meta<input className="mt-1 w-full border rounded-lg p-3" value={config.templateName} onChange={event=>setConfig(prev=>({...prev,templateName:event.target.value}))} required /></label>
+          <label className="block text-xs font-bold text-slate-700">Plantilla aprobada para conductores (4 variables)<input className="mt-1 w-full border rounded-lg p-3" value={config.driverTemplateName || ''} onChange={event => setConfig(prev=>({...prev,driverTemplateName:event.target.value}))} required /></label>
           <label className="block text-xs font-bold text-slate-700">Idioma de plantilla<input className="mt-1 w-full border rounded-lg p-3" value={config.templateLanguage} onChange={event=>setConfig(prev=>({...prev,templateLanguage:event.target.value}))} /></label>
           <label className="block text-xs font-bold text-slate-700">URL de seguimiento de clientes<input className="mt-1 w-full border rounded-lg p-3" value={config.clientTrackingUrl} onChange={event=>setConfig(prev=>({...prev,clientTrackingUrl:event.target.value}))} /></label>
           <p className="text-xs bg-amber-50 border border-amber-100 text-amber-800 p-3 rounded-lg">Se exige consentimiento expreso para avisos por WhatsApp. En Excel/Google Sheets usa la columna WHATSAPP_AUTORIZADO=SI en cada pasajero autorizado. Sin consentimiento NO se enviará ningún mensaje.</p>
-          <p className="text-xs text-slate-600">Plantilla propuesta con 4 variables, en este orden: nombre del pasajero, conductor, fecha y hora, enlace de seguimiento. Debe estar aprobada por Meta antes de habilitar el sistema.</p>
+          <p className="text-xs text-slate-600">Pasajeros: 4 variables (nombre, conductor, fecha/hora, enlace). Conductores: 4 variables (nombre, fecha/hora, origen, destino). Ambas plantillas deben estar aprobadas en Meta. Marca el consentimiento en la ficha del pasajero o conductor; sin consentimiento no hay envío.</p>
+          <p className="text-xs text-slate-600">En Planificación puedes marcar «Notificar al confirmar» e introducir la clave operativa temporal WHATSAPP_DISPATCH_KEY. Sólo se envían avisos a rutas recién guardadas y destinatarios autorizados. La clave no se almacena en el navegador.</p>
           <p className="text-xs text-slate-600">En Vercel Hobby el cron automático se ejecuta una vez por día. Para avisos cercanos a la asignación es necesario configurar un plan/scheduler que permita mayor frecuencia. El botón actual de WhatsApp manual permanece disponible.</p>
           <button type="submit" disabled={saving} className="bg-orange-500 text-white text-sm font-black rounded-xl p-3 disabled:opacity-50">{saving?'Guardando...':'Guardar configuración'}</button>
           {message && <p role="status" className="text-xs text-slate-600">{message}</p>}

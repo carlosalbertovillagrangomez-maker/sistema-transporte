@@ -14,6 +14,7 @@ import TripLogixAIAssistant from './TripLogixAIAssistant';
 import { isMeetingInstruction } from './triplogixMeetingPoint.js';
 import { FINAL_DESTINATION_EARLY_MINS, PASSENGER_PICKUP_BUFFER_MINS, DROPOFF_BUFFER_MINS } from './triplogixCarpoolPolicy.js';
 import { bucketByTimeAndDriver } from './triplogixAutomaticGroups.js';
+import { getGroupMeetingPoints, getEmployeeMeetingPoint, buildPassengerStopsForGroup } from './triplogixPickupModes.js';
 
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0";
 
@@ -113,6 +114,11 @@ const normalizeContactPhone = (...values) => {
     }
 
     return '';
+};
+
+const getClientUserWhatsAppConsent = (clientData, employee) => {
+    const user = clientData?.users?.find(item => item?.name === employee?.assignedTo);
+    return user?.whatsappOptIn === true || employee?.whatsappOptIn === true;
 };
 
 const getClientUserPhone = (clientData, personName, fallback = '') => {
@@ -263,12 +269,13 @@ const rememberRecentAddress = (place) => {
     return next;
 };
 
-const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor = "text-slate-400", zIndex = 50, favorites = [] }) => {
+const AddressAutocomplete = ({ isLoaded, value, onSelect, onInputChange, placeholder, iconColor = "text-slate-400", zIndex = 50, favorites = [] }) => {
     const [inputValue, setInputValue] = useState(value || '');
     const autocompleteRef = useRef(null);
     const [recentAddresses, setRecentAddresses] = useState(() => readRecentAddresses());
     useEffect(() => { setInputValue(value || ''); }, [value]);
     const generalFavs = favorites.filter(f => !f.assignedTo || f.assignedTo === 'General');
+    const personalFavs = favorites.filter(f => f.assignedTo && f.assignedTo !== 'General');
     const options = { fields: ["address_components", "geometry", "formatted_address"] };
 
     const handlePlaceChanged = () => {
@@ -305,7 +312,7 @@ const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor
                 <div className="flex-1 relative">
                     {isLoaded ? (
                         <Autocomplete onLoad={(ref) => (autocompleteRef.current = ref)} onPlaceChanged={handlePlaceChanged} options={options}>
-                            <input type="text" placeholder={placeholder} className="w-full bg-slate-50 border border-slate-300 text-sm rounded-lg p-2.5 outline-none focus:border-orange-500 focus:bg-white transition shadow-sm" value={inputValue} onChange={(e) => setInputValue(e.target.value)} />
+                            <input type="text" placeholder={placeholder} className="w-full bg-slate-50 border border-slate-300 text-sm rounded-lg p-2.5 outline-none focus:border-orange-500 focus:bg-white transition shadow-sm" value={inputValue} onChange={(e) => { setInputValue(e.target.value); onInputChange?.(e.target.value); }} />
                         </Autocomplete>
                     ) : ( <input type="text" placeholder="Cargando mapas..." className="w-full bg-slate-100 border border-slate-200 text-sm rounded-lg p-2.5 outline-none animate-pulse" disabled /> )}
                 </div>
@@ -331,6 +338,7 @@ const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor
             {favorites && favorites.length > 0 && (
                 <div className="pl-[52px] mt-2 space-y-2">
                     {generalFavs.length > 0 && ( <div><p className="text-[9px] font-bold text-slate-400 uppercase mb-1 ml-1 mt-1">🏢 Sedes de la Empresa</p><div className="flex flex-wrap gap-2">{generalFavs.map((fav, i) => (<button type="button" key={i} onClick={() => handleFavoriteClick(fav)} className="text-[10px] bg-yellow-50 text-slate-600 border border-yellow-200 px-2 py-1 rounded-lg hover:bg-yellow-100 flex items-center gap-1 transition shadow-sm whitespace-nowrap"><Star className="w-3 h-3 fill-yellow-400 text-yellow-500"/> <span className="font-bold">{fav.alias}</span></button>))}</div></div> )}
+                    {personalFavs.length > 0 && <div className="flex flex-wrap gap-2"><span className="text-[9px] text-slate-500 w-full font-bold">Ubicaciones favoritas:</span>{personalFavs.map((f,i) => <button type="button" key={i} onClick={() => handleFavoriteClick(f)} className="text-[10px] px-2 py-1 bg-orange-50 border border-orange-200 rounded text-orange-800">★ {f.alias || f.assignedTo || f.address}</button>)}</div>}
                 </div>
             )}
         </div>
@@ -476,97 +484,6 @@ const getPlanSortTimestamp = (route) => {
     return new Date(route?.createdDate || 0).getTime() || 0;
 };
 
-const getGroupMeetingPoints = (group) => {
-    const modern = Array.isArray(group?.sharedMeetingPoints) ? group.sharedMeetingPoints : [];
-    const legacy = group?.sharedMeetingPoint?.active
-        ? [{ ...group.sharedMeetingPoint, id: group.sharedMeetingPoint.id || 'legacy-shared' }]
-        : [];
-    const all = [...modern, ...legacy];
-    const seen = new Set();
-    return all.filter(point => {
-        if (!point?.active) return false;
-        const id = String(point.id || `${point.address}|${point.lat}|${point.lng}`);
-        if (seen.has(id)) return false;
-        seen.add(id);
-        return true;
-    });
-};
-
-const getEmployeeMeetingPoint = (group, employeeName) => {
-    return getGroupMeetingPoints(group).find(point =>
-        Array.isArray(point?.passengerNames) &&
-        point.passengerNames.includes(employeeName)
-    ) || null;
-};
-
-const buildPassengerStopsForGroup = (group) => {
-    const stops = [];
-    const usedMeetingPoints = new Set();
-
-    (group?.employees || []).forEach(employee => {
-        const aiMeetingKey = String(employee?.aiMeetingPointKey || '').trim();
-        if (aiMeetingKey) {
-            const key = `ai:${aiMeetingKey}`;
-            if (usedMeetingPoints.has(key)) return;
-            usedMeetingPoints.add(key);
-
-            const assignedEmployees = (group.employees || []).filter(item =>
-                String(item?.aiMeetingPointKey || '').trim() === aiMeetingKey
-            );
-
-            stops.push({
-                stopType: 'shared_meeting',
-                id: key,
-                address: employee.address,
-                lat: Number(employee.lat),
-                lng: Number(employee.lng ?? employee.lon),
-                employees: assignedEmployees,
-                aiMeetingPoint: true,
-                aiMeetingPointLabel: employee?.aiMeetingPointLabel || ''
-            });
-            return;
-        }
-
-        const meetingPoint = getEmployeeMeetingPoint(group, employee.assignedTo);
-        if (meetingPoint) {
-            const key = String(meetingPoint.id || meetingPoint.address);
-            if (usedMeetingPoints.has(key)) return;
-            usedMeetingPoints.add(key);
-
-            const assignedEmployees = (group.employees || []).filter(item =>
-                Array.isArray(meetingPoint.passengerNames) &&
-                meetingPoint.passengerNames.includes(item.assignedTo)
-            );
-
-            stops.push({
-                stopType: 'shared_meeting',
-                id: key,
-                address: meetingPoint.address,
-                lat: Number(meetingPoint.lat),
-                lng: Number(meetingPoint.lng ?? meetingPoint.lon),
-                employees: assignedEmployees
-            });
-            return;
-        }
-
-        stops.push({
-            stopType: 'individual',
-            id: `individual-${employee.assignedTo}`,
-            address: employee.address,
-            lat: Number(employee.lat),
-            lng: Number(employee.lng ?? employee.lon),
-            employees: [employee]
-        });
-    });
-
-    return stops.filter(stop =>
-        stop.address &&
-        Number.isFinite(stop.lat) &&
-        Number.isFinite(stop.lng) &&
-        stop.employees.length > 0
-    );
-};
-
 const buildImmutableOriginalPlan = ({ routeInfo, startPoint, waypoints, endPoint, createdAt }) => ({
     version: 1,
     createdAt,
@@ -645,6 +562,9 @@ export default function Planificacion() {
   const [rosterSearch, setRosterSearch] = useState('');
 
   const [carpoolGroups, setCarpoolGroups] = useState([]);
+  const [notifyWhatsAppAfterDispatch, setNotifyWhatsAppAfterDispatch] = useState(false);
+  const [whatsAppDispatchKey, setWhatsAppDispatchKey] = useState('');
+  const [dispatchingGroups, setDispatchingGroups] = useState(false);
   const [previewGroupId, setPreviewGroupId] = useState('all');
   const [fetchingRealRoutes, setFetchingRealRoutes] = useState(false);
   const [globalCarpool, setGlobalCarpool] = useState({ mode: 'Ida' });
@@ -1666,7 +1586,9 @@ export default function Planificacion() {
               aiImported: orderedEmployees.some(emp => emp?.aiImported),
               preserveAiPassTimes: orderedEmployees.some(emp => emp?.aiImported && String(emp?.aiReferenceTime || '').trim()),
               sharedMeetingPoint: { active: false, address: '', lat: null, lng: null },
-              sharedMeetingPoints: isShared ? [{ id: `meeting_${groupId}_1`, active: true, address: '', lat: null, lng: null, passengerNames: orderedEmployees.map(emp => emp.assignedTo) }] : [],
+              pickupMode: 'home',
+               singleMeetingPoint: { address:'',lat:null,lng:null },
+               sharedMeetingPoints: [],
               routeGeometry: [],
               routeSegments: [],
               totalDistanceKm: null,
@@ -1842,10 +1764,46 @@ export default function Planificacion() {
   };
 
   const refreshGroupsAfterChange = (nextGroups) => {
-      // Invalida cualquier respuesta asíncrona anterior ANTES de pintar el nuevo estado.
+      // Invalida las rutas anteriores para no guardar geometría obsoleta.
       carpoolRoutingRequestRef.current += 1;
-      setCarpoolGroups(nextGroups);
-      setTimeout(() => fetchRealRoutesForGroups(nextGroups), 80);
+      const cleared = nextGroups.map(g => ({...g,routeGeometry:[],routeSegments:[],
+          routedStopLocations:[],totalDurationMins:null,totalDistanceKm:null}));
+      setCarpoolGroups(cleared);
+      setFetchingRealRoutes(true);
+      setTimeout(() => fetchRealRoutesForGroups(cleared), 80);
+  };
+
+  const dropImportedPassTimes = group => ({...group,preserveAiPassTimes:false,
+      employees:group.employees.map(e => ({...e,aiReferenceTime:''}))});
+
+  const setGroupPickupMode = (groupId, pickupMode) => {
+      if (!['home','meeting','multiple'].includes(pickupMode)) return;
+      refreshGroupsAfterChange(carpoolGroups.map(g => g.id === groupId ? dropImportedPassTimes({...g,pickupMode}) : g));
+  };
+  const setGroupSingleMeetingPoint = (groupId, loc) => {
+      refreshGroupsAfterChange(carpoolGroups.map(g => g.id === groupId ? dropImportedPassTimes({...g,
+          singleMeetingPoint:{address:loc.address,lat:Number(loc.lat),lng:Number(loc.lng ?? loc.lon)}}) : g));
+  };
+  const setGroupEmployeeHome = (groupId, name, loc) => {
+      refreshGroupsAfterChange(carpoolGroups.map(g => g.id !== groupId ? g : dropImportedPassTimes({...g,
+          employees:g.employees.map(e => e.assignedTo !== name ? e : ({...e,address:loc.address,
+              lat:Number(loc.lat),lng:Number(loc.lng ?? loc.lon),lon:Number(loc.lng ?? loc.lon),
+              aiMeetingPointKey:'',aiMeetingPointLabel:'',aiMeetingPointAddress:''}))
+      })));
+  };
+
+  const setGroupTypedAddress = (groupId, address, passengerName = '') => {
+      // El texto todavía no tiene coordenadas. Se prohíbe reutilizar
+      // geometría anterior hasta elegir un resultado preciso de Google.
+      carpoolRoutingRequestRef.current += 1;
+      setFetchingRealRoutes(false);
+      setCarpoolGroups(prev => prev.map(g => {
+          if (g.id !== groupId) return g;
+          const clear = {routeGeometry:[],routeSegments:[],routedStopLocations:[],totalDurationMins:null,totalDistanceKm:null};
+          if (!passengerName) return {...g,...clear,singleMeetingPoint:{address,lat:null,lng:null}};
+          return {...g,...clear,employees:g.employees.map(e => e.assignedTo === passengerName
+              ? {...e,address,lat:null,lng:null,lon:null} : e)};
+      }));
   };
 
   const addGroupMeetingPoint = (groupId) => {
@@ -1979,6 +1937,8 @@ export default function Planificacion() {
   }, [previewGroupId, carpoolGroups, selectedClientData, isLoaded]);
 
   const handleConfirmAndDispatch = async () => {
+      if (dispatchingGroups || fetchingRealRoutes) return;
+      if (notifyWhatsAppAfterDispatch && !whatsAppDispatchKey.trim()) return alert('Introduce la clave operativa de WhatsApp configurada en Vercel.');
       if(!newRoute.client || !newRoute.scheduledDate) return alert("Falta configurar Empresa y Fecha.");
       const oficina = selectedClientData?.locations.find(loc => loc.assignedTo === 'General');
       if(!oficina) return alert("Esta empresa no tiene configurada la Sede 'General'.");
@@ -1993,8 +1953,9 @@ export default function Planificacion() {
               return alert("⚠️ Google Maps no ha confirmado un recorrido vial para una de las unidades. Recalcula la ruta antes de guardar; no se crearán trayectos en línea recta.");
           }
 
+          if (group.pickupMode === 'home' && buildPassengerStopsForGroup(group).length !== group.employees.length) return alert('⚠️ Falta validar un domicilio. Selecciona una sugerencia de Google Maps para cada pasajero.');
           for (const point of getGroupMeetingPoints(group)) {
-              if (!point.address || !Number.isFinite(Number(point.lat)) || !Number.isFinite(Number(point.lng ?? point.lon))) {
+              if (!point.address || isMeetingInstruction(point.address) || !Number.isFinite(Number(point.lat)) || !Number.isFinite(Number(point.lng ?? point.lon))) {
                   return alert("⚠️ Hay un punto de reunión sin ubicación válida.");
               }
               if (!Array.isArray(point.passengerNames) || point.passengerNames.length === 0) {
@@ -2003,7 +1964,9 @@ export default function Planificacion() {
           }
       }
 
+      setDispatchingGroups(true);
       try {
+          const createdRouteIds = [];
           for (const g of validGroups) {
               const passengerStops = buildPassengerStopsForGroup(g);
               if (!passengerStops.length) {
@@ -2129,6 +2092,8 @@ export default function Planificacion() {
                           passengerName: employee.assignedTo,
                           phone: exactPhone,
                           contactPhone: exactPhone,
+                          whatsappOptIn: getClientUserWhatsAppConsent(selectedClientData, employee),
+                          stopAddress: stop.address,
                           pickupTime: globalCarpool.mode === 'Ida' ? authoritativeTime : '',
                           dropoffTime: globalCarpool.mode === 'Regreso' ? authoritativeTime : '',
                           plannedTime: authoritativeTime,
@@ -2317,6 +2282,7 @@ export default function Planificacion() {
                   estimatedFinalArrivalTime: finalOperationalArrivalTime || timePlan.estimatedFinalArrivalTime,
                   carpoolMode: globalCarpool.mode,
                   tripDirection: globalCarpool.mode,
+                  pickupMode: g.pickupMode || 'home',
                   sourceRoute: g.aiRoute || '',
                   scheduleSource: g.aiImported ? 'gemini' : 'dispatcher',
                   finalEarlyBufferMins: timePlan.finalEarlyBufferMins,
@@ -2335,15 +2301,47 @@ export default function Planificacion() {
                   createdDate: createdAt
               };
 
-              await addDoc(collection(db, "rutas"), newTrip);
+              const created = await addDoc(collection(db, "rutas"), newTrip);
+              createdRouteIds.push(created.id);
           }
-
-          alert(`✅ ¡Logística completada! Rutas de ${globalCarpool.mode} creadas con éxito.`);
+          let notice = '';
+          if (notifyWhatsAppAfterDispatch && createdRouteIds.length) {
+              const stats = {sent:0,skipped:0,failed:0};
+              const batches = [];
+              // Hasta 5 rutas por solicitud; los grupos tienen 4 pasajeros y
+              // como máximo un conductor. Así no se rebasa el límite servidor.
+              for (let i=0;i<createdRouteIds.length;i+=5) batches.push(createdRouteIds.slice(i,i+5));
+              try {
+                  for (const batch of batches) {
+                      const response = await fetch('/api/whatsapp/sync', {
+                          method:'POST',
+                          headers:{'Content-Type':'application/json',Authorization:'Bearer ' + whatsAppDispatchKey.trim()},
+                          body:JSON.stringify({routeIds:batch,includeDrivers:true})
+                      });
+                      const result = await response.json().catch(() => ({}));
+                      if (!response.ok || result.status !== 'processed') {
+                          throw new Error(result.error || 'Meta no pudo procesar este lote.');
+                      }
+                      stats.sent += Number(result.sent || 0);
+                      stats.skipped += Number(result.skipped || 0);
+                      stats.failed += Number(result.failed || 0);
+                      if (result.limitReached) throw new Error('Se alcanzó el límite de envíos por lote; revisa los destinatarios pendientes.');
+                  }
+                  notice = 'WhatsApp: ' + stats.sent + ' enviados, ' + stats.skipped +
+                      ' omitidos y ' + stats.failed + ' fallidos. Sólo contactos autorizados.';
+              } catch(error) {
+                  notice = 'WhatsApp quedó pendiente o parcial. ' + stats.sent + ' enviados, ' +
+                      stats.skipped + ' omitidos y ' + stats.failed + ' fallidos. ' +
+                      error.message + ' Revisa Configuración WhatsApp y el registro de envíos.';
+              }
+          }
+          setWhatsAppDispatchKey('');
+          alert(`✅ ${createdRouteIds.length} rutas de ${globalCarpool.mode} creadas.` + (notice ? '\n' + notice : ''));
           setShowCarpoolModal(false);
       } catch(e) {
           console.error(e);
-          alert(e?.message || "Error al generar las rutas.");
-      }
+          alert(e?.message || "Error al generar las rutas. Las que se guardaron antes del fallo permanecen registradas.");
+      } finally { setDispatchingGroups(false); }
   };
 
   const handleDeleteRoute = async (id, e) => { e.stopPropagation(); if(confirm("¿Eliminar ruta permanentemente?")) { await deleteDoc(doc(db, "rutas", id)); if(viewRoute?.id === id) setViewRoute(null); } };
@@ -2915,6 +2913,31 @@ export default function Planificacion() {
                                                           )}
                                                       </div>
 
+                                                      <div className="rounded-xl bg-orange-50 border border-orange-200 p-3 space-y-3 mb-3">
+                                                          <p className="text-xs font-black text-slate-800">Tipo de recogida / entrega por unidad</p>
+                                                          <label className="flex gap-2 items-center text-xs font-bold">
+                                                              <input type="checkbox" checked={grupo.pickupMode === 'meeting'} onChange={e => setGroupPickupMode(grupo.id,e.target.checked?'meeting':'home')} /> Un solo punto para todos
+                                                          </label>
+                                                          <label className="flex gap-2 items-center text-xs font-bold">
+                                                              <input type="checkbox" checked={grupo.pickupMode === 'home'} onChange={e => setGroupPickupMode(grupo.id,e.target.checked?'home':'meeting')} /> Recogida / entrega en casa de cada pasajero
+                                                          </label>
+                                                          {grupo.pickupMode === 'meeting' && <div className="space-y-2">
+                                                              <p className="text-[10px] text-orange-800 font-bold">Escribe la dirección y selecciona la sugerencia de Google Maps, o elige una ubicación favorita. Una sola parada para todo el grupo.</p>
+                                                              <AddressAutocomplete isLoaded={isLoaded} value={grupo.singleMeetingPoint?.address || ''} onInputChange={text => setGroupTypedAddress(grupo.id,text)} placeholder="Punto común: buscar dirección..." iconColor="orange" zIndex={320-idx}
+                                                                  favorites={selectedClientData?.locations || []} onSelect={loc => setGroupSingleMeetingPoint(grupo.id,loc)} />
+                                                          </div>}
+                                                          {grupo.pickupMode === 'home' && <div className="space-y-3">
+                                                              <p className="text-[10px] text-slate-600 font-bold">Puedes escribir o elegir una dirección favorita por pasajero. Sólo modifica esta planificación.</p>
+                                                              {grupo.employees.map((emp,empIndex) => <div key={emp.assignedTo} className="p-2 bg-white border rounded-lg">
+                                                                  <p className="text-[10px] font-black text-slate-700 mb-2">{emp.assignedTo}</p>
+                                                                  <AddressAutocomplete isLoaded={isLoaded} value={emp.address || ''} onInputChange={text => setGroupTypedAddress(grupo.id,text,emp.assignedTo)} placeholder="Buscar domicilio..." iconColor="green" zIndex={280-idx*6-empIndex}
+                                                                      favorites={(selectedClientData?.locations || []).filter(loc => !loc.assignedTo || loc.assignedTo === 'General' || loc.assignedTo === emp.assignedTo)}
+                                                                      onSelect={loc => setGroupEmployeeHome(grupo.id,emp.assignedTo,loc)} />
+                                                              </div>)}
+                                                          </div>}
+                                                          <button type="button" onClick={() => setGroupPickupMode(grupo.id,'multiple')} className="text-[10px] text-orange-700 underline font-bold">Configurar varios puntos (avanzado)</button>
+                                                      </div>
+                                                      {grupo.pickupMode === 'multiple' && (
                                                       <div className="pt-3 border-t border-slate-200 mt-2">
                                                           <div className="flex items-center justify-between gap-3 mb-3">
                                                               <div>
@@ -2995,6 +3018,7 @@ export default function Planificacion() {
                                                               ))}
                                                           </div>
                                                       </div>
+                                                  )}
                                                   </div>
                                               </div>
                                           )})}
@@ -3051,9 +3075,20 @@ export default function Planificacion() {
                   </div>
 
                   <div className="p-3 sm:p-4 border-t border-slate-100 bg-white flex flex-wrap justify-end gap-2 sm:gap-3 shrink-0 shadow-[0_-10px_15px_rgba(0,0,0,0.05)] z-10">
+                      {carpoolStep === 2 && <div className="mr-auto min-w-[220px] max-w-xs space-y-2">
+                          <label className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                              <input type="checkbox" checked={notifyWhatsAppAfterDispatch} onChange={e => setNotifyWhatsAppAfterDispatch(e.target.checked)} /> Notificar por WhatsApp al confirmar
+                          </label>
+                          {notifyWhatsAppAfterDispatch && <>
+                              <input type="password" autoComplete="off" value={whatsAppDispatchKey}
+                                  onChange={e => setWhatsAppDispatchKey(e.target.value)} placeholder="Clave operativa de envíos (Vercel)"
+                                  className="w-full border border-slate-300 rounded-lg p-2 text-xs" />
+                              <p className="text-[10px] text-amber-700">Requiere Meta, plantillas aprobadas y consentimiento. Esta clave no se guarda.</p>
+                          </>}
+                      </div>}
                       <button onClick={() => setShowCarpoolModal(false)} className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition">Cancelar</button>
                       {carpoolStep === 2 && (
-                          <button onClick={handleConfirmAndDispatch} className="px-8 py-2.5 text-sm font-black text-white bg-orange-500 hover:bg-orange-600 rounded-lg shadow-xl shadow-orange-500/30 transition flex items-center gap-2"><Wand2 className="w-4 h-4"/> Confirmar y Despachar</button>
+                          <button disabled={dispatchingGroups || fetchingRealRoutes} onClick={handleConfirmAndDispatch} className="px-8 py-2.5 text-sm font-black text-white bg-orange-500 hover:bg-orange-600 rounded-lg shadow-xl shadow-orange-500/30 transition flex items-center gap-2 disabled:opacity-50"><Wand2 className="w-4 h-4"/> {dispatchingGroups ? "Guardando rutas..." : "Confirmar y Despachar"}</button>
                       )}
                   </div>
               </div>

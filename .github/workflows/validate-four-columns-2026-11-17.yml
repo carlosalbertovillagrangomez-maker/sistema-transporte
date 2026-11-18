@@ -1,0 +1,29 @@
+name: Validate Mauricio four columns and net schedules
+on:
+  push:
+    branches: [feature/mauricio-four-columns-net-times-2026-11-17]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Regression tests for sheets and new four column workflow
+        run: node --test tests/triplogixWeeklyTemplate.test.js tests/triplogixWorkbook.test.js tests/triplogixScheduleReview.test.js tests/triplogixFourColumns.test.js tests/triplogixCarpoolPolicy.test.js
+      - name: Serverless syntax
+        run: |
+          node --check api/whatsapp/sync.js
+          node --check api/sheets/leer-libro.js
+          node --check api/sheets/leer-publico.js
+      - name: Build frontend
+        run: npm run build

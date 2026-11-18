@@ -269,7 +269,7 @@ const rememberRecentAddress = (place) => {
     return next;
 };
 
-const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor = "text-slate-400", zIndex = 50, favorites = [] }) => {
+const AddressAutocomplete = ({ isLoaded, value, onSelect, onInputChange, placeholder, iconColor = "text-slate-400", zIndex = 50, favorites = [] }) => {
     const [inputValue, setInputValue] = useState(value || '');
     const autocompleteRef = useRef(null);
     const [recentAddresses, setRecentAddresses] = useState(() => readRecentAddresses());
@@ -312,7 +312,7 @@ const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor
                 <div className="flex-1 relative">
                     {isLoaded ? (
                         <Autocomplete onLoad={(ref) => (autocompleteRef.current = ref)} onPlaceChanged={handlePlaceChanged} options={options}>
-                            <input type="text" placeholder={placeholder} className="w-full bg-slate-50 border border-slate-300 text-sm rounded-lg p-2.5 outline-none focus:border-orange-500 focus:bg-white transition shadow-sm" value={inputValue} onChange={(e) => setInputValue(e.target.value)} />
+                            <input type="text" placeholder={placeholder} className="w-full bg-slate-50 border border-slate-300 text-sm rounded-lg p-2.5 outline-none focus:border-orange-500 focus:bg-white transition shadow-sm" value={inputValue} onChange={(e) => { setInputValue(e.target.value); onInputChange?.(e.target.value); }} />
                         </Autocomplete>
                     ) : ( <input type="text" placeholder="Cargando mapas..." className="w-full bg-slate-100 border border-slate-200 text-sm rounded-lg p-2.5 outline-none animate-pulse" disabled /> )}
                 </div>
@@ -1773,20 +1773,37 @@ export default function Planificacion() {
       setTimeout(() => fetchRealRoutesForGroups(cleared), 80);
   };
 
+  const dropImportedPassTimes = group => ({...group,preserveAiPassTimes:false,
+      employees:group.employees.map(e => ({...e,aiReferenceTime:''}))});
+
   const setGroupPickupMode = (groupId, pickupMode) => {
       if (!['home','meeting','multiple'].includes(pickupMode)) return;
-      refreshGroupsAfterChange(carpoolGroups.map(g => g.id === groupId ? {...g,pickupMode} : g));
+      refreshGroupsAfterChange(carpoolGroups.map(g => g.id === groupId ? dropImportedPassTimes({...g,pickupMode}) : g));
   };
   const setGroupSingleMeetingPoint = (groupId, loc) => {
-      refreshGroupsAfterChange(carpoolGroups.map(g => g.id === groupId ? {...g,
-          singleMeetingPoint:{address:loc.address,lat:Number(loc.lat),lng:Number(loc.lng ?? loc.lon)}} : g));
+      refreshGroupsAfterChange(carpoolGroups.map(g => g.id === groupId ? dropImportedPassTimes({...g,
+          singleMeetingPoint:{address:loc.address,lat:Number(loc.lat),lng:Number(loc.lng ?? loc.lon)}}) : g));
   };
   const setGroupEmployeeHome = (groupId, name, loc) => {
-      refreshGroupsAfterChange(carpoolGroups.map(g => g.id !== groupId ? g : ({...g,
+      refreshGroupsAfterChange(carpoolGroups.map(g => g.id !== groupId ? g : dropImportedPassTimes({...g,
           employees:g.employees.map(e => e.assignedTo !== name ? e : ({...e,address:loc.address,
               lat:Number(loc.lat),lng:Number(loc.lng ?? loc.lon),lon:Number(loc.lng ?? loc.lon),
               aiMeetingPointKey:'',aiMeetingPointLabel:'',aiMeetingPointAddress:''}))
       })));
+  };
+
+  const setGroupTypedAddress = (groupId, address, passengerName = '') => {
+      // El texto todavía no tiene coordenadas. Se prohíbe reutilizar
+      // geometría anterior hasta elegir un resultado preciso de Google.
+      carpoolRoutingRequestRef.current += 1;
+      setFetchingRealRoutes(false);
+      setCarpoolGroups(prev => prev.map(g => {
+          if (g.id !== groupId) return g;
+          const clear = {routeGeometry:[],routeSegments:[],routedStopLocations:[],totalDurationMins:null,totalDistanceKm:null};
+          if (!passengerName) return {...g,...clear,singleMeetingPoint:{address,lat:null,lng:null}};
+          return {...g,...clear,employees:g.employees.map(e => e.assignedTo === passengerName
+              ? {...e,address,lat:null,lng:null,lon:null} : e)};
+      }));
   };
 
   const addGroupMeetingPoint = (groupId) => {
@@ -2889,14 +2906,14 @@ export default function Planificacion() {
                                                           </label>
                                                           {grupo.pickupMode === 'meeting' && <div className="space-y-2">
                                                               <p className="text-[10px] text-orange-800 font-bold">Escribe la dirección y selecciona la sugerencia de Google Maps, o elige una ubicación favorita. Una sola parada para todo el grupo.</p>
-                                                              <AddressAutocomplete isLoaded={isLoaded} value={grupo.singleMeetingPoint?.address || ''} placeholder="Punto común: buscar dirección..." iconColor="orange" zIndex={320-idx}
+                                                              <AddressAutocomplete isLoaded={isLoaded} value={grupo.singleMeetingPoint?.address || ''} onInputChange={text => setGroupTypedAddress(grupo.id,text)} placeholder="Punto común: buscar dirección..." iconColor="orange" zIndex={320-idx}
                                                                   favorites={selectedClientData?.locations || []} onSelect={loc => setGroupSingleMeetingPoint(grupo.id,loc)} />
                                                           </div>}
                                                           {grupo.pickupMode === 'home' && <div className="space-y-3">
                                                               <p className="text-[10px] text-slate-600 font-bold">Puedes escribir o elegir una dirección favorita por pasajero. Sólo modifica esta planificación.</p>
                                                               {grupo.employees.map((emp,empIndex) => <div key={emp.assignedTo} className="p-2 bg-white border rounded-lg">
                                                                   <p className="text-[10px] font-black text-slate-700 mb-2">{emp.assignedTo}</p>
-                                                                  <AddressAutocomplete isLoaded={isLoaded} value={emp.address || ''} placeholder="Buscar domicilio..." iconColor="green" zIndex={280-idx*6-empIndex}
+                                                                  <AddressAutocomplete isLoaded={isLoaded} value={emp.address || ''} onInputChange={text => setGroupTypedAddress(grupo.id,text,emp.assignedTo)} placeholder="Buscar domicilio..." iconColor="green" zIndex={280-idx*6-empIndex}
                                                                       favorites={(selectedClientData?.locations || []).filter(loc => !loc.assignedTo || loc.assignedTo === 'General' || loc.assignedTo === emp.assignedTo)}
                                                                       onSelect={loc => setGroupEmployeeHome(grupo.id,emp.assignedTo,loc)} />
                                                               </div>)}

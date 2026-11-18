@@ -3001,8 +3001,8 @@ export default function Planificacion() {
                                                               ))}
                                                           </div>
                                                       </div>
-                                                  </div>
                                                   )}
+                                                  </div>
                                               </div>
                                           )})}
                                       </div>

@@ -2306,17 +2306,34 @@ export default function Planificacion() {
           }
           let notice = '';
           if (notifyWhatsAppAfterDispatch && createdRouteIds.length) {
+              const stats = {sent:0,skipped:0,failed:0};
+              const batches = [];
+              // Hasta 5 rutas por solicitud; los grupos tienen 4 pasajeros y
+              // como máximo un conductor. Así no se rebasa el límite servidor.
+              for (let i=0;i<createdRouteIds.length;i+=5) batches.push(createdRouteIds.slice(i,i+5));
               try {
-                  const response = await fetch('/api/whatsapp/sync', {
-                      method:'POST',
-                      headers:{'Content-Type':'application/json',Authorization:'Bearer ' + whatsAppDispatchKey.trim()},
-                      body:JSON.stringify({routeIds:createdRouteIds,includeDrivers:true})
-                  });
-                  const result = await response.json().catch(() => ({}));
-                  notice = response.ok
-                      ? 'WhatsApp: ' + (result.sent || 0) + ' enviados, ' + (result.skipped || 0) + ' omitidos, ' + (result.failed || 0) + ' fallidos. Sólo contactos con consentimiento.'
-                      : 'WhatsApp NO envió avisos: ' + (result.error || 'revisa configuración Meta/Vercel') + '.';
-              } catch(error) { notice = 'WhatsApp NO pudo conectarse: ' + error.message + '.'; }
+                  for (const batch of batches) {
+                      const response = await fetch('/api/whatsapp/sync', {
+                          method:'POST',
+                          headers:{'Content-Type':'application/json',Authorization:'Bearer ' + whatsAppDispatchKey.trim()},
+                          body:JSON.stringify({routeIds:batch,includeDrivers:true})
+                      });
+                      const result = await response.json().catch(() => ({}));
+                      if (!response.ok || result.status !== 'processed') {
+                          throw new Error(result.error || 'Meta no pudo procesar este lote.');
+                      }
+                      stats.sent += Number(result.sent || 0);
+                      stats.skipped += Number(result.skipped || 0);
+                      stats.failed += Number(result.failed || 0);
+                      if (result.limitReached) throw new Error('Se alcanzó el límite de envíos por lote; revisa los destinatarios pendientes.');
+                  }
+                  notice = 'WhatsApp: ' + stats.sent + ' enviados, ' + stats.skipped +
+                      ' omitidos y ' + stats.failed + ' fallidos. Sólo contactos autorizados.';
+              } catch(error) {
+                  notice = 'WhatsApp quedó pendiente o parcial. ' + stats.sent + ' enviados, ' +
+                      stats.skipped + ' omitidos y ' + stats.failed + ' fallidos. ' +
+                      error.message + ' Revisa Configuración WhatsApp y el registro de envíos.';
+              }
           }
           setWhatsAppDispatchKey('');
           alert(`✅ ${createdRouteIds.length} rutas de ${globalCarpool.mode} creadas.` + (notice ? '\n' + notice : ''));

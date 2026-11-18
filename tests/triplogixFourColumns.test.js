@@ -69,3 +69,14 @@ test('Programación de cuatro columnas también se detecta como modo reducido', 
   ]),'Programación');
   assert.equal(extractOperationalWorkbook(wb).entries[0].entradaDriver,'Chofer A');
 });
+
+test('también detecta cuatro columnas si la pestaña se llama Hoja1', () => {
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.aoa_to_sheet([
+    ['HORA ENTRADA','HORA SALIDA','NOMBRE','CONDUCTOR'],
+    ['06:00','','Persona Prueba','Chofer A']
+  ]),'Hoja1');
+  const extracted=extractOperationalWorkbook(wb);
+  assert.equal(extracted.entries.length,1);
+  assert.equal(extracted.entries[0].entradaDriver,'Chofer A');
+});

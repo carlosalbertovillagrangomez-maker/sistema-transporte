@@ -1,5 +1,9 @@
 import { isMeetingInstruction } from './triplogixMeetingPoint.js';
 
+const hasCoordinates = p => p?.lat !== null && p?.lat !== undefined && p?.lat !== '' &&
+    (p?.lng ?? p?.lon) !== null && (p?.lng ?? p?.lon) !== undefined && (p?.lng ?? p?.lon) !== '' &&
+    Number.isFinite(Number(p.lat)) && Number.isFinite(Number(p.lng ?? p.lon));
+
 // Modelo de paradas compartidas e individuales. Sin efectos secundarios.
 export const getGroupMeetingPoints = (group) => {
     if (group?.pickupMode === 'home') return [];
@@ -33,10 +37,10 @@ export const buildPassengerStopsForGroup = (group) => {
     if (group?.pickupMode === 'meeting') {
         const p = getGroupMeetingPoints(group)[0];
         const lat = Number(p?.lat), lng = Number(p?.lng);
-        return p?.address && !isMeetingInstruction(p.address) && Number.isFinite(lat) && Number.isFinite(lng)
+        return p?.address && !isMeetingInstruction(p.address) && hasCoordinates(p) && Number.isFinite(lat) && Number.isFinite(lng)
             ? [{ stopType:'shared_meeting',id:p.id,address:p.address,lat,lng,employees:[...(group.employees || [])] }] : [];
     }
-    if (group?.pickupMode === 'home') return (group.employees || []).map(e => ({
+    if (group?.pickupMode === 'home') return (group.employees || []).filter(hasCoordinates).map(e => ({
         stopType:'individual',id:'individual-' + e.assignedTo,address:e.address,lat:Number(e.lat),lng:Number(e.lng ?? e.lon),employees:[e]
     })).filter(p => p.address && !isMeetingInstruction(p.address) && Number.isFinite(p.lat) && Number.isFinite(p.lng));
     const stops = [];

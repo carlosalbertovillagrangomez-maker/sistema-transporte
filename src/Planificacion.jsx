@@ -115,6 +115,11 @@ const normalizeContactPhone = (...values) => {
     return '';
 };
 
+const getClientUserWhatsAppConsent = (clientData, employee) => {
+    const user = clientData?.users?.find(item => item?.name === employee?.assignedTo);
+    return user?.whatsappOptIn === true || employee?.whatsappOptIn === true;
+};
+
 const getClientUserPhone = (clientData, personName, fallback = '') => {
     const user = clientData?.users?.find(item => item?.name === personName);
 
@@ -1863,10 +1868,13 @@ export default function Planificacion() {
   };
 
   const refreshGroupsAfterChange = (nextGroups) => {
-      // Invalida cualquier respuesta asíncrona anterior ANTES de pintar el nuevo estado.
+      // Invalida las rutas anteriores para no guardar geometría obsoleta.
       carpoolRoutingRequestRef.current += 1;
-      setCarpoolGroups(nextGroups);
-      setTimeout(() => fetchRealRoutesForGroups(nextGroups), 80);
+      const cleared = nextGroups.map(g => ({...g,routeGeometry:[],routeSegments:[],
+          routedStopLocations:[],totalDurationMins:null,totalDistanceKm:null}));
+      setCarpoolGroups(cleared);
+      setFetchingRealRoutes(true);
+      setTimeout(() => fetchRealRoutesForGroups(cleared), 80);
   };
 
   const setGroupPickupMode = (groupId, pickupMode) => {
@@ -2016,6 +2024,8 @@ export default function Planificacion() {
   }, [previewGroupId, carpoolGroups, selectedClientData, isLoaded]);
 
   const handleConfirmAndDispatch = async () => {
+      if (dispatchingGroups || fetchingRealRoutes) return;
+      if (notifyWhatsAppAfterDispatch && !whatsAppDispatchKey.trim()) return alert('Introduce la clave operativa de WhatsApp configurada en Vercel.');
       if(!newRoute.client || !newRoute.scheduledDate) return alert("Falta configurar Empresa y Fecha.");
       const oficina = selectedClientData?.locations.find(loc => loc.assignedTo === 'General');
       if(!oficina) return alert("Esta empresa no tiene configurada la Sede 'General'.");
@@ -2030,8 +2040,9 @@ export default function Planificacion() {
               return alert("⚠️ Google Maps no ha confirmado un recorrido vial para una de las unidades. Recalcula la ruta antes de guardar; no se crearán trayectos en línea recta.");
           }
 
+          if (group.pickupMode === 'home' && buildPassengerStopsForGroup(group).length !== group.employees.length) return alert('⚠️ Falta validar un domicilio. Selecciona una sugerencia de Google Maps para cada pasajero.');
           for (const point of getGroupMeetingPoints(group)) {
-              if (!point.address || !Number.isFinite(Number(point.lat)) || !Number.isFinite(Number(point.lng ?? point.lon))) {
+              if (!point.address || isMeetingInstruction(point.address) || !Number.isFinite(Number(point.lat)) || !Number.isFinite(Number(point.lng ?? point.lon))) {
                   return alert("⚠️ Hay un punto de reunión sin ubicación válida.");
               }
               if (!Array.isArray(point.passengerNames) || point.passengerNames.length === 0) {
@@ -2040,7 +2051,9 @@ export default function Planificacion() {
           }
       }
 
+      setDispatchingGroups(true);
       try {
+          const createdRouteIds = [];
           for (const g of validGroups) {
               const passengerStops = buildPassengerStopsForGroup(g);
               if (!passengerStops.length) {
@@ -2166,6 +2179,8 @@ export default function Planificacion() {
                           passengerName: employee.assignedTo,
                           phone: exactPhone,
                           contactPhone: exactPhone,
+                          whatsappOptIn: getClientUserWhatsAppConsent(selectedClientData, employee),
+                          stopAddress: stop.address,
                           pickupTime: globalCarpool.mode === 'Ida' ? authoritativeTime : '',
                           dropoffTime: globalCarpool.mode === 'Regreso' ? authoritativeTime : '',
                           plannedTime: authoritativeTime,
@@ -2354,6 +2369,7 @@ export default function Planificacion() {
                   estimatedFinalArrivalTime: finalOperationalArrivalTime || timePlan.estimatedFinalArrivalTime,
                   carpoolMode: globalCarpool.mode,
                   tripDirection: globalCarpool.mode,
+                  pickupMode: g.pickupMode || 'home',
                   sourceRoute: g.aiRoute || '',
                   scheduleSource: g.aiImported ? 'gemini' : 'dispatcher',
                   finalEarlyBufferMins: timePlan.finalEarlyBufferMins,
@@ -2372,15 +2388,30 @@ export default function Planificacion() {
                   createdDate: createdAt
               };
 
-              await addDoc(collection(db, "rutas"), newTrip);
+              const created = await addDoc(collection(db, "rutas"), newTrip);
+              createdRouteIds.push(created.id);
           }
-
-          alert(`✅ ¡Logística completada! Rutas de ${globalCarpool.mode} creadas con éxito.`);
+          let notice = '';
+          if (notifyWhatsAppAfterDispatch && createdRouteIds.length) {
+              try {
+                  const response = await fetch('/api/whatsapp/sync', {
+                      method:'POST',
+                      headers:{'Content-Type':'application/json',Authorization:'Bearer ' + whatsAppDispatchKey.trim()},
+                      body:JSON.stringify({routeIds:createdRouteIds,includeDrivers:true})
+                  });
+                  const result = await response.json().catch(() => ({}));
+                  notice = response.ok
+                      ? 'WhatsApp: ' + (result.sent || 0) + ' enviados, ' + (result.skipped || 0) + ' omitidos, ' + (result.failed || 0) + ' fallidos. Sólo contactos con consentimiento.'
+                      : 'WhatsApp NO envió avisos: ' + (result.error || 'revisa configuración Meta/Vercel') + '.';
+              } catch(error) { notice = 'WhatsApp NO pudo conectarse: ' + error.message + '.'; }
+          }
+          setWhatsAppDispatchKey('');
+          alert(`✅ ${createdRouteIds.length} rutas de ${globalCarpool.mode} creadas.` + (notice ? '\n' + notice : ''));
           setShowCarpoolModal(false);
       } catch(e) {
           console.error(e);
-          alert(e?.message || "Error al generar las rutas.");
-      }
+          alert(e?.message || "Error al generar las rutas. Las que se guardaron antes del fallo permanecen registradas.");
+      } finally { setDispatchingGroups(false); }
   };
 
   const handleDeleteRoute = async (id, e) => { e.stopPropagation(); if(confirm("¿Eliminar ruta permanentemente?")) { await deleteDoc(doc(db, "rutas", id)); if(viewRoute?.id === id) setViewRoute(null); } };

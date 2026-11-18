@@ -1,0 +1,32 @@
+name: Validate WhatsApp and pickup modes
+on:
+  push:
+    branches:
+      - feature/whatsapp-route-notify-group-pickups-2026-11-18
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Regression - old and new sheets, net schedules, pickup modes
+        run: node --test tests/triplogixWeeklyTemplate.test.js tests/triplogixWorkbook.test.js tests/triplogixScheduleReview.test.js tests/triplogixFourColumns.test.js tests/triplogixCarpoolPolicy.test.js tests/triplogixPickupModes.test.js
+      - name: Validate serverless syntax
+        run: |
+          node --check api/whatsapp/sync.js
+          node --check api/sheets/leer-publico.js
+          node --check api/sheets/leer-libro.js
+      - name: Build frontend
+        run: npm run build

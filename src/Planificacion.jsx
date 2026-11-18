@@ -269,6 +269,7 @@ const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor
     const [recentAddresses, setRecentAddresses] = useState(() => readRecentAddresses());
     useEffect(() => { setInputValue(value || ''); }, [value]);
     const generalFavs = favorites.filter(f => !f.assignedTo || f.assignedTo === 'General');
+    const personalFavs = favorites.filter(f => f.assignedTo && f.assignedTo !== 'General');
     const options = { fields: ["address_components", "geometry", "formatted_address"] };
 
     const handlePlaceChanged = () => {
@@ -331,6 +332,7 @@ const AddressAutocomplete = ({ isLoaded, value, onSelect, placeholder, iconColor
             {favorites && favorites.length > 0 && (
                 <div className="pl-[52px] mt-2 space-y-2">
                     {generalFavs.length > 0 && ( <div><p className="text-[9px] font-bold text-slate-400 uppercase mb-1 ml-1 mt-1">🏢 Sedes de la Empresa</p><div className="flex flex-wrap gap-2">{generalFavs.map((fav, i) => (<button type="button" key={i} onClick={() => handleFavoriteClick(fav)} className="text-[10px] bg-yellow-50 text-slate-600 border border-yellow-200 px-2 py-1 rounded-lg hover:bg-yellow-100 flex items-center gap-1 transition shadow-sm whitespace-nowrap"><Star className="w-3 h-3 fill-yellow-400 text-yellow-500"/> <span className="font-bold">{fav.alias}</span></button>))}</div></div> )}
+                    {personalFavs.length > 0 && <div className="flex flex-wrap gap-2"><span className="text-[9px] text-slate-500 w-full font-bold">Ubicaciones favoritas:</span>{personalFavs.map((f,i) => <button type="button" key={i} onClick={() => handleFavoriteClick(f)} className="text-[10px] px-2 py-1 bg-orange-50 border border-orange-200 rounded text-orange-800">★ {f.alias || f.assignedTo || f.address}</button>)}</div>}
                 </div>
             )}
         </div>
@@ -1867,6 +1869,22 @@ export default function Planificacion() {
       setTimeout(() => fetchRealRoutesForGroups(nextGroups), 80);
   };
 
+  const setGroupPickupMode = (groupId, pickupMode) => {
+      if (!['home','meeting','multiple'].includes(pickupMode)) return;
+      refreshGroupsAfterChange(carpoolGroups.map(g => g.id === groupId ? {...g,pickupMode} : g));
+  };
+  const setGroupSingleMeetingPoint = (groupId, loc) => {
+      refreshGroupsAfterChange(carpoolGroups.map(g => g.id === groupId ? {...g,
+          singleMeetingPoint:{address:loc.address,lat:Number(loc.lat),lng:Number(loc.lng ?? loc.lon)}} : g));
+  };
+  const setGroupEmployeeHome = (groupId, name, loc) => {
+      refreshGroupsAfterChange(carpoolGroups.map(g => g.id !== groupId ? g : ({...g,
+          employees:g.employees.map(e => e.assignedTo !== name ? e : ({...e,address:loc.address,
+              lat:Number(loc.lat),lng:Number(loc.lng ?? loc.lon),lon:Number(loc.lng ?? loc.lon),
+              aiMeetingPointKey:'',aiMeetingPointLabel:'',aiMeetingPointAddress:''}))
+      })));
+  };
+
   const addGroupMeetingPoint = (groupId) => {
       const nextGroups = carpoolGroups.map(group => {
           if (group.id !== groupId) return group;
@@ -2934,6 +2952,31 @@ export default function Planificacion() {
                                                           )}
                                                       </div>
 
+                                                      <div className="rounded-xl bg-orange-50 border border-orange-200 p-3 space-y-3 mb-3">
+                                                          <p className="text-xs font-black text-slate-800">Tipo de recogida / entrega por unidad</p>
+                                                          <label className="flex gap-2 items-center text-xs font-bold">
+                                                              <input type="checkbox" checked={grupo.pickupMode === 'meeting'} onChange={e => setGroupPickupMode(grupo.id,e.target.checked?'meeting':'home')} /> Un solo punto para todos
+                                                          </label>
+                                                          <label className="flex gap-2 items-center text-xs font-bold">
+                                                              <input type="checkbox" checked={grupo.pickupMode === 'home'} onChange={e => setGroupPickupMode(grupo.id,e.target.checked?'home':'meeting')} /> Recogida / entrega en casa de cada pasajero
+                                                          </label>
+                                                          {grupo.pickupMode === 'meeting' && <div className="space-y-2">
+                                                              <p className="text-[10px] text-orange-800 font-bold">Escribe la dirección y selecciona la sugerencia de Google Maps, o elige una ubicación favorita. Una sola parada para todo el grupo.</p>
+                                                              <AddressAutocomplete isLoaded={isLoaded} value={grupo.singleMeetingPoint?.address || ''} placeholder="Punto común: buscar dirección..." iconColor="orange" zIndex={320-idx}
+                                                                  favorites={selectedClientData?.locations || []} onSelect={loc => setGroupSingleMeetingPoint(grupo.id,loc)} />
+                                                          </div>}
+                                                          {grupo.pickupMode === 'home' && <div className="space-y-3">
+                                                              <p className="text-[10px] text-slate-600 font-bold">Puedes escribir o elegir una dirección favorita por pasajero. Sólo modifica esta planificación.</p>
+                                                              {grupo.employees.map((emp,empIndex) => <div key={emp.assignedTo} className="p-2 bg-white border rounded-lg">
+                                                                  <p className="text-[10px] font-black text-slate-700 mb-2">{emp.assignedTo}</p>
+                                                                  <AddressAutocomplete isLoaded={isLoaded} value={emp.address || ''} placeholder="Buscar domicilio..." iconColor="green" zIndex={280-idx*6-empIndex}
+                                                                      favorites={(selectedClientData?.locations || []).filter(loc => !loc.assignedTo || loc.assignedTo === 'General' || loc.assignedTo === emp.assignedTo)}
+                                                                      onSelect={loc => setGroupEmployeeHome(grupo.id,emp.assignedTo,loc)} />
+                                                              </div>)}
+                                                          </div>}
+                                                          <button type="button" onClick={() => setGroupPickupMode(grupo.id,'multiple')} className="text-[10px] text-orange-700 underline font-bold">Configurar varios puntos (avanzado)</button>
+                                                      </div>
+                                                      {grupo.pickupMode === 'multiple' && (
                                                       <div className="pt-3 border-t border-slate-200 mt-2">
                                                           <div className="flex items-center justify-between gap-3 mb-3">
                                                               <div>
@@ -3015,6 +3058,7 @@ export default function Planificacion() {
                                                           </div>
                                                       </div>
                                                   </div>
+                                                  )}
                                               </div>
                                           )})}
                                       </div>

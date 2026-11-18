@@ -144,7 +144,7 @@ export default function Clientes() {
   });
 
   // CAMBIO: Añadimos entrada y salida al estado temporal del usuario
-  const [tempUser, setTempUser] = useState({ name: '', phone: '', email: '', role: 'Encargado', entrada: '08:00', salida: '17:00' });
+  const [tempUser, setTempUser] = useState({ name: '', phone: '', email: '', role: 'Encargado', entrada: '08:00', salida: '17:00', whatsappOptIn: false });
   const [tempLoc, setTempLoc] = useState({ alias: '', address: '', lat: null, lon: null, assignedTo: 'General' });
 
   // === 1. LEER CLIENTES ===
@@ -216,7 +216,7 @@ export default function Clientes() {
 
   const resetForm = () => {
       setNewClient({ name: '', type: 'Empresa', phone: '', email: '', users: [], locations: [] });
-      setTempUser({ name: '', phone: '', email: '', role: 'Encargado', entrada: '08:00', salida: '17:00' }); 
+      setTempUser({ name: '', phone: '', email: '', role: 'Encargado', entrada: '08:00', salida: '17:00', whatsappOptIn: false }); 
       setEditingUserIndex(null);
       setEditingLocationIndex(null);
       setTempLoc({ alias: '', address: '', lat: null, lon: null, assignedTo: 'General' });
@@ -299,7 +299,7 @@ export default function Clientes() {
               email: existing?.email || '',
               role: existing?.role || 'Usuario',
               entrada: existing?.entrada || '08:00',
-              salida: existing?.salida || '17:00'
+              salida: existing?.salida || '17:00', whatsappOptIn: existing?.whatsappOptIn === true
           });
           alert(
               `Este usuario ya existe como "${existing?.name || 'usuario registrado'}". ` +
@@ -335,7 +335,7 @@ export default function Clientes() {
           console.error('No se pudo guardar el usuario:', error);
           return alert('No fue posible guardar el usuario en la base de datos.');
       }
-      setTempUser({ name: '', phone: '', email: '', role: 'Encargado', entrada: '08:00', salida: '17:00' }); 
+      setTempUser({ name: '', phone: '', email: '', role: 'Encargado', entrada: '08:00', salida: '17:00', whatsappOptIn: false }); 
       setEditingUserIndex(null);
   };
 
@@ -347,7 +347,7 @@ export default function Clientes() {
           email: user?.email || '',
           role: user?.role || 'Usuario',
           entrada: user?.entrada || '08:00',
-          salida: user?.salida || '17:00'
+          salida: user?.salida || '17:00', whatsappOptIn: user?.whatsappOptIn === true
       });
       setEditingUserIndex(index);
   };
@@ -682,6 +682,7 @@ export default function Clientes() {
                                         </div>
 
                                         <button type="button" onClick={addUser} className="bg-slate-800 text-white text-xs rounded font-bold hover:bg-slate-700 transition md:col-span-2">{editingUserIndex !== null ? 'Actualizar' : 'Agregar'}</button>
+                                         <label className="md:col-span-12 flex gap-2 items-center text-[11px] text-slate-700 font-bold"><input type="checkbox" checked={tempUser.whatsappOptIn === true} onChange={e => setTempUser({...tempUser,whatsappOptIn:e.target.checked})} /> Confirmo que este pasajero autorizó expresamente recibir avisos de TRIPLOGIX por WhatsApp en su teléfono.</label>
                                     </div>
                                     <div className="space-y-2 mt-4">
                                         {newClient.users.map((u, i) => (

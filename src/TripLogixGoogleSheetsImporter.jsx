@@ -269,7 +269,7 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperatio
 
             <section className="bg-emerald-50/60 border border-emerald-200 rounded-xl p-4 space-y-3">
               <h4 className="font-black text-emerald-900 text-sm">Opción rápida y privada · copiar y pegar</h4>
-              <p className="text-xs text-emerald-900">En cualquier Google Sheets (aunque sea privado), copia el rango con sus encabezados y pégalo aquí (Ctrl+C / Ctrl+V). TripLogix reconoce automáticamente la hoja Programación, BD, Directorio o la plantilla normal de rutas. No necesitas Google Cloud.</p>
+              <p className="text-xs text-emerald-900">En cualquier Google Sheets (aunque sea privado), copia el rango con sus encabezados y pégalo aquí (Ctrl+C / Ctrl+V). TripLogix reconoce las cuatro columnas A:D (Hora entrada, Hora salida, Nombre, Conductor), la hoja Programación, BD, Directorio y las plantillas anteriores. No necesitas Google Cloud.</p>
               <textarea rows={4} className="w-full bg-white border border-emerald-200 rounded-lg p-3 text-xs" placeholder="Pega aquí las filas y encabezados de Programación, BD o de la plantilla normal..." value={pastedText} onChange={event => setPastedText(event.target.value)} />
               <button type="button" onClick={importPasted} disabled={loading || busy || !pastedText.trim()} className="bg-emerald-700 text-white px-4 py-2.5 rounded-lg text-xs font-black disabled:opacity-50">Importar datos pegados</button>
             </section>

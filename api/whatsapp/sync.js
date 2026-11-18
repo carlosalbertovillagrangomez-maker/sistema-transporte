@@ -72,8 +72,8 @@ const contactsFor = route => {
   });
   return [...result.values()].map(person => ({...person,recipientType:'passenger'}));
 };
-const recentAssigned = route => {
-  if(!['Aceptada','En Ruta'].includes(route.status)||!route.driver||!route.driverId||route.driverQuickRegistration) return false;
+const recentAssigned = (route, allowQuickRegistration = false) => {
+  if(!['Aceptada','En Ruta'].includes(route.status)||!route.driver||!route.driverId||(route.driverQuickRegistration&&!allowQuickRegistration)) return false;
   const date = new Date(route.assignedAt||route.assignmentRequestedAt||route.createdDate||0).getTime();
   if(!Number.isFinite(date)||Date.now()-date>7*86400000||date>Date.now()+600000) return false;
   const scheduled = route.scheduledDate||route.finalDate||'';
@@ -126,7 +126,7 @@ export default async function handler(req,res){
     let sent=0,skipped=0,failed=0,checked=0;
     for(const item of snapshot){
       const document=item.document;
-      if(!document||!recentAssigned(fields(document)))continue;
+      if(!document||!recentAssigned(fields(document),direct))continue;
       const route=fields(document);const routeId=document.name.split('/').pop();
       const recipients=contactsFor(route);
       if(direct&&req.body?.includeDrivers===true&&route.driverId&&settings.driverTemplateName){
@@ -143,7 +143,7 @@ export default async function handler(req,res){
       }
       for(const person of recipients){
         if(checked++>=35)break;
-        const recipientHash=crypto.createHash('sha256').update(routeId+':'+person.recipientType+':'+person.phone).digest('hex').slice(0,35);
+        const recipientHash=crypto.createHash('sha256').update(routeId+':'+(person.recipientType==='driver'?'driver:':'')+person.phone).digest('hex').slice(0,35);
         const id='route_'+recipientHash;
         const marker={fields:{
           routeId:stringField(routeId),status:stringField('processing'),createdAt:stringField(new Date().toISOString()),

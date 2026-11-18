@@ -3145,9 +3145,20 @@ export default function Planificacion() {
                   </div>
 
                   <div className="p-3 sm:p-4 border-t border-slate-100 bg-white flex flex-wrap justify-end gap-2 sm:gap-3 shrink-0 shadow-[0_-10px_15px_rgba(0,0,0,0.05)] z-10">
+                      {carpoolStep === 2 && <div className="mr-auto min-w-[220px] max-w-xs space-y-2">
+                          <label className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                              <input type="checkbox" checked={notifyWhatsAppAfterDispatch} onChange={e => setNotifyWhatsAppAfterDispatch(e.target.checked)} /> Notificar por WhatsApp al confirmar
+                          </label>
+                          {notifyWhatsAppAfterDispatch && <>
+                              <input type="password" autoComplete="off" value={whatsAppDispatchKey}
+                                  onChange={e => setWhatsAppDispatchKey(e.target.value)} placeholder="Clave operativa de envíos (Vercel)"
+                                  className="w-full border border-slate-300 rounded-lg p-2 text-xs" />
+                              <p className="text-[10px] text-amber-700">Requiere Meta, plantillas aprobadas y consentimiento. Esta clave no se guarda.</p>
+                          </>}
+                      </div>}
                       <button onClick={() => setShowCarpoolModal(false)} className="px-6 py-2.5 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded-lg transition">Cancelar</button>
                       {carpoolStep === 2 && (
-                          <button onClick={handleConfirmAndDispatch} className="px-8 py-2.5 text-sm font-black text-white bg-orange-500 hover:bg-orange-600 rounded-lg shadow-xl shadow-orange-500/30 transition flex items-center gap-2"><Wand2 className="w-4 h-4"/> Confirmar y Despachar</button>
+                          <button disabled={dispatchingGroups || fetchingRealRoutes} onClick={handleConfirmAndDispatch} className="px-8 py-2.5 text-sm font-black text-white bg-orange-500 hover:bg-orange-600 rounded-lg shadow-xl shadow-orange-500/30 transition flex items-center gap-2 disabled:opacity-50"><Wand2 className="w-4 h-4"/> {dispatchingGroups ? "Guardando rutas..." : "Confirmar y Despachar"}</button>
                       )}
                   </div>
               </div>

@@ -24,12 +24,16 @@ const findTop=(headers,word,norm)=>{
   return headers.findIndex(cell=>norm(cell)===word);
 };
 export const hasWeeklyTab=(name,norm)=>WEEKDAY.test(norm(name));
+const hasCompactHeader=(head,norm)=>
+  norm(head[0])==='HORA ENTRADA' && norm(head[1])==='HORA SALIDA' &&
+  norm(head[2])==='NOMBRE' &&
+  /^(CONDUCTOR(?: ASIGNADO)?|CHOFER|OPERADOR|UNIDAD|GRUPO \/ CONDUCTOR|CONDUCTOR \/ GRUPO)$/.test(norm(head[3]));
 export const isWeeklyWorkbook=(book,sheetRows,norm)=>{
   if((book.SheetNames||[]).some(name=>hasWeeklyTab(name,norm)))return true;
+  if((book.SheetNames||[]).some(name=>hasCompactHeader((sheetRows(book,name)[0]||[]),norm)))return true;
   const program=sheetRows(book,'Programación');
   const top=program[0]||[];
-  if (norm(top[0])==='HORA ENTRADA' && norm(top[1])==='HORA SALIDA' &&
-      norm(top[2])==='NOMBRE' && /^(CONDUCTOR(?: ASIGNADO)?|CHOFER|OPERADOR|UNIDAD|GRUPO \/ CONDUCTOR|CONDUCTOR \/ GRUPO)$/.test(norm(top[3]))) return true;
+  if (hasCompactHeader(top,norm)) return true;
   return norm(top[2])==='NOMBRE'&&
     norm(top[7]).includes('PUNTO DE DESCARGUE')&&
     norm(top[10])==='ENTRADA'&&norm(top[13])==='SALIDA';
@@ -47,8 +51,7 @@ const layoutOf=(rows,norm)=>{
   const paso=head.findIndex(cell=>norm(cell).includes('HORA PASO'));
   // Formato reducido A:D: hora entrada, hora salida, nombre y conductor.
   // D no es hora de paso; ubicaciones y teléfonos se obtienen del directorio.
-  const compact=entrada===0 && salida===1 && name===2 &&
-    /^(CONDUCTOR(?: ASIGNADO)?|CHOFER|OPERADOR|UNIDAD|GRUPO \/ CONDUCTOR|CONDUCTOR \/ GRUPO)$/.test(norm(head[3]));
+  const compact=hasCompactHeader(head,norm);
   if(compact)return {
     name,entrada,salida,pickup:-1,dropoff:-1,tel:-1,paso:-1,
     pickupMeeting:-1,dropoffMeeting:-1,
@@ -81,7 +84,9 @@ const dateFromTab=(name,year,norm)=>{
 export const extractWeeklyWorkbook=(book,{sheetRows,norm,clean,formatTime,normalizePhone,referenceByName,drivers})=>{
   const year=yearFromWorkbook(book,sheetRows);
   const dayNames=(book.SheetNames||[]).filter(name=>hasWeeklyTab(name,norm));
-  if(!dayNames.length)dayNames.push('Programación');
+  if(!dayNames.length)dayNames.push(
+    (book.SheetNames||[]).find(name=>hasCompactHeader((sheetRows(book,name)[0]||[]),norm)) || 'Programación'
+  );
   const weeklyDays=[];
   const ignored=[];
   const inferredDays=[];

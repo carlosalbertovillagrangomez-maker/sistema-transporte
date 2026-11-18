@@ -210,7 +210,9 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperatio
         /^(LUNES|MARTES|MIERCOLES|JUEVES|VIERNES|SABADO|DOMINGO)_\d{1,2}_DE_/.test(normalize(name))
       );
       if (matchedNames.length) {
-        const ranges = matchedNames.map(name => {
+        // Añadir la pestaña elegida aunque se llame "Hoja1": puede contener A:D.
+        const importNames = matchedNames.includes(tabTitle) ? matchedNames : [...matchedNames, tabTitle];
+        const ranges = importNames.map(name => {
           const title = "'" + name.replace(/'/g, "''") + "'";
           if(normalize(name)==='BD')return title+'!A1:I1200';
           if(normalize(name)==='DIRECTORIO')return title+'!A1:E1200';
@@ -227,7 +229,7 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperatio
         );
         const workbook = XLSX.utils.book_new();
         (workbookData.valueRanges || []).forEach((item, index) => {
-          const title = matchedNames[index];
+          const title = importNames[index];
           const values = Array.isArray(item.values) ? item.values : [];
           XLSX.utils.book_append_sheet(workbook, XLSX.utils.aoa_to_sheet(values), title);
         });
@@ -245,6 +247,16 @@ export default function TripLogixGoogleSheetsImporter({ onImportRows, onOperatio
         '/values/' + encodeURIComponent(tab + '!A1:AZ5000'), token
       );
       const values = data.values || [];
+      // Hoja privada con cuatro columnas sin pestañas auxiliares: misma
+      // planificación empresarial que se utiliza con el enlace público.
+      const compactBook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(compactBook, XLSX.utils.aoa_to_sheet(values), tabTitle);
+      if (isOperationalWorkbook(compactBook)) {
+        if (!onOperationalWorkbook) throw new Error('No se pudo abrir la planificación empresarial.');
+        onOperationalWorkbook({ ...extractOperationalWorkbook(compactBook), importKey:String(Date.now()), sheetId:selectedId });
+        setOpen(false);
+        return;
+      }
       const headers = values[0] || [];
       const rows = values.slice(1).filter(cells => cells.some(clean)).map(cells =>
         Object.fromEntries(headers.map((head, i) => [clean(head), cells[i] ?? '']))

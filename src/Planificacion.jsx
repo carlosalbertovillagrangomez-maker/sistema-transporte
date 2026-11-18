@@ -477,6 +477,11 @@ const getPlanSortTimestamp = (route) => {
 };
 
 const getGroupMeetingPoints = (group) => {
+    if (group?.pickupMode === 'home') return [];
+    if (group?.pickupMode === 'meeting') {
+        const point = group?.singleMeetingPoint || {};
+        return [{ id:'meeting_' + group.id + '_all',active:true,address:String(point.address || '').trim(),lat:point.lat,lng:point.lng ?? point.lon,passengerNames:(group.employees || []).map(e => e.assignedTo) }];
+    }
     const modern = Array.isArray(group?.sharedMeetingPoints) ? group.sharedMeetingPoints : [];
     const legacy = group?.sharedMeetingPoint?.active
         ? [{ ...group.sharedMeetingPoint, id: group.sharedMeetingPoint.id || 'legacy-shared' }]
@@ -500,6 +505,15 @@ const getEmployeeMeetingPoint = (group, employeeName) => {
 };
 
 const buildPassengerStopsForGroup = (group) => {
+    if (group?.pickupMode === 'meeting') {
+        const p = getGroupMeetingPoints(group)[0];
+        const lat = Number(p?.lat), lng = Number(p?.lng);
+        return p?.address && !isMeetingInstruction(p.address) && Number.isFinite(lat) && Number.isFinite(lng)
+            ? [{ stopType:'shared_meeting',id:p.id,address:p.address,lat,lng,employees:[...(group.employees || [])] }] : [];
+    }
+    if (group?.pickupMode === 'home') return (group.employees || []).map(e => ({
+        stopType:'individual',id:'individual-' + e.assignedTo,address:e.address,lat:Number(e.lat),lng:Number(e.lng ?? e.lon),employees:[e]
+    })).filter(p => p.address && !isMeetingInstruction(p.address) && Number.isFinite(p.lat) && Number.isFinite(p.lng));
     const stops = [];
     const usedMeetingPoints = new Set();
 
@@ -645,6 +659,9 @@ export default function Planificacion() {
   const [rosterSearch, setRosterSearch] = useState('');
 
   const [carpoolGroups, setCarpoolGroups] = useState([]);
+  const [notifyWhatsAppAfterDispatch, setNotifyWhatsAppAfterDispatch] = useState(false);
+  const [whatsAppDispatchKey, setWhatsAppDispatchKey] = useState('');
+  const [dispatchingGroups, setDispatchingGroups] = useState(false);
   const [previewGroupId, setPreviewGroupId] = useState('all');
   const [fetchingRealRoutes, setFetchingRealRoutes] = useState(false);
   const [globalCarpool, setGlobalCarpool] = useState({ mode: 'Ida' });
@@ -1666,7 +1683,9 @@ export default function Planificacion() {
               aiImported: orderedEmployees.some(emp => emp?.aiImported),
               preserveAiPassTimes: orderedEmployees.some(emp => emp?.aiImported && String(emp?.aiReferenceTime || '').trim()),
               sharedMeetingPoint: { active: false, address: '', lat: null, lng: null },
-              sharedMeetingPoints: isShared ? [{ id: `meeting_${groupId}_1`, active: true, address: '', lat: null, lng: null, passengerNames: orderedEmployees.map(emp => emp.assignedTo) }] : [],
+              pickupMode: 'home',
+               singleMeetingPoint: { address:'',lat:null,lng:null },
+               sharedMeetingPoints: [],
               routeGeometry: [],
               routeSegments: [],
               totalDistanceKm: null,

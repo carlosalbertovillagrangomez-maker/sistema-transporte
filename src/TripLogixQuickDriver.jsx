@@ -35,7 +35,8 @@ export default function TripLogixQuickDriver({ existing = [], suggestedDrivers =
         quickRegistration: true,
         accountAccessEnabled: false,
         createdBy: 'dispatcher',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        created: new Date().toISOString()
       };
       const result = await addDoc(collection(db, 'conductores'), value);
       onCreated({ id: result.id, ...value });

@@ -187,7 +187,7 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
     if (missingAddress.length) {
       setSearch('');
       return setMessage('Falta la dirección válida del punto de encuentro o domicilio de ' + missingAddress.length +
-        ' pasajero(s). Revisa las columnas F/I, pega la BD o escribe una calle y número reales junto a cada persona. No se usarán instrucciones como ubicaciones.');
+        ' pasajero(s). Consulta BD/Directorio o el catálogo de Clientes; también puedes escribir calle y número. Las cuatro columnas A:D no requieren direcciones.');
     }
     if (!window.confirm('Preparar ' + active.length + ' pasajeros de ' +
       (mode === 'Ida' ? 'ENTRADA' : 'SALIDA') + ' para el ' + date +
@@ -285,7 +285,7 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
                     <span className="block text-xs font-black text-slate-800">{entry.name}{samePersonVariants && <span className="ml-2 text-amber-600 font-medium">Variantes de servicio</span>}</span>
                     <span className="block text-[11px] text-slate-600 break-words">{entry.addressDisplay || '⚠ Falta dirección de punto de encuentro'} <span className="text-slate-400">· {entry.addressOrigin}</span></span>
                   </span>
-                  <span className="text-[10px] text-slate-600 shrink-0 text-right">{entry.planning.time || 'Sin hora'}<br/>{entry.planning.route ? 'Ruta ' + entry.planning.route : 'Sin ruta fija'}</span>
+                  <span className="text-[10px] text-slate-600 shrink-0 text-right">{entry.planning.time || 'Sin hora'}<br/>{entry.planning.route ? 'Ruta ' + entry.planning.route : 'Ruta por calcular'}{entry.planning.driver ? ' · ' + entry.planning.driver : ''}</span>
                 </label>
                 {(needsAddress || Object.prototype.hasOwnProperty.call(addressOverrides, entry.id)) && <label className="block ml-7 mt-2 text-[11px] text-amber-700 font-bold">
                   Dirección de recogida/entrega de este servicio
@@ -303,7 +303,7 @@ export default function TripLogixOperationalImporter({ data, clients = [], onApp
             <p>{missingTime.length ? '⚠ '+missingTime.length+' seleccionados sin hora oficial.' : '✓ Horarios preparados.'}</p>
             <p>{missingAddress.length ? '⚠ '+missingAddress.length+' seleccionados sin dirección: completa sólo esos datos.' : '✓ Los seleccionados tienen direcciones.'}</p>
             {selectedDuplicates.size > 0 && <p className="text-amber-700">⚠ {selectedDuplicates.size} nombres repetidos en la selección.</p>}
-            <p>Conductores temporales: <strong>Cuadrillas Armadas → + Registrar conductor nuevo</strong> (nombre, vehículo, placas).</p>
+            <p>Conductores temporales: <strong>Cuadrillas Armadas → + Registrar conductor nuevo</strong> (nombre, vehículo, placas y celular).</p>
           </div>
           <div className="flex gap-2">
             <button type="button" onClick={onClose} className="border p-3 rounded-lg text-xs font-bold">Cancelar</button>

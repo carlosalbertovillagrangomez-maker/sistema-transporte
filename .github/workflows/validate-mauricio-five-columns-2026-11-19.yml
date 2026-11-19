@@ -1,0 +1,30 @@
+name: Validate Mauricio five-column sheet import
+on:
+  push:
+    branches: [fix/mauricio-five-columns-monday-2026-11-19]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Tests - Monday 16 five columns, legacy workbook and existing planning
+        run: node --test tests/triplogixFiveColumns.test.js tests/triplogixFourColumns.test.js tests/triplogixWeeklyTemplate.test.js tests/triplogixWorkbook.test.js tests/triplogixScheduleReview.test.js tests/triplogixCarpoolPolicy.test.js tests/triplogixPickupModes.test.js
+      - name: Verify server API syntax
+        run: |
+          node --check api/sheets/leer-libro.js
+          node --check api/sheets/leer-publico.js
+          node --check api/whatsapp/sync.js
+      - run: npm run build

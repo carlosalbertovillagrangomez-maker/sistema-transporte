@@ -21,6 +21,11 @@ const direction = value => {
 
 export const compactColumnLayout = (headers, norm) => {
   const titles = (Array.isArray(headers) ? headers : []).map(value => normalizedHeader(value, norm));
+  // La plantilla semanal tradicional (A:Y) usa K:M/N:P para rutas y puede
+  // tener títulos COND en W/X. No debe confundirse con la tabla A:D / A:E.
+  if (titles.filter(Boolean).length > 9 ||
+      titles.some(title => /^(?:HORA PASO|TELEFONO USUARIO)$/.test(title) ||
+        /^PUNTO DE (?:RECOGIDA|DESCARGUE)/.test(title))) return null;
   const entrada = titles.findIndex(isEntranceTime);
   const salida = titles.findIndex(isExitTime);
   const name = titles.findIndex(isPassengerName);

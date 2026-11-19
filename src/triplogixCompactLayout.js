@@ -11,7 +11,7 @@ const normalizedHeader = (value, norm) => norm(value)
 const isEntranceTime = value => /^(?:(?:HORA(?:S)?|HORARIO)(?: DE| PARA| DEL)? )?(?:ENTRADA(?:S)?|INGRESO(?:S)?|LLEGADA(?:S)?)$/.test(value);
 const isExitTime = value => /^(?:(?:HORA(?:S)?|HORARIO)(?: DE| PARA| DEL)? )?(?:SALIDA(?:S)?|REGRESO(?:S)?)$/.test(value);
 const isPassengerName = value => /^(?:NOMBRE(?:S)?(?: COMPLETO(?:S)?| Y APELLIDO(?:S)?| DEL? (?:PASAJERO|USUARIO|EMPLEADO))?|PASAJERO(?:S)?|USUARIO(?:S)?|EMPLEADO(?:S)?)$/.test(value);
-const isDriverHeading = value => /\b(?:CONDUCTORES?|CHOFERES?|OPERADORES?|UNIDADES?|COND)\b/.test(value) ||
+const isDriverHeading = value => /\b(?:CONDUCTOR(?:ES)?|CHOFER(?:ES)?|OPERADOR(?:ES)?|UNIDAD(?:ES)?|COND)\b/.test(value) ||
   /^(?:GRUPO|GRUPO CONDUCTOR|GRUPO CHOFER)$/.test(value);
 const direction = value => {
   const entrance = /\b(?:ENTRADAS?|IDAS?|RECOGIDAS?|INGRESOS?)\b/.test(value);

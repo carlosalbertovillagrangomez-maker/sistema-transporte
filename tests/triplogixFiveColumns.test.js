@@ -87,6 +87,6 @@ test('cada sentido conserva un conductor diferente sin mezclar viajes',()=>{
   const data=extractOperationalWorkbook(book);
   const ida=groupScheduleForMode(data.entries,'Ida',data.rosterSource);
   const regreso=groupScheduleForMode(data.entries,'Regreso',data.rosterSource);
-  assert.deepEqual(ida.rows.map(x=>[x.name,x.driver]),[['Persona Entrada','Chofer Matutino']]);
-  assert.deepEqual(regreso.rows.map(x=>[x.name,x.driver]),[['Persona Regreso','Chofer Vespertino']]);
+  assert.deepEqual(ida.rows.map(x=>[x.name,x.entradaDriver]),[['Persona Entrada','Chofer Matutino']]);
+  assert.deepEqual(regreso.rows.map(x=>[x.name,x.salidaDriver]),[['Persona Regreso','Chofer Vespertino']]);
 });

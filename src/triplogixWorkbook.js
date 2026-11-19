@@ -1,5 +1,6 @@
 import * as XLSX from 'xlsx';
 import { isWeeklyWorkbook, extractWeeklyWorkbook } from './triplogixWeeklyTemplate.js';
+import { findCompactHeader } from './triplogixCompactLayout.js';
 import { chooseTripStop } from './triplogixMeetingPoint.js';
 
 // Estructura de la plantilla operativa recibida en noviembre de 2026:
@@ -203,7 +204,7 @@ export const parseOperationalClipboard = input => {
   if (!rows.length) throw new Error('No se encontraron filas.');
   const headings = (rows[0] || []).map(norm);
   let type = '';
-  if (headings.includes('HORA ENTRADA') && headings.includes('NOMBRE')) type = 'Programación';
+  if ((headings.includes('HORA ENTRADA') && headings.includes('NOMBRE')) || findCompactHeader(rows,norm)) type = 'Programación';
   else if (headings.includes('NOMBRES') && headings.includes('DIRECCION')) type = 'BD';
   else if (headings.includes('NOMBRECOMPLETO') && headings.includes('DOMICILIO')) type = 'Directorio';
   // Algunas personas copian únicamente las filas del día (sin las dos filas
@@ -215,7 +216,7 @@ export const parseOperationalClipboard = input => {
     /[A-Za-zÁÉÍÓÚÑáéíóúñ]/.test(clean(first[2])) &&
     Boolean(formatOperationalTime(first[0]) || formatOperationalTime(first[1])) &&
     Boolean(clean(first[4]) || clean(first[6]));
-  const looksLikeCompactData = !type && first.length === 4 &&
+  const looksLikeCompactData = !type && [4,5].includes(first.length) &&
     clean(first[2]).length >= 3 &&
     /[A-Za-zÁÉÍÓÚÑáéíóúñ]/.test(clean(first[2])) &&
     Boolean(formatOperationalTime(first[0]) || formatOperationalTime(first[1]));
@@ -225,7 +226,7 @@ export const parseOperationalClipboard = input => {
   const workbook = XLSX.utils.book_new();
   const weeklyStyle=looksLikeProgramData && first.length>=17;
   const inputRows = looksLikeCompactData
-    ? [['HORA ENTRADA','HORA SALIDA','NOMBRE','CONDUCTOR'], ...rows]
+    ? [[...'HORA ENTRADA|HORA SALIDA|NOMBRE|CONDUCTOR ENTRADA|CONDUCTOR SALIDA'.split('|').slice(0, first.length)].map((title,index)=>first.length===4 && index===3?'CONDUCTOR':title), ...rows]
     : looksLikeProgramData ? [
     weeklyStyle
       ? ['HORA ENTRADA','HORA SALIDA','NOMBRE','HORA PASO','PUNTO DE RECOGIDA','','','PUNTO DE DESCARGUE','','','ENTRADA','','','SALIDA','','','TELEFONO USUARIO']
@@ -240,7 +241,7 @@ export const parseOperationalClipboard = input => {
   if (looksLikeProgramData) {
     extracted.warnings.unshift('Se detectaron filas de Programación sin encabezados usando sus columnas A:O. Comprueba nombres, direcciones y horas antes de confirmar.');
   } else if (looksLikeCompactData) {
-    extracted.warnings.unshift('Se detectaron cuatro columnas A:D sin encabezados: Entrada, Salida, Nombre y Conductor. Comprueba los datos antes de confirmar.');
+    extracted.warnings.unshift('Se detectó formato reducido sin encabezados: Entrada, Salida, Nombre y conductor(es) (4 o 5 columnas). Comprueba los datos antes de confirmar.');
   }
   return extracted;
 };

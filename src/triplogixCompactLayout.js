@@ -107,7 +107,12 @@ export const findCompactHeader = (rows,norm) => {
     const direct=compactColumnLayout(rows[i],norm);
     if (direct) return {...direct,headerRows:i+1};
     if(i+1<(rows||[]).length) {
-      const combined=compactColumnLayout(combineTwoRows(rows[i],rows[i+1],norm),norm);
+      const nextRow=rows[i+1]||[];
+      // Un valor «Chofer A» en la primera fila de pasajeros no es
+      // un encabezado «CHOFER»: no descartamos a ese pasajero.
+      if (resemblesName(nextRow[2]) &&
+          (resemblesTime(nextRow[0])||resemblesTime(nextRow[1]))) continue;
+      const combined=compactColumnLayout(combineTwoRows(rows[i],nextRow,norm),norm);
       if(combined) return {...combined,headerRows:i+2,splitHeader:true};
     }
   }

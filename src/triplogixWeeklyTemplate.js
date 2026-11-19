@@ -144,7 +144,7 @@ export const extractWeeklyWorkbook=(book,{sheetRows,norm,clean,formatTime,normal
       ...(!year?['No se encontró el año en las hojas de resumen. Selecciona la fecha real del día antes de generar rutas.']:[]),
       ...(ignored.length?['No se pudieron leer las pestañas: '+ignored.join(', ')]:[]),
       ...(inferredDays.length?['Se reconocieron las columnas de rutas por sus títulos principales en '+inferredDays.join(', ')+' (encabezados RUTA secundarios vacíos).']:[]),
-      'Con cuatro columnas (un conductor) o cinco (conductor para entrada y para salida), TripLogix completa direcciones desde BD/Directorio/Clientes y calcula las rutas y horas de paso.',
+      'Lector semanal actualizado 19/11 (encabezados en una o dos filas): reconoce cuatro columnas con un conductor y cinco con conductores independientes para entrada y salida. Las direcciones se obtienen de BD/Directorio/Clientes.',
       'Se importaron únicamente las pestañas diarias; Panel Logístico y los informes no generan servicios.'
     ],
     summary:{programRows:activeDay.entries.length,weeklyRows:weeklyDays.reduce((sum,day)=>sum+day.entries.length,0),days:weeklyDays.length,drivers:drivers.length}

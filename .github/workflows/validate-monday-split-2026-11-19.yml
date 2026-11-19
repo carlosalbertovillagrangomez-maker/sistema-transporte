@@ -1,0 +1,26 @@
+name: Fix Monday 16 import - split driver header regression
+on:
+  push:
+    branches: [fix/monday-16-split-header-driver-columns-2026-11-19]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Regression tests - Monday split headers and historical sheets
+        run: node --test tests/triplogixSplitHeader.test.js tests/triplogixFiveColumns.test.js tests/triplogixFourColumns.test.js tests/triplogixWeeklyTemplate.test.js tests/triplogixWorkbook.test.js tests/triplogixScheduleReview.test.js tests/triplogixCarpoolPolicy.test.js tests/triplogixPickupModes.test.js
+      - run: node --check api/sheets/leer-libro.js
+      - run: npm run build

@@ -55,11 +55,15 @@ const combineTwoRows = (first,second,norm) => {
   const len=Math.max(first?.length||0,second?.length||0);
   return Array.from({length:len},(_,i)=>{
     const top=normalize(first?.[i],norm),bottom=normalize(second?.[i],norm);
-    if (isEntranceTime(top)||isExitTime(top)||isPassengerName(top)) return top;
-    if (isDriverHeading(bottom)) {
+    // Un grupo superior «ENTRADA»/«SALIDA» NO debe leerse como
+    // horario si la celda inferior dice «COND»: describe al conductor.
+    if (isDriverHeading(bottom) &&
+        !(isEntranceTime(top) && /^HORA\b/.test(top)) &&
+        !(isExitTime(top) && /^HORA\b/.test(top))) {
       const grouped = direction(top);
       return grouped==='ambos' ? bottom : top+' '+bottom;
     }
+    if (isEntranceTime(top)||isExitTime(top)||isPassengerName(top)) return top;
     if (isDriverHeading(top)) {
       const grouped = direction(bottom);
       return grouped==='ambos' ? top : top+' '+bottom;

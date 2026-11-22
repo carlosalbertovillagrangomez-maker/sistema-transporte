@@ -37,9 +37,15 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
   const [busy,setBusy]=useState(false);
   const [addressIndex,setAddressIndex]=useState(null);
   const [search,setSearch]=useState('');
+  const [page,setPage]=useState(0);
+  const PAGE_SIZE=25;
   const [showHelp,setShowHelp]=useState(true);
   const companies=clients.filter(client=>client.type==='Empresa');
   const employees=company.users||[];
+  const visibleEmployees=employees.map((user,index)=>({user,index}))
+    .filter(({user})=>norm(user.name).includes(norm(search)));
+  const totalPages=Math.max(1,Math.ceil(visibleEmployees.length/PAGE_SIZE));
+  const currentPage=Math.min(page,totalPages-1);
   const companySites=(company.locations||[]).filter(loc=>loc.assignedTo==='General'||!loc.assignedTo);
   const setInfo=(key,value)=>setCompany(prev=>({...prev,[key]:value}));
   const editUser=(i,changes)=>setCompany(prev=>({...prev,users:prev.users.map((u,index)=>
@@ -48,8 +54,19 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
     const current=normalizeWeeklySchedule(employees[i]?.weeklySchedule);
     editUser(i,{weeklySchedule:{...current,[day]:{...current[day],[key]:value}}});
   };
+  const hasUnsavedChanges=()=>{
+    const original=companyId?companies.find(x=>x.id===companyId):blankCompany();
+    return JSON.stringify(company)!==JSON.stringify(original||blankCompany());
+  };
+  const guardedClose=()=>{
+    if(hasUnsavedChanges()&&!window.confirm('Tienes cambios sin guardar. ¿Quieres salir y descartarlos?'))return;
+    onClose();
+  };
   const selectCompany=(id)=>{
+    if(hasUnsavedChanges()&&!window.confirm('Hay cambios sin guardar. ¿Cambiar de empresa y descartarlos?'))return;
     const found=companies.find(x=>x.id===id);
+    setPage(0);
+    setSearch('');
     setCompanyId(id);
     setCompany(found?clone(found):blankCompany());
     setAddressIndex(null);setTab('empresa');
@@ -136,7 +153,7 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
           <p className="text-xs text-slate-300 mt-1">Un solo catálogo para sedes, empleados y horarios. La planificación toma estos datos automáticamente.</p></div>
         <div className="flex items-center gap-2">
           <button type="button" onClick={save} disabled={busy} className="px-4 py-3 rounded-xl bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-white text-sm font-black flex gap-2 items-center"><Save size={17}/>{busy?'Guardando…':'Guardar cambios'}</button>
-          <button type="button" onClick={onClose} aria-label="Cerrar" className="p-3 bg-white/10 rounded-xl hover:bg-white/20"><X/></button>
+          <button type="button" onClick={guardedClose} aria-label="Cerrar" className="p-3 bg-white/10 rounded-xl hover:bg-white/20"><X/></button>
         </div>
       </header>
       <div className="px-5 sm:px-7 py-3 bg-white border-b flex flex-col lg:flex-row items-start lg:items-center gap-3 shrink-0">
@@ -188,13 +205,13 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
               <p className="text-sm text-slate-500 mt-1">Marca los días que trabaja cada persona y define entrada y salida. No es necesario volver a cargar una hoja semanal.</p></div>
             <div className="flex gap-2 flex-wrap">
               <button type="button" onClick={exported} disabled={!employees.length} className="border rounded-xl bg-white px-3 py-2.5 text-xs font-black text-slate-700 flex gap-2 items-center"><FileSpreadsheet size={16}/> Exportar Excel</button>
-              <button type="button" onClick={()=>setCompany(prev=>({...prev,users:[...(prev.users||[]),blankEmployee()]}))} className="bg-orange-500 text-white rounded-xl px-4 py-3 text-xs font-black flex gap-2 items-center"><Plus size={16}/> Agregar empleado</button>
+              <button type="button" onClick={()=>{setPage(Math.floor(employees.length/PAGE_SIZE));setSearch('');setCompany(prev=>({...prev,users:[...(prev.users||[]),blankEmployee()]}));}} className="bg-orange-500 text-white rounded-xl px-4 py-3 text-xs font-black flex gap-2 items-center"><Plus size={16}/> Agregar empleado</button>
             </div>
           </div>
           {showHelp&&<div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 flex gap-3 justify-between">
             <span>**Uso rápido:** edita cada celda como en Excel; marca los días, horas y luego selecciona el domicilio desde Google Maps. Los empleados sin día marcado no se planifican automáticamente.</span>
             <button type="button" onClick={()=>setShowHelp(false)}><X size={14}/></button></div>}
-          <div className="flex gap-2 items-center"><input value={search} onChange={e=>setSearch(e.target.value)}
+          <div className="flex gap-2 items-center"><input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}}
             className="border border-slate-200 rounded-lg bg-white px-4 py-2.5 text-sm w-full max-w-md" placeholder="Buscar empleado…"/>
             <span className="text-xs text-slate-500">{employees.length} registrados</span></div>
           <div className="overflow-x-auto overflow-y-auto max-h-[58vh] rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -207,8 +224,7 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
                   <th className="w-12 p-2"> </th></tr>
               </thead>
               <tbody>
-              {employees.map((user,index)=>({user,index}))
-                .filter(({user})=>norm(user.name).includes(norm(search)))
+              {visibleEmployees.slice(currentPage*PAGE_SIZE,(currentPage+1)*PAGE_SIZE)
                 .map(({user,index})=><tr key={index} className={index%2?'bg-slate-50':'bg-white'}>
                   <td className="sticky left-0 z-10 bg-inherit p-2 border-r border-b border-slate-200">
                     <input aria-label={'Nombre empleado '+(index+1)} value={user.name||''} onChange={e=>editUser(index,{name:e.target.value})}
@@ -244,6 +260,11 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
             </table>
             {!employees.length&&<p className="p-10 text-sm text-slate-500 text-center">Agrega al primer empleado para comenzar a construir la plantilla.</p>}
           </div>
+          {visibleEmployees.length>PAGE_SIZE&&<div className="flex items-center justify-end gap-3 text-xs font-bold text-slate-600">
+            <button disabled={currentPage===0} onClick={()=>setPage(Math.max(0,currentPage-1))} className="border rounded-lg px-3 py-2 bg-white disabled:opacity-40">← Anterior</button>
+            Página {currentPage+1} de {totalPages} · {visibleEmployees.length} empleados
+            <button disabled={currentPage>=totalPages-1} onClick={()=>setPage(Math.min(totalPages-1,currentPage+1))} className="border rounded-lg px-3 py-2 bg-white disabled:opacity-40">Siguiente →</button>
+          </div>}
           <div className="flex justify-between flex-wrap gap-3 items-center text-xs text-slate-500"><p>✓ Los cambios se guardan en la empresa al presionar «Guardar cambios». No se crean viajes hasta confirmarlos en Planeación.</p>
             <button type="button" onClick={save} disabled={busy} className="bg-slate-800 text-white font-black rounded-xl px-5 py-3 flex gap-2 items-center"><Check size={17}/>{busy?'Guardando…':'Guardar plantilla semanal'}</button></div>
         </div>}

@@ -2905,7 +2905,7 @@ export default function Planificacion() {
                                                           {grupo.totalDurationMins != null && <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold">{grupo.totalDurationMins} min</span>}
                                                           {grupo.totalDistanceKm != null && estimateFuel(grupo.totalDistanceKm,corporateFuelSettings.efficiency,corporateFuelSettings.price) &&
                                                               <span className="text-[10px] bg-emerald-700 text-white px-2 py-1 rounded font-bold" title="Estimación: km / rendimiento × precio por litro. No es tarifa real ni garantía de consumo.">
-                                                                  Combustible estimado $ {estimateFuel(grupo.totalDistanceKm,corporateFuelSettings.efficiency,corporateFuelSettings.price).cost.toFixed(2)}
+                                                                  Combustible estimado {getPricingDefaultsForCountry(getCountryFromPoint(selectedClientData?.locations?.find(loc=>loc.assignedTo==='General'))||getCountryFromTimezone()).currency} {estimateFuel(grupo.totalDistanceKm,corporateFuelSettings.efficiency,corporateFuelSettings.price).cost.toFixed(2)}
                                                               </span>}
                                                           <button onClick={() => setPreviewGroupId(grupo.id)} className={`text-[10px] font-black uppercase px-2 py-1 rounded transition ${isPreviewing ? 'bg-orange-500 text-white' : 'bg-slate-600 text-slate-300 hover:bg-slate-500'}`}>Ver Ruta</button>
                                                       </div>

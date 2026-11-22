@@ -11,6 +11,8 @@ import TripLogixOperationalImporter from './TripLogixOperationalImporter';
 import TripLogixWhatsAppActions from './TripLogixWhatsAppActions';
 import TripLogixQuickDriver from './TripLogixQuickDriver';
 import TripLogixAIAssistant from './TripLogixAIAssistant';
+import TripLogixCorporatePlanner from './TripLogixCorporatePlanner.jsx';
+import {corporateSpreadsheetRows,estimateFuel,haversineKm} from './triplogixCorporateSchedule.js';
 import { isMeetingInstruction } from './triplogixMeetingPoint.js';
 import { FINAL_DESTINATION_EARLY_MINS, PASSENGER_PICKUP_BUFFER_MINS, DROPOFF_BUFFER_MINS } from './triplogixCarpoolPolicy.js';
 import { bucketByTimeAndDriver } from './triplogixAutomaticGroups.js';
@@ -557,6 +559,9 @@ export default function Planificacion() {
 
   // === ESTADOS MÓDULO CARPOOLING INTELIGENTE (WIZARD) ===
   const [showCarpoolModal, setShowCarpoolModal] = useState(false);
+  const [showCorporatePlanner,setShowCorporatePlanner] = useState(false);
+  const [showCarpoolExcel,setShowCarpoolExcel] = useState(false);
+  const [corporateFuelSettings,setCorporateFuelSettings] = useState({efficiency:'',price:''});
   const [carpoolStep, setCarpoolStep] = useState(1);
   const [employeeRoster, setEmployeeRoster] = useState([]);
   const [rosterSearch, setRosterSearch] = useState('');
@@ -665,7 +670,7 @@ export default function Planificacion() {
       return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
   };
 
-  const requestGoogleDrivingRoute = async (points) => {
+  const requestGoogleDrivingRoute = async (points, {optimizeWaypoints=false}={}) => {
       if (!isLoaded || !window.google?.maps?.DirectionsService) throw new Error('Google Maps todavía no está listo.');
       const valid = points.filter(Boolean).map(point => ({ source: point, location: toGoogleRouteLocation(point) })).filter(item => item.location);
       if (valid.length < 2) return null;
@@ -676,7 +681,7 @@ export default function Planificacion() {
               origin: valid[0].location,
               destination: valid[valid.length - 1].location,
               waypoints: valid.slice(1, -1).map(item => ({ location: item.location, stopover: true })),
-              optimizeWaypoints: false,
+              optimizeWaypoints: optimizeWaypoints === true,
               travelMode: window.google.maps.TravelMode.DRIVING,
               provideRouteAlternatives: valid.length === 2,
               drivingOptions: {
@@ -719,7 +724,10 @@ export default function Planificacion() {
           segments,
           totalDistance: (totalMeters / 1000).toFixed(1),
           totalDuration: Math.round(totalSeconds / 60),
-          routedStopLocations
+          routedStopLocations,
+          // Google devuelve el orden de los waypoints intermedios realmente
+          // optimizados; sin este mapeo las horas y pasajeros se desalinearían.
+          waypointOrder:Array.isArray(route.waypoint_order)?route.waypoint_order:[]
       };
   };
 
@@ -1109,6 +1117,8 @@ export default function Planificacion() {
   // =================================================================================
 
   const openCarpoolModal = () => {
+      setShowCarpoolExcel(false);
+      setCorporateFuelSettings({efficiency:'',price:''});
       setShowCarpoolModal(true);
       setCarpoolStep(1);
       setNewRoute({...newRoute, client: '', serviceType: 'Programado', scheduledDate: ''});
@@ -1118,6 +1128,23 @@ export default function Planificacion() {
       setPreviewGroupId('all');
       setGlobalCarpool({ mode: 'Ida' });
       setSelectedClientData(null);
+  };
+
+  const openPreparedCorporatePlan = ({client,date,mode,groups,fuelEfficiency,fuelPrice}) => {
+      if(!client||!groups?.length)return;
+      setSelectedClientData(client);
+      setNewRoute(prev=>({...prev,client:client.name,serviceType:'Programado',scheduledDate:date,driver:'',driverId:''}));
+      setGlobalCarpool({mode});
+      setEmployeeRoster(groups.flatMap(group=>group.employees.map(employee=>({...employee,included:true}))));
+      setCarpoolGroups(groups);
+      setCarpoolStep(2);
+      setShowCarpoolExcel(false);
+      setCorporateFuelSettings({efficiency:fuelEfficiency,price:fuelPrice});
+      setPreviewGroupId('all');
+      setShowCorporatePlanner(false);
+      setShowCarpoolModal(true);
+      // Evita usar estado React anterior (empresa o sentido equivocado).
+      fetchRealRoutesForGroups(groups,{client,mode});
   };
 
   const handleCarpoolClientChange = (e) => {
@@ -2453,6 +2480,7 @@ export default function Planificacion() {
                 setTemporaryDriverSuggestions(Array.isArray(data.drivers) ? data.drivers : []);
                 setOperationalWorkbook(data);
               }} />
+              <button onClick={() => setShowCorporatePlanner(true)} className="bg-orange-500 text-white px-4 py-2 rounded-lg text-sm font-black flex items-center gap-2 hover:bg-orange-600 transition shadow"><Building2 className="w-4 h-4"/> Planeación automática</button>
               <button onClick={openCarpoolModal} className="bg-orange-100 text-orange-700 border border-orange-200 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-orange-200 transition"><Network className="w-4 h-4" /> Optimizar Grupos de Personal</button>
               <button onClick={() => { setViewRoute(null); setEditingPlannedRouteId(null); setWalkUpMode(false); setShowModal(true); }} className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg hover:bg-slate-900 transition"><Plus className="w-4 h-4" /> Nueva Ruta Manual</button>
           </div>
@@ -2606,6 +2634,8 @@ export default function Planificacion() {
               </div>
           </div>
       )}
+
+      {showCorporatePlanner && <TripLogixCorporatePlanner companies={availableClients} onGenerate={openPreparedCorporatePlan} onClose={()=>setShowCorporatePlanner(false)} />}
 
       {/* --- MODAL 2: CARPOOLING INTELIGENTE (WIZARD ETAPAS) --- */}
       {showCarpoolModal && (

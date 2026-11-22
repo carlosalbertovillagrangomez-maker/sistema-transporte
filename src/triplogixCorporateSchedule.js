@@ -139,6 +139,7 @@ export const corporateGroupsForDay = (participants,office,{capacity=4,mode='Ida'
 };
 
 export const estimateFuel = (km,kmPerLitre,pricePerLitre) => {
+  if(km===null||km===undefined||km==='')return null;
   const distance=Number(km),efficiency=Number(kmPerLitre),price=Number(pricePerLitre);
   if(!Number.isFinite(distance)||distance<0||!Number.isFinite(efficiency)||efficiency<=0||
      !Number.isFinite(price)||price<=0)return null;

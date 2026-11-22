@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2, Eye, GripVertical, Search, ArrowRight, ChevronLeft, CheckCircle2 } from 'lucide-react';
 // GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline, Autocomplete } from '@react-google-maps/api';
@@ -11,6 +12,8 @@ import TripLogixOperationalImporter from './TripLogixOperationalImporter';
 import TripLogixWhatsAppActions from './TripLogixWhatsAppActions';
 import TripLogixQuickDriver from './TripLogixQuickDriver';
 import TripLogixAIAssistant from './TripLogixAIAssistant';
+import TripLogixCorporatePlanner from './TripLogixCorporatePlanner.jsx';
+import {corporateSpreadsheetRows,estimateFuel,haversineKm} from './triplogixCorporateSchedule.js';
 import { isMeetingInstruction } from './triplogixMeetingPoint.js';
 import { FINAL_DESTINATION_EARLY_MINS, PASSENGER_PICKUP_BUFFER_MINS, DROPOFF_BUFFER_MINS } from './triplogixCarpoolPolicy.js';
 import { bucketByTimeAndDriver } from './triplogixAutomaticGroups.js';
@@ -557,6 +560,9 @@ export default function Planificacion() {
 
   // === ESTADOS MÓDULO CARPOOLING INTELIGENTE (WIZARD) ===
   const [showCarpoolModal, setShowCarpoolModal] = useState(false);
+  const [showCorporatePlanner,setShowCorporatePlanner] = useState(false);
+  const [showCarpoolExcel,setShowCarpoolExcel] = useState(false);
+  const [corporateFuelSettings,setCorporateFuelSettings] = useState({efficiency:'',price:''});
   const [carpoolStep, setCarpoolStep] = useState(1);
   const [employeeRoster, setEmployeeRoster] = useState([]);
   const [rosterSearch, setRosterSearch] = useState('');
@@ -665,7 +671,7 @@ export default function Planificacion() {
       return Number.isFinite(lat) && Number.isFinite(lng) ? { lat, lng } : null;
   };
 
-  const requestGoogleDrivingRoute = async (points) => {
+  const requestGoogleDrivingRoute = async (points, {optimizeWaypoints=false}={}) => {
       if (!isLoaded || !window.google?.maps?.DirectionsService) throw new Error('Google Maps todavía no está listo.');
       const valid = points.filter(Boolean).map(point => ({ source: point, location: toGoogleRouteLocation(point) })).filter(item => item.location);
       if (valid.length < 2) return null;
@@ -676,7 +682,7 @@ export default function Planificacion() {
               origin: valid[0].location,
               destination: valid[valid.length - 1].location,
               waypoints: valid.slice(1, -1).map(item => ({ location: item.location, stopover: true })),
-              optimizeWaypoints: false,
+              optimizeWaypoints: optimizeWaypoints === true,
               travelMode: window.google.maps.TravelMode.DRIVING,
               provideRouteAlternatives: valid.length === 2,
               drivingOptions: {
@@ -719,7 +725,10 @@ export default function Planificacion() {
           segments,
           totalDistance: (totalMeters / 1000).toFixed(1),
           totalDuration: Math.round(totalSeconds / 60),
-          routedStopLocations
+          routedStopLocations,
+          // Google devuelve el orden de los waypoints intermedios realmente
+          // optimizados; sin este mapeo las horas y pasajeros se desalinearían.
+          waypointOrder:Array.isArray(route.waypoint_order)?route.waypoint_order:[]
       };
   };
 
@@ -1109,6 +1118,8 @@ export default function Planificacion() {
   // =================================================================================
 
   const openCarpoolModal = () => {
+      setShowCarpoolExcel(false);
+      setCorporateFuelSettings({efficiency:'',price:''});
       setShowCarpoolModal(true);
       setCarpoolStep(1);
       setNewRoute({...newRoute, client: '', serviceType: 'Programado', scheduledDate: ''});
@@ -1118,6 +1129,23 @@ export default function Planificacion() {
       setPreviewGroupId('all');
       setGlobalCarpool({ mode: 'Ida' });
       setSelectedClientData(null);
+  };
+
+  const openPreparedCorporatePlan = ({client,date,mode,groups,fuelEfficiency,fuelPrice}) => {
+      if(!client||!groups?.length)return;
+      setSelectedClientData(client);
+      setNewRoute(prev=>({...prev,client:client.name,serviceType:'Programado',scheduledDate:date,driver:'',driverId:''}));
+      setGlobalCarpool({mode});
+      setEmployeeRoster(groups.flatMap(group=>group.employees.map(employee=>({...employee,included:true}))));
+      setCarpoolGroups(groups);
+      setCarpoolStep(2);
+      setShowCarpoolExcel(false);
+      setCorporateFuelSettings({efficiency:fuelEfficiency,price:fuelPrice});
+      setPreviewGroupId('all');
+      setShowCorporatePlanner(false);
+      setShowCarpoolModal(true);
+      // Evita usar estado React anterior (empresa o sentido equivocado).
+      fetchRealRoutesForGroups(groups,{client,mode});
   };
 
   const handleCarpoolClientChange = (e) => {
@@ -1354,10 +1382,12 @@ export default function Planificacion() {
 
   // --- CALCULAR RUTAS VEHICULARES CON GOOGLE DIRECTIONS ---
   // Soporta varios puntos compartidos dentro de la misma unidad.
-  const fetchRealRoutesForGroups = async (groups) => {
+  const fetchRealRoutesForGroups = async (groups, options={}) => {
       const requestId = ++carpoolRoutingRequestRef.current;
       setFetchingRealRoutes(true);
-      const oficina = selectedClientData?.locations?.find(l => l.assignedTo === 'General');
+      const client=options.client||selectedClientData;
+      const mode=options.mode||globalCarpool.mode;
+      const oficina = client?.locations?.find(l => l.assignedTo === 'General');
       let updatedGroups = [...groups];
 
       try {
@@ -1367,13 +1397,23 @@ export default function Planificacion() {
               const g = updatedGroups[i];
               const passengerStops = buildPassengerStopsForGroup(g);
               const points = [];
-
-              if (globalCarpool.mode === 'Ida') {
-                  passengerStops.forEach(stop => points.push(stop));
+              const optimize = g.generatedFromWeeklySchedule === true &&
+                  g.pickupMode === 'home' && passengerStops.length > 1 && oficina;
+              const orderedByProximity = optimize
+                  ? [...passengerStops].sort((a,b)=>haversineKm(b,oficina)-haversineKm(a,oficina))
+                  : passengerStops;
+              // ENTRADA: domicilio exterior como origen y empresa como final.
+              // SALIDA: empresa como origen y domicilio exterior como final.
+              // Google Maps optimiza los puntos interiores y devuelve waypoint_order.
+              if (mode === 'Ida') {
+                  orderedByProximity.forEach(stop => points.push(stop));
                   if (oficina) points.push(oficina);
               } else {
                   if (oficina) points.push(oficina);
-                  passengerStops.forEach(stop => points.push(stop));
+                  if (optimize) {
+                      orderedByProximity.slice(1).forEach(stop=>points.push(stop));
+                      points.push(orderedByProximity[0]);
+                  } else passengerStops.forEach(stop => points.push(stop));
               }
 
               if (points.length < 2) {
@@ -1390,19 +1430,30 @@ export default function Planificacion() {
               }
 
               try {
-                  const result = await requestGoogleDrivingRoute(points);
+                  const result = await requestGoogleDrivingRoute(points,{optimizeWaypoints:optimize});
                   if (requestId !== carpoolRoutingRequestRef.current) return;
                   if (!result) continue;
 
+                  let finalStops=passengerStops;
+                  if(optimize){
+                      const intermediate=points.slice(1,-1);
+                      const order=result.waypointOrder.length===intermediate.length
+                          ? result.waypointOrder
+                          : intermediate.map((_,index)=>index);
+                      const orderedPoints=[points[0],...order.map(index=>intermediate[index]),points[points.length-1]];
+                      finalStops=orderedPoints.filter(point=>point!==oficina);
+                  }
                   updatedGroups[i] = {
                       ...g,
-                      passengerStops,
+                      employees:optimize?finalStops.flatMap(stop=>stop.employees):g.employees,
+                      passengerStops:finalStops,
                       routeGeometry: result.geometry,
                       routeSegments: result.segments,
                       routedStopLocations: result.routedStopLocations,
                       totalDistanceKm: result.totalDistance,
                       totalDurationMins: result.totalDuration,
-                      routingProvider: 'google-directions'
+                      routingProvider: 'google-directions',
+                      optimizedWaypointOrder:optimize
                   };
               } catch (routeError) {
                   if (requestId !== carpoolRoutingRequestRef.current) return;
@@ -2421,6 +2472,14 @@ export default function Planificacion() {
       return true;
   });
 
+  const carpoolExcelRows = corporateSpreadsheetRows(carpoolGroups,globalCarpool.mode);
+  const exportCarpoolExcel = () => {
+      if(!carpoolExcelRows.length)return;
+      const book=XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(book,XLSX.utils.json_to_sheet(carpoolExcelRows),globalCarpool.mode==='Ida'?'Entradas':'Salidas');
+      XLSX.writeFile(book,'TripLogix_Rutas_Confirmadas_'+(newRoute.scheduledDate||'sin-fecha')+'.xlsx');
+  };
+
   const planDriverOptions = Array.from(new Set(
       activePlanRoutes
           .map(route => String(route?.driver || route?.ofertaNombre || '').trim())
@@ -2453,6 +2512,7 @@ export default function Planificacion() {
                 setTemporaryDriverSuggestions(Array.isArray(data.drivers) ? data.drivers : []);
                 setOperationalWorkbook(data);
               }} />
+              <button onClick={() => setShowCorporatePlanner(true)} className="bg-orange-500 text-white px-4 py-2 rounded-lg text-sm font-black flex items-center gap-2 hover:bg-orange-600 transition shadow"><Building2 className="w-4 h-4"/> Planeación automática</button>
               <button onClick={openCarpoolModal} className="bg-orange-100 text-orange-700 border border-orange-200 px-4 py-2 rounded-lg text-sm font-bold flex items-center gap-2 hover:bg-orange-200 transition"><Network className="w-4 h-4" /> Optimizar Grupos de Personal</button>
               <button onClick={() => { setViewRoute(null); setEditingPlannedRouteId(null); setWalkUpMode(false); setShowModal(true); }} className="bg-slate-800 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 shadow-lg hover:bg-slate-900 transition"><Plus className="w-4 h-4" /> Nueva Ruta Manual</button>
           </div>
@@ -2606,6 +2666,8 @@ export default function Planificacion() {
               </div>
           </div>
       )}
+
+      {showCorporatePlanner && <TripLogixCorporatePlanner companies={availableClients} onGenerate={openPreparedCorporatePlan} onClose={()=>setShowCorporatePlanner(false)} />}
 
       {/* --- MODAL 2: CARPOOLING INTELIGENTE (WIZARD ETAPAS) --- */}
       {showCarpoolModal && (
@@ -2770,10 +2832,31 @@ export default function Planificacion() {
                                               <button onClick={() => setCarpoolStep(1)} className="text-slate-400 hover:text-orange-500 transition"><ChevronLeft className="w-5 h-5"/></button>
                                               <h4 className="text-sm font-black text-slate-700">Cuadrillas Armadas</h4>
                                           </div>
-                                          <button onClick={() => setPreviewGroupId('all')} className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${previewGroupId === 'all' ? 'bg-slate-800 text-white shadow' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}><Eye className="w-3 h-3"/> Ver Todas</button>
+                                          <div className="flex gap-2 flex-wrap items-center"><button onClick={() => setShowCarpoolExcel(v=>!v)} className="text-[10px] font-black px-3 py-1.5 rounded-lg bg-orange-50 border border-orange-200 text-orange-700">{showCarpoolExcel?'Ver tarjetas':'Vista Excel'}</button><button onClick={exportCarpoolExcel} className="text-[10px] font-black px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700">Exportar .xlsx</button><button onClick={() => setPreviewGroupId('all')} className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${previewGroupId === 'all' ? 'bg-slate-800 text-white shadow' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}><Eye className="w-3 h-3"/> Ver Todas</button></div>
                                       </div>
 
-                                      <div className="space-y-6">
+                                      {showCarpoolExcel && <div className="overflow-x-auto bg-white border border-slate-200 rounded-2xl mb-5 shadow-sm">
+                                          <table className="min-w-[780px] text-[11px] border-collapse w-full">
+                                              <thead className="bg-slate-800 text-white"><tr>
+                                                  {['Unidad','Hora oficial','Conductor','Pasajero','Nombre','Domicilio','Km Google','Min Google'].map(h=><th key={h} className="p-2.5 text-left border-r border-white/10">{h}</th>)}
+                                              </tr></thead>
+                                              <tbody>{carpoolGroups.flatMap((g,index)=>g.employees.map((emp,passengerIndex)=>(
+                                                  <tr key={g.id+'_'+emp.assignedTo} className={index%2?'bg-slate-50':'bg-white'}>
+                                                      <td className="p-2 border-b">{index+1}</td><td className="p-2 border-b">{g.timeKey}</td>
+                                                      <td className="p-2 border-b"><select value={g.driverId||''} onChange={event=>setGroupDriver(g.id,event.target.value)} className="border rounded p-1.5 text-[10px] max-w-[160px] bg-white">
+                                                          <option value="">Sin asignar</option>{availableDrivers.map(driver=><option key={driver.id} value={driver.id}>{driver.name}</option>)}
+                                                      </select></td>
+                                                      <td className="p-2 border-b">{passengerIndex+1}/4</td>
+                                                      <td className="p-2 border-b font-bold">{emp.assignedTo}</td>
+                                                      <td className="p-2 border-b max-w-[250px]">{g.pickupMode==='meeting'?g.singleMeetingPoint?.address||'Punto pendiente':emp.address}</td>
+                                                      <td className="p-2 border-b">{g.totalDistanceKm??'Pendiente'}</td>
+                                                      <td className="p-2 border-b">{g.totalDurationMins??'Pendiente'}</td>
+                                                  </tr>
+                                              )))}</tbody>
+                                          </table>
+                                          <p className="p-3 text-[10px] text-slate-500">Los kilómetros y tiempos son recorridos reales calculados con Google Maps, no distancias en línea recta.</p>
+                                      </div>}
+                                      <div className={showCarpoolExcel?'hidden':'space-y-6'}>
                                           {carpoolGroups.map((grupo, idx) => {
                                               const isPreviewing = previewGroupId === grupo.id;
                                               const groupColor = PREVIEW_COLORS[idx % PREVIEW_COLORS.length];
@@ -2820,6 +2903,10 @@ export default function Planificacion() {
                                                           <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold">{grupo.employees.length}/4 pax</span>
                                                           {grupo.totalDistanceKm != null && <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold">{grupo.totalDistanceKm} km</span>}
                                                           {grupo.totalDurationMins != null && <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold">{grupo.totalDurationMins} min</span>}
+                                                          {grupo.totalDistanceKm != null && estimateFuel(grupo.totalDistanceKm,corporateFuelSettings.efficiency,corporateFuelSettings.price) &&
+                                                              <span className="text-[10px] bg-emerald-700 text-white px-2 py-1 rounded font-bold" title="Estimación: km / rendimiento × precio por litro. No es tarifa real ni garantía de consumo.">
+                                                                  Combustible estimado {getPricingDefaultsForCountry(getCountryFromPoint(selectedClientData?.locations?.find(loc=>loc.assignedTo==='General'))||getCountryFromTimezone()).currency} {estimateFuel(grupo.totalDistanceKm,corporateFuelSettings.efficiency,corporateFuelSettings.price).cost.toFixed(2)}
+                                                              </span>}
                                                           <button onClick={() => setPreviewGroupId(grupo.id)} className={`text-[10px] font-black uppercase px-2 py-1 rounded transition ${isPreviewing ? 'bg-orange-500 text-white' : 'bg-slate-600 text-slate-300 hover:bg-slate-500'}`}>Ver Ruta</button>
                                                       </div>
                                                   </div>

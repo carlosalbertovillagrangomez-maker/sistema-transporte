@@ -8,6 +8,7 @@ import { collection, addDoc, onSnapshot, deleteDoc, doc, updateDoc } from 'fireb
 // GOOGLE MAPS
 import { useJsApiLoader, Autocomplete } from '@react-google-maps/api';
 import * as XLSX from 'xlsx';
+import TripLogixEnterpriseWorkspace from './TripLogixEnterpriseWorkspace.jsx';
 
 // === CLAVE DE API ===
 const GOOGLE_MAPS_API_KEY = "AIzaSyA-t6YcuPK1PdOoHZJOyOsw6PK0tCDJrn0";
@@ -116,6 +117,8 @@ export default function Clientes() {
   const { isLoaded } = useJsApiLoader({ id: 'google-map-script', googleMapsApiKey: GOOGLE_MAPS_API_KEY, libraries, language: 'es' });
 
   const [showModal, setShowModal] = useState(false);
+  const [enterpriseWorkspaceOpen, setEnterpriseWorkspaceOpen] = useState(false);
+  const [enterpriseWorkspaceInitial, setEnterpriseWorkspaceInitial] = useState(null);
   const [loading, setLoading] = useState(true);
   
   // Lista de Clientes
@@ -294,6 +297,7 @@ export default function Clientes() {
           const existing = newClient.users[duplicateIndex];
           setEditingUserIndex(duplicateIndex);
           setTempUser({
+              ...existing,
               name: existing?.name || '',
               phone: existing?.phone || '',
               email: existing?.email || '',
@@ -310,7 +314,9 @@ export default function Clientes() {
 
       const users = [...newClient.users];
       const previousName = editingUserIndex !== null ? users[editingUserIndex]?.name : '';
-      const userToSave = { ...tempUser, phone: normalizedPhone || tempUser.phone };
+      // Al editar desde el formulario clásico, conservar la nueva plantilla
+      // semanal y los domicilios registrados en la ficha corporativa.
+      const userToSave = { ...(editingUserIndex !== null ? users[editingUserIndex] : {}), ...tempUser, phone: normalizedPhone || tempUser.phone };
 
       if (editingUserIndex !== null) {
           users[editingUserIndex] = userToSave;
@@ -342,6 +348,7 @@ export default function Clientes() {
   const editUser = (index) => {
       const user = newClient.users[index];
       setTempUser({
+          ...user,
           name: user?.name || '',
           phone: user?.phone || '',
           email: user?.email || '',
@@ -563,10 +570,11 @@ export default function Clientes() {
     <div className="flex-1 min-h-0 p-4 md:p-6 xl:p-8 bg-slate-50 overflow-y-auto overscroll-y-contain touch-pan-y h-full relative">
       <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-6">
         <div>
-            <h2 className="text-2xl font-bold text-slate-800">Cartera de Clientes</h2>
+            <h2 className="text-2xl font-bold text-slate-800">Empresas y clientes</h2>
             <p className="text-slate-500">{clients.length} registrados en Nube</p>
         </div>
         <div className="flex flex-wrap gap-2 justify-start md:justify-end w-full md:w-auto">
+            <button type="button" onClick={() => {setEnterpriseWorkspaceInitial(null);setEnterpriseWorkspaceOpen(true);}} className="bg-orange-500 text-white rounded-lg px-4 py-2 font-black text-sm flex items-center gap-2 shadow hover:bg-orange-600"><Building className="w-4 h-4"/> Empresa y turnos semanales</button>
             <button onClick={() => { setShowBulkModal(true); setBulkRows([]); setBulkResult(null); }} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-medium flex items-center gap-2 hover:bg-emerald-700 transition shadow-lg">
                 <Upload className="w-4 h-4" /> Carga masiva
             </button>
@@ -611,6 +619,7 @@ export default function Clientes() {
                       </div>
                   </div>
                   <h3 className="font-bold text-slate-800">{client.name}</h3>
+                  {client.type === 'Empresa' && <button type="button" onClick={() => {setEnterpriseWorkspaceInitial(client);setEnterpriseWorkspaceOpen(true);}} className="text-[11px] font-black text-orange-700 bg-orange-50 border border-orange-200 px-3 py-2 rounded-lg my-2 hover:bg-orange-100 flex items-center gap-1"><FileSpreadsheet className="w-3.5 h-3.5"/> Editar sedes y turnos semanales</button>}
                   <p className="text-xs text-slate-500 mb-4">{client.type} • ...{client.id.slice(-4)}</p>
                   
                   <div className="space-y-2 text-xs text-slate-600 mb-4">
@@ -632,6 +641,8 @@ export default function Clientes() {
           ))}
       </div>
       )}
+
+      {enterpriseWorkspaceOpen && <TripLogixEnterpriseWorkspace clients={clients} initial={enterpriseWorkspaceInitial} onClose={() => {setEnterpriseWorkspaceOpen(false);setEnterpriseWorkspaceInitial(null);}} />}
 
       {/* MODAL */}
       {showModal && (

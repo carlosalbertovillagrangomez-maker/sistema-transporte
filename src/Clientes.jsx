@@ -297,6 +297,7 @@ export default function Clientes() {
           const existing = newClient.users[duplicateIndex];
           setEditingUserIndex(duplicateIndex);
           setTempUser({
+              ...existing,
               name: existing?.name || '',
               phone: existing?.phone || '',
               email: existing?.email || '',
@@ -313,7 +314,9 @@ export default function Clientes() {
 
       const users = [...newClient.users];
       const previousName = editingUserIndex !== null ? users[editingUserIndex]?.name : '';
-      const userToSave = { ...tempUser, phone: normalizedPhone || tempUser.phone };
+      // Al editar desde el formulario clásico, conservar la nueva plantilla
+      // semanal y los domicilios registrados en la ficha corporativa.
+      const userToSave = { ...(editingUserIndex !== null ? users[editingUserIndex] : {}), ...tempUser, phone: normalizedPhone || tempUser.phone };
 
       if (editingUserIndex !== null) {
           users[editingUserIndex] = userToSave;
@@ -345,6 +348,7 @@ export default function Clientes() {
   const editUser = (index) => {
       const user = newClient.users[index];
       setTempUser({
+          ...user,
           name: user?.name || '',
           phone: user?.phone || '',
           email: user?.email || '',

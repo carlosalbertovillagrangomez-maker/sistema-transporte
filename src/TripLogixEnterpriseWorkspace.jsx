@@ -1,4 +1,4 @@
-import React, {useEffect,useRef,useState} from 'react';
+import React, {useRef,useState} from 'react';
 import {Autocomplete} from '@react-google-maps/api';
 import {addDoc,collection,doc,updateDoc} from 'firebase/firestore';
 import {Building2,CalendarDays,Check,ChevronLeft,FileSpreadsheet,MapPin,Plus,Save,Trash2,Users,X} from 'lucide-react';
@@ -14,18 +14,17 @@ const norm=value=>String(value||'').trim().normalize('NFD').replace(/[\u0300-\u0
 
 function PlaceInput({value,onText,onChoose,placeholder}){
   const ref=useRef(null);
-  const [text,setText]=useState(value||'');
-  useEffect(()=>setText(value||''),[value]);
+  // Entrada controlada por la ficha: evita desincronizar dirección y GPS.
   return <Autocomplete onLoad={v=>{ref.current=v;}} options={{fields:['formatted_address','geometry']}}
     onPlaceChanged={()=>{
       const place=ref.current?.getPlace();
       if(!place?.geometry?.location)return;
-      const chosen={address:place.formatted_address||text,lat:place.geometry.location.lat(),lon:place.geometry.location.lng()};
-      setText(chosen.address);onChoose(chosen);
+      const chosen={address:place.formatted_address||value,lat:place.geometry.location.lat(),lon:place.geometry.location.lng()};
+      onChoose(chosen);
     }}>
     <input className="w-full bg-white rounded-xl border border-slate-300 px-3 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-orange-200"
-      placeholder={placeholder||'Buscar dirección exacta en Google Maps…'} value={text}
-      onChange={e=>{setText(e.target.value);onText(e.target.value);}} />
+      placeholder={placeholder||'Buscar dirección exacta en Google Maps…'} value={value||''}
+      onChange={e=>onText(e.target.value)} />
   </Autocomplete>;
 }
 const dayStyle='border rounded-lg p-2 bg-slate-50 border-slate-200';

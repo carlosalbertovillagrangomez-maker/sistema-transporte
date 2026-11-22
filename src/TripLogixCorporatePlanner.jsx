@@ -1,4 +1,4 @@
-import React,{useMemo,useState} from 'react';
+import React,{useState} from 'react';
 import * as XLSX from 'xlsx';
 import {Building2,CalendarDays,ChevronRight,FileSpreadsheet,MapPin,Route,X} from 'lucide-react';
 import {corporateGroupsForDay,corporateSpreadsheetRows,dailyCorporateRoster,generalSites,validCoords} from './triplogixCorporateSchedule.js';
@@ -16,13 +16,12 @@ export default function TripLogixCorporatePlanner({companies=[],onGenerate,onClo
   const [fuelPrice,setFuelPrice]=useState('');
   const enterprise=companies.filter(c=>c.type==='Empresa');
   const company=enterprise.find(c=>c.id===companyId);
-  const sites=useMemo(()=>generalSites(company),[company]);
+  const sites=generalSites(company);
   const office=sites[siteIndex]||sites[0];
-  const program=useMemo(()=>dailyCorporateRoster(company,date,mode),[company,date,mode]);
-  const groups=useMemo(()=>validCoords(office)?
-    corporateGroupsForDay(program.participants,office,{mode}):[],[program,office,mode]);
+  const program=dailyCorporateRoster(company,date,mode);
+  const groups=validCoords(office)?corporateGroupsForDay(program.participants,office,{mode}):[];
   const scheduledCount=program.participants.length+program.missing.length;
-  const table=useMemo(()=>corporateSpreadsheetRows(groups,mode),[groups,mode]);
+  const table=corporateSpreadsheetRows(groups,mode);
   const exportExcel=()=>{
     if(!table.length)return;
     const book=XLSX.utils.book_new();

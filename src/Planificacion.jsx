@@ -1381,10 +1381,12 @@ export default function Planificacion() {
 
   // --- CALCULAR RUTAS VEHICULARES CON GOOGLE DIRECTIONS ---
   // Soporta varios puntos compartidos dentro de la misma unidad.
-  const fetchRealRoutesForGroups = async (groups) => {
+  const fetchRealRoutesForGroups = async (groups, options={}) => {
       const requestId = ++carpoolRoutingRequestRef.current;
       setFetchingRealRoutes(true);
-      const oficina = selectedClientData?.locations?.find(l => l.assignedTo === 'General');
+      const client=options.client||selectedClientData;
+      const mode=options.mode||globalCarpool.mode;
+      const oficina = client?.locations?.find(l => l.assignedTo === 'General');
       let updatedGroups = [...groups];
 
       try {
@@ -1394,13 +1396,23 @@ export default function Planificacion() {
               const g = updatedGroups[i];
               const passengerStops = buildPassengerStopsForGroup(g);
               const points = [];
-
-              if (globalCarpool.mode === 'Ida') {
-                  passengerStops.forEach(stop => points.push(stop));
+              const optimize = g.generatedFromWeeklySchedule === true &&
+                  g.pickupMode === 'home' && passengerStops.length > 1 && oficina;
+              const orderedByProximity = optimize
+                  ? [...passengerStops].sort((a,b)=>haversineKm(b,oficina)-haversineKm(a,oficina))
+                  : passengerStops;
+              // ENTRADA: domicilio exterior como origen y empresa como final.
+              // SALIDA: empresa como origen y domicilio exterior como final.
+              // Google Maps optimiza los puntos interiores y devuelve waypoint_order.
+              if (mode === 'Ida') {
+                  orderedByProximity.forEach(stop => points.push(stop));
                   if (oficina) points.push(oficina);
               } else {
                   if (oficina) points.push(oficina);
-                  passengerStops.forEach(stop => points.push(stop));
+                  if (optimize) {
+                      orderedByProximity.slice(1).forEach(stop=>points.push(stop));
+                      points.push(orderedByProximity[0]);
+                  } else passengerStops.forEach(stop => points.push(stop));
               }
 
               if (points.length < 2) {
@@ -1417,19 +1429,30 @@ export default function Planificacion() {
               }
 
               try {
-                  const result = await requestGoogleDrivingRoute(points);
+                  const result = await requestGoogleDrivingRoute(points,{optimizeWaypoints:optimize});
                   if (requestId !== carpoolRoutingRequestRef.current) return;
                   if (!result) continue;
 
+                  let finalStops=passengerStops;
+                  if(optimize){
+                      const intermediate=points.slice(1,-1);
+                      const order=result.waypointOrder.length===intermediate.length
+                          ? result.waypointOrder
+                          : intermediate.map((_,index)=>index);
+                      const orderedPoints=[points[0],...order.map(index=>intermediate[index]),points[points.length-1]];
+                      finalStops=orderedPoints.filter(point=>point!==oficina);
+                  }
                   updatedGroups[i] = {
                       ...g,
-                      passengerStops,
+                      employees:optimize?finalStops.flatMap(stop=>stop.employees):g.employees,
+                      passengerStops:finalStops,
                       routeGeometry: result.geometry,
                       routeSegments: result.segments,
                       routedStopLocations: result.routedStopLocations,
                       totalDistanceKm: result.totalDistance,
                       totalDurationMins: result.totalDuration,
-                      routingProvider: 'google-directions'
+                      routingProvider: 'google-directions',
+                      optimizedWaypointOrder:optimize
                   };
               } catch (routeError) {
                   if (requestId !== carpoolRoutingRequestRef.current) return;

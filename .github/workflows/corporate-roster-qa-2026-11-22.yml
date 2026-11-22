@@ -24,5 +24,7 @@ jobs:
         run: node --test tests/triplogixCorporateSchedule.test.js tests/triplogixPickupModes.test.js tests/triplogixCarpoolPolicy.test.js tests/triplogixScheduleReview.test.js tests/triplogixFourColumns.test.js tests/triplogixFiveColumns.test.js tests/triplogixSplitHeader.test.js tests/triplogixWeeklyTemplate.test.js tests/triplogixWorkbook.test.js
       - name: API syntax
         run: node --check api/whatsapp/sync.js
+      - name: New module static analysis
+        run: npx eslint src/TripLogixEnterpriseWorkspace.jsx src/TripLogixCorporatePlanner.jsx src/triplogixCorporateSchedule.js
       - name: Production frontend build
         run: npm run build

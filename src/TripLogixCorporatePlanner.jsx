@@ -138,7 +138,7 @@ export default function TripLogixCorporatePlanner({companies=[],onGenerate,onClo
           <label className="text-[10px] text-slate-500">Rendimiento km/L
             <input type="number" min="0.1" step="0.1" value={fuelEfficiency} onChange={e=>setFuelEfficiency(e.target.value)} placeholder="ej. 10" className="ml-1 border rounded-lg px-2 py-2 w-20 text-xs"/></label>
           <label className="text-[10px] text-slate-500">Precio por litro
-            <input type="number" min="0.1" step="0.01" value={fuelPrice} onChange={e=>setFuelPrice(e.target.value)} placeholder="MXN" className="ml-1 border rounded-lg px-2 py-2 w-20 text-xs"/></label>
+            <input type="number" min="0.1" step="0.01" value={fuelPrice} onChange={e=>setFuelPrice(e.target.value)} placeholder="Moneda local" className="ml-1 border rounded-lg px-2 py-2 w-20 text-xs"/></label>
         </div>
         <button type="button" disabled={!groups.length||program.missing.length>0||!validCoords(office)}
           onClick={generate} className="flex items-center justify-center gap-2 px-6 py-3.5 bg-orange-500 rounded-xl text-white text-sm font-black shadow-lg hover:bg-orange-600 disabled:bg-slate-200 disabled:text-slate-400 disabled:shadow-none">

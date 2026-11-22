@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
+import * as XLSX from 'xlsx';
 import { Plus, MapPin, X, Trash2, User, Loader2, Zap, Calendar, Navigation, Star, Clock, MoreVertical, Users, Wand2, Car, Network, Building2, Eye, GripVertical, Search, ArrowRight, ChevronLeft, CheckCircle2 } from 'lucide-react';
 // GOOGLE MAPS
 import { GoogleMap, useJsApiLoader, Marker, Polyline, Autocomplete } from '@react-google-maps/api';
@@ -2471,6 +2472,14 @@ export default function Planificacion() {
       return true;
   });
 
+  const carpoolExcelRows = corporateSpreadsheetRows(carpoolGroups,globalCarpool.mode);
+  const exportCarpoolExcel = () => {
+      if(!carpoolExcelRows.length)return;
+      const book=XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(book,XLSX.utils.json_to_sheet(carpoolExcelRows),globalCarpool.mode==='Ida'?'Entradas':'Salidas');
+      XLSX.writeFile(book,'TripLogix_Rutas_Confirmadas_'+(newRoute.scheduledDate||'sin-fecha')+'.xlsx');
+  };
+
   const planDriverOptions = Array.from(new Set(
       activePlanRoutes
           .map(route => String(route?.driver || route?.ofertaNombre || '').trim())
@@ -2823,10 +2832,31 @@ export default function Planificacion() {
                                               <button onClick={() => setCarpoolStep(1)} className="text-slate-400 hover:text-orange-500 transition"><ChevronLeft className="w-5 h-5"/></button>
                                               <h4 className="text-sm font-black text-slate-700">Cuadrillas Armadas</h4>
                                           </div>
-                                          <button onClick={() => setPreviewGroupId('all')} className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${previewGroupId === 'all' ? 'bg-slate-800 text-white shadow' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}><Eye className="w-3 h-3"/> Ver Todas</button>
+                                          <div className="flex gap-2 flex-wrap items-center"><button onClick={() => setShowCarpoolExcel(v=>!v)} className="text-[10px] font-black px-3 py-1.5 rounded-lg bg-orange-50 border border-orange-200 text-orange-700">{showCarpoolExcel?'Ver tarjetas':'Vista Excel'}</button><button onClick={exportCarpoolExcel} className="text-[10px] font-black px-3 py-1.5 rounded-lg bg-slate-100 text-slate-700">Exportar .xlsx</button><button onClick={() => setPreviewGroupId('all')} className={`text-[10px] font-black uppercase px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition ${previewGroupId === 'all' ? 'bg-slate-800 text-white shadow' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}><Eye className="w-3 h-3"/> Ver Todas</button></div>
                                       </div>
 
-                                      <div className="space-y-6">
+                                      {showCarpoolExcel && <div className="overflow-x-auto bg-white border border-slate-200 rounded-2xl mb-5 shadow-sm">
+                                          <table className="min-w-[780px] text-[11px] border-collapse w-full">
+                                              <thead className="bg-slate-800 text-white"><tr>
+                                                  {['Unidad','Hora oficial','Conductor','Pasajero','Nombre','Domicilio','Km Google','Min Google'].map(h=><th key={h} className="p-2.5 text-left border-r border-white/10">{h}</th>)}
+                                              </tr></thead>
+                                              <tbody>{carpoolGroups.flatMap((g,index)=>g.employees.map((emp,passengerIndex)=>(
+                                                  <tr key={g.id+'_'+emp.assignedTo} className={index%2?'bg-slate-50':'bg-white'}>
+                                                      <td className="p-2 border-b">{index+1}</td><td className="p-2 border-b">{g.timeKey}</td>
+                                                      <td className="p-2 border-b"><select value={g.driverId||''} onChange={event=>setGroupDriver(g.id,event.target.value)} className="border rounded p-1.5 text-[10px] max-w-[160px] bg-white">
+                                                          <option value="">Sin asignar</option>{availableDrivers.map(driver=><option key={driver.id} value={driver.id}>{driver.name}</option>)}
+                                                      </select></td>
+                                                      <td className="p-2 border-b">{passengerIndex+1}/4</td>
+                                                      <td className="p-2 border-b font-bold">{emp.assignedTo}</td>
+                                                      <td className="p-2 border-b max-w-[250px]">{g.pickupMode==='meeting'?g.singleMeetingPoint?.address||'Punto pendiente':emp.address}</td>
+                                                      <td className="p-2 border-b">{g.totalDistanceKm??'Pendiente'}</td>
+                                                      <td className="p-2 border-b">{g.totalDurationMins??'Pendiente'}</td>
+                                                  </tr>
+                                              )))}</tbody>
+                                          </table>
+                                          <p className="p-3 text-[10px] text-slate-500">Los kilómetros y tiempos son recorridos reales calculados con Google Maps, no distancias en línea recta.</p>
+                                      </div>}
+                                      <div className={showCarpoolExcel?'hidden':'space-y-6'}>
                                           {carpoolGroups.map((grupo, idx) => {
                                               const isPreviewing = previewGroupId === grupo.id;
                                               const groupColor = PREVIEW_COLORS[idx % PREVIEW_COLORS.length];
@@ -2873,6 +2903,10 @@ export default function Planificacion() {
                                                           <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold">{grupo.employees.length}/4 pax</span>
                                                           {grupo.totalDistanceKm != null && <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold">{grupo.totalDistanceKm} km</span>}
                                                           {grupo.totalDurationMins != null && <span className="text-[10px] bg-slate-700 px-2 py-1 rounded font-bold">{grupo.totalDurationMins} min</span>}
+                                                          {grupo.totalDistanceKm != null && estimateFuel(grupo.totalDistanceKm,corporateFuelSettings.efficiency,corporateFuelSettings.price) &&
+                                                              <span className="text-[10px] bg-emerald-700 text-white px-2 py-1 rounded font-bold" title="Estimación: km / rendimiento × precio por litro. No es tarifa real ni garantía de consumo.">
+                                                                  Combustible estimado $ {estimateFuel(grupo.totalDistanceKm,corporateFuelSettings.efficiency,corporateFuelSettings.price).cost.toFixed(2)}
+                                                              </span>}
                                                           <button onClick={() => setPreviewGroupId(grupo.id)} className={`text-[10px] font-black uppercase px-2 py-1 rounded transition ${isPreviewing ? 'bg-orange-500 text-white' : 'bg-slate-600 text-slate-300 hover:bg-slate-500'}`}>Ver Ruta</button>
                                                       </div>
                                                   </div>

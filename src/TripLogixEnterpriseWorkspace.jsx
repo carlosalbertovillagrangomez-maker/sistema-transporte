@@ -242,6 +242,36 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
               <p className={'text-[11px] '+(validCoords(site)?'text-emerald-700':'text-amber-700')}>{validCoords(site)?'✓ Ubicación validada con Google Maps':'Selecciona una sugerencia de Google Maps para validar esta ubicación'}</p>
             </div>)}
           </div>
+          <div className="bg-white border border-slate-200 rounded-2xl p-5 space-y-4">
+            <div className="flex justify-between items-start gap-3 flex-wrap">
+              <div>
+                <h3 className="font-black text-slate-900 flex gap-2 items-center"><MapPin size={19} className="text-orange-500"/> Puntos intermedios de recogida y entrega</h3>
+                <p className="text-sm text-slate-500 mt-1">Registra una sola vez lugares como Plaza Vallarta, una recaudación o un supermercado. Estos puntos se podrán elegir por empleado, día, entrada y salida.</p>
+              </div>
+              <button type="button" onClick={addMeetingPoint} className="px-4 py-2 rounded-lg text-xs font-black bg-orange-50 text-orange-700 border border-orange-200 flex gap-2 items-center"><Plus size={15}/> Nuevo punto intermedio</button>
+            </div>
+            {meetingPoints.length===0&&<div className="p-4 rounded-xl border border-dashed border-slate-300 text-xs text-slate-500">
+              Aún no hay puntos intermedios. Presiona «Nuevo punto intermedio», asígnale un nombre y selecciona su dirección exacta en Google Maps.
+            </div>}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {meetingPoints.map((point,index)=><div key={point.id} className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-2">
+                <div className="flex gap-2 items-end">
+                  <label className="flex-1 text-xs font-bold text-slate-700">Nombre del punto {index+1}
+                    <input className="block mt-1 w-full bg-white p-2.5 border border-slate-300 rounded-lg text-sm" value={point.alias||''}
+                      onChange={e=>editMeetingPoint(point.id,{alias:e.target.value})} placeholder="Ej. Plaza Vallarta"/>
+                  </label>
+                  <button type="button" aria-label={'Eliminar punto '+(point.alias||index+1)} onClick={()=>removeMeetingPoint(point.id)}
+                    className="p-2.5 bg-white border rounded-lg text-red-600 hover:bg-red-50"><Trash2 size={17}/></button>
+                </div>
+                <PlaceInput value={point.address||''} placeholder="Ubica el punto en Google Maps"
+                  onText={address=>editMeetingPoint(point.id,{address,lat:null,lon:null,lng:null})}
+                  onChoose={chosen=>editMeetingPoint(point.id,chosen)}/>
+                <p className={'text-[11px] font-semibold '+(validCoords(point)?'text-emerald-700':'text-amber-700')}>
+                  {validCoords(point)?'✓ Punto ubicado y listo para los turnos':'Selecciona la sugerencia de Maps; no basta con escribir el nombre'}
+                </p>
+              </div>)}
+            </div>
+          </div>
           <button type="button" onClick={()=>setTab('empleados')} className="rounded-xl bg-slate-800 text-white px-5 py-3 text-sm font-black flex items-center gap-2">Continuar: empleados y turnos <ChevronLeft size={16} className="rotate-180"/></button>
         </div>:<div className="space-y-4">
           <div className="bg-white p-4 sm:p-5 border rounded-2xl flex flex-wrap justify-between gap-3 items-center">
@@ -253,18 +283,22 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
             </div>
           </div>
           {showHelp&&<div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 flex gap-3 justify-between">
-            <span>**Uso rápido:** edita cada celda como en Excel; marca los días, horas y luego selecciona el domicilio desde Google Maps. Los empleados sin día marcado no se planifican automáticamente.</span>
+            <span><b>Uso rápido:</b> marca cada día laboral, define hora de entrada/salida y elige el lugar para cada trayecto: <b>Casa</b> o un punto intermedio guardado en Empresa y sedes. El domicilio personal no se modifica. Sin día marcado no se generan viajes.</span>
             <button type="button" onClick={()=>setShowHelp(false)}><X size={14}/></button></div>}
+          <div className="bg-white border border-slate-200 rounded-xl p-3 flex flex-wrap gap-2 justify-between items-center">
+            <p className="text-xs text-slate-600"><b>{meetingPoints.length} puntos intermedios</b> registrados. Cada empleado puede tener un lugar diferente para entrada y salida, cualquier día.</p>
+            <button type="button" onClick={()=>setTab('empresa')} className="text-xs font-black px-3 py-2 rounded-lg bg-orange-50 text-orange-700 border border-orange-200">Administrar puntos y sedes</button>
+          </div>
           <div className="flex gap-2 items-center"><input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}}
             className="border border-slate-200 rounded-lg bg-white px-4 py-2.5 text-sm w-full max-w-md" placeholder="Buscar empleado…"/>
             <span className="text-xs text-slate-500">{employees.length} registrados</span></div>
           <div className="overflow-x-auto overflow-y-auto max-h-[58vh] rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <table className="text-xs border-collapse w-full min-w-[1570px]">
+            <table className="text-xs border-collapse w-full min-w-[2250px]">
               <thead className="sticky top-0 z-20 bg-[#0d2336] text-white">
                 <tr><th className="sticky left-0 z-30 bg-[#0d2336] p-3 text-left min-w-[170px] border-r border-white/10">Empleado</th>
                   <th className="p-3 min-w-[235px] text-left">Domicilio</th>
                   <th className="p-3 text-left min-w-[125px]">Teléfono</th>
-                  {WEEK_DAYS.map(day=><th key={day.key} className="text-center p-3 border-l border-white/10 min-w-[140px]">{day.name}</th>)}
+                  {WEEK_DAYS.map(day=><th key={day.key} className="text-center p-3 border-l border-white/10 min-w-[240px]">{day.name}</th>)}
                   <th className="w-12 p-2"> </th></tr>
               </thead>
               <tbody>
@@ -291,6 +325,30 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
                           <label className="text-[9px] text-slate-500">Salida
                             <input aria-label={day.name+' salida de '+user.name} type="time" disabled={!shift.active} value={shift.salida}
                               onChange={e=>editShift(index,day.key,'salida',e.target.value)} className="w-full rounded border text-[10px] p-1 bg-white disabled:opacity-40"/></label>
+                        </div>
+                        <div className="mt-2 space-y-1.5 border-t border-slate-200 pt-2">
+                          <label className="block text-[10px] text-slate-600 font-semibold">Entrada: recoger en
+                            <select aria-label={day.name+' lugar de entrada de '+user.name}
+                              disabled={!shift.active} value={pointSelectValue(shift.entradaLocation)}
+                              onChange={e=>shiftPoint(index,day.key,'entradaLocation',e.target.value)}
+                              className="block mt-0.5 w-full bg-white border rounded-md px-1.5 py-1.5 text-[11px] disabled:opacity-40">
+                              <option value="home">Casa (domicilio)</option>
+                              {shift.entradaLocation?.type==='meeting'&&!meetingPoints.some(point=>point.id===shift.entradaLocation.meetingPointId)&&
+                                <option value={'meeting:'+shift.entradaLocation.meetingPointId} disabled>⚠ Punto eliminado</option>}
+                              {meetingPoints.map(point=><option key={point.id} value={'meeting:'+point.id}>📍 {point.alias||'Punto sin nombre'}</option>)}
+                            </select>
+                          </label>
+                          <label className="block text-[10px] text-slate-600 font-semibold">Salida: dejar en
+                            <select aria-label={day.name+' lugar de salida de '+user.name}
+                              disabled={!shift.active} value={pointSelectValue(shift.salidaLocation)}
+                              onChange={e=>shiftPoint(index,day.key,'salidaLocation',e.target.value)}
+                              className="block mt-0.5 w-full bg-white border rounded-md px-1.5 py-1.5 text-[11px] disabled:opacity-40">
+                              <option value="home">Casa (domicilio)</option>
+                              {shift.salidaLocation?.type==='meeting'&&!meetingPoints.some(point=>point.id===shift.salidaLocation.meetingPointId)&&
+                                <option value={'meeting:'+shift.salidaLocation.meetingPointId} disabled>⚠ Punto eliminado</option>}
+                              {meetingPoints.map(point=><option key={point.id} value={'meeting:'+point.id}>📍 {point.alias||'Punto sin nombre'}</option>)}
+                            </select>
+                          </label>
                         </div>
                       </div>
                     </td>;

@@ -1398,7 +1398,7 @@ export default function Planificacion() {
               const passengerStops = buildPassengerStopsForGroup(g);
               const points = [];
               const optimize = g.generatedFromWeeklySchedule === true &&
-                  g.pickupMode === 'home' && passengerStops.length > 1 && oficina;
+                  (g.pickupMode === 'home' || g.pickupMode === 'scheduled') && passengerStops.length > 1 && oficina;
               const orderedByProximity = optimize
                   ? [...passengerStops].sort((a,b)=>haversineKm(b,oficina)-haversineKm(a,oficina))
                   : passengerStops;
@@ -1828,7 +1828,8 @@ export default function Planificacion() {
       employees:group.employees.map(e => ({...e,aiReferenceTime:''}))});
 
   const setGroupPickupMode = (groupId, pickupMode) => {
-      if (!['home','meeting','multiple'].includes(pickupMode)) return;
+      if (!['home','meeting','multiple','scheduled'].includes(pickupMode)) return;
+       if(pickupMode==='scheduled'&&!carpoolGroups.some(g=>g.id===groupId&&g.generatedFromWeeklySchedule))return;
       refreshGroupsAfterChange(carpoolGroups.map(g => g.id === groupId ? dropImportedPassTimes({...g,pickupMode}) : g));
   };
   const setGroupSingleMeetingPoint = (groupId, loc) => {
@@ -1839,6 +1840,8 @@ export default function Planificacion() {
       refreshGroupsAfterChange(carpoolGroups.map(g => g.id !== groupId ? g : dropImportedPassTimes({...g,
           employees:g.employees.map(e => e.assignedTo !== name ? e : ({...e,address:loc.address,
               lat:Number(loc.lat),lng:Number(loc.lng ?? loc.lon),lon:Number(loc.lng ?? loc.lon),
+              ...(g.generatedFromWeeklySchedule?{homeAddress:loc.address,homeLat:Number(loc.lat),
+                 homeLng:Number(loc.lng??loc.lon),homeLon:Number(loc.lng??loc.lon)}:{}),
               aiMeetingPointKey:'',aiMeetingPointLabel:'',aiMeetingPointAddress:''}))
       })));
   };
@@ -1853,7 +1856,9 @@ export default function Planificacion() {
           const clear = {routeGeometry:[],routeSegments:[],routedStopLocations:[],totalDurationMins:null,totalDistanceKm:null};
           if (!passengerName) return {...g,...clear,singleMeetingPoint:{address,lat:null,lng:null}};
           return {...g,...clear,employees:g.employees.map(e => e.assignedTo === passengerName
-              ? {...e,address,lat:null,lng:null,lon:null} : e)};
+              ? {...e,address,lat:null,lng:null,lon:null,
+                  ...(g.generatedFromWeeklySchedule&&g.pickupMode==='home'
+                    ?{homeAddress:address,homeLat:null,homeLng:null,homeLon:null}:{})} : e)};
       }));
   };
 
@@ -2004,7 +2009,12 @@ export default function Planificacion() {
               return alert("⚠️ Google Maps no ha confirmado un recorrido vial para una de las unidades. Recalcula la ruta antes de guardar; no se crearán trayectos en línea recta.");
           }
 
-          if (group.pickupMode === 'home' && buildPassengerStopsForGroup(group).length !== group.employees.length) return alert('⚠️ Falta validar un domicilio. Selecciona una sugerencia de Google Maps para cada pasajero.');
+          const stopsForValidation=buildPassengerStopsForGroup(group);
+           const mappedPassengers=stopsForValidation.flatMap(stop=>stop.employees);
+           if(mappedPassengers.length!==group.employees.length ||
+               new Set(mappedPassengers.map(e=>e.assignedTo)).size!==group.employees.length){
+               return alert('⚠️ Hay personas sin ubicación válida en esta cuadrilla. Revisa los domicilios y puntos intermedios antes de crear rutas.');
+           }
           for (const point of getGroupMeetingPoints(group)) {
               if (!point.address || isMeetingInstruction(point.address) || !Number.isFinite(Number(point.lat)) || !Number.isFinite(Number(point.lng ?? point.lon))) {
                   return alert("⚠️ Hay un punto de reunión sin ubicación válida.");

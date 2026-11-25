@@ -3,10 +3,10 @@ import {Autocomplete} from '@react-google-maps/api';
 import {addDoc,collection,doc,updateDoc} from 'firebase/firestore';
 import {Building2,CalendarDays,Check,ChevronLeft,FileSpreadsheet,MapPin,Plus,Save,Trash2,Users,X} from 'lucide-react';
 import {db} from './firebase';
-import {WEEK_DAYS,emptyWeeklySchedule,normalizeWeeklySchedule,validCoords} from './triplogixCorporateSchedule.js';
+import {WEEK_DAYS,emptyWeeklySchedule,normalizeWeeklySchedule,normalizeShiftLocation,validCoords} from './triplogixCorporateSchedule.js';
 
 const clone = obj => JSON.parse(JSON.stringify(obj));
-const blankCompany=()=>({name:'',type:'Empresa',phone:'',email:'',users:[],
+const blankCompany=()=>({name:'',type:'Empresa',phone:'',email:'',users:[],meetingPoints:[],
   locations:[{alias:'Sede principal',address:'',lat:null,lon:null,assignedTo:'General'}]});
 const blankEmployee=()=>({name:'',phone:'',email:'',role:'Empleado',address:'',lat:null,lon:null,
   whatsappOptIn:false,weeklySchedule:emptyWeeklySchedule()});
@@ -46,6 +46,7 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
   const totalPages=Math.max(1,Math.ceil(visibleEmployees.length/PAGE_SIZE));
   const currentPage=Math.min(page,totalPages-1);
   const companySites=(company.locations||[]).filter(loc=>loc.assignedTo==='General'||!loc.assignedTo);
+  const meetingPoints=Array.isArray(company.meetingPoints)?company.meetingPoints:[];
   const setInfo=(key,value)=>setCompany(prev=>({...prev,[key]:value}));
   const editUser=(i,changes)=>setCompany(prev=>({...prev,users:prev.users.map((u,index)=>
     index===i?{...u,...changes}:u)}));
@@ -86,6 +87,35 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
     if(general.length<=1)return prev;
     return {...prev,locations:locs.filter((_,i)=>i!==general[index]?.__index)};
   });
+  const addMeetingPoint=()=>setCompany(prev=>({...prev,meetingPoints:[
+    ...(prev.meetingPoints||[]),
+    {id:'meeting_'+Date.now()+'_'+Math.random().toString(36).slice(2,8),alias:'',address:'',lat:null,lon:null}
+  ]}));
+  const editMeetingPoint=(id,updates)=>setCompany(prev=>({...prev,meetingPoints:
+    (prev.meetingPoints||[]).map(point=>point.id===id?{...point,...updates}:point)}));
+  const removeMeetingPoint=id=>{
+    const used=(company.users||[]).some(u=>WEEK_DAYS.some(day=>{
+      const shift=u.weeklySchedule?.[day.key]||{};
+      return [shift.entradaLocation,shift.salidaLocation].some(loc=>
+        loc?.type==='meeting'&&loc.meetingPointId===id);
+    }));
+    if(used)return alert('Este punto está asignado a empleados. Primero cambia sus turnos a Casa o a otro punto.');
+    if(!window.confirm('¿Eliminar este punto del catálogo de la empresa?'))return;
+    setCompany(prev=>({...prev,meetingPoints:(prev.meetingPoints||[]).filter(p=>p.id!==id)}));
+  };
+  const shiftPoint=(i,day,key,value)=>{
+    const [type,id]=value.startsWith('meeting:')?['meeting',value.slice(8)]:['home',''];
+    editShift(i,day,key,{type,meetingPointId:id});
+  };
+  const pointSelectValue=loc=>{
+    const choice=normalizeShiftLocation(loc);
+    return choice.type==='meeting'?'meeting:'+choice.meetingPointId:'home';
+  };
+  const pointAlias=loc=>{
+    const choice=normalizeShiftLocation(loc);
+    if(choice.type==='home')return 'Casa';
+    return meetingPoints.find(p=>p.id===choice.meetingPointId)?.alias||'Punto no disponible';
+  };
   const editHome=(index,point)=>{
     editUser(index,{address:point.address,lat:point.lat,lon:point.lon,lng:point.lon});
   };
@@ -96,6 +126,16 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
       return alert('Ya existe otra empresa con ese nombre.');
     if(!companySites.some(loc=>loc.address&&validCoords(loc)))
       return alert('Agrega al menos una sede con dirección seleccionada de Google Maps.');
+    const aliases=new Set();
+    for(const point of meetingPoints){
+      const alias=norm(point.alias);
+      if(!alias||!String(point.address||'').trim()||!validCoords(point)){
+        return alert('Completa y valida con Google Maps todos los puntos intermedios, o elimina los que no utilizarás.');
+      }
+      if(aliases.has(alias))return alert('Hay dos puntos intermedios con el mismo nombre: '+point.alias);
+      aliases.add(alias);
+    }
+    const availablePoints=new Set(meetingPoints.map(point=>point.id));
     const names=new Set();
     for(const user of employees){
       const person=norm(user.name);
@@ -104,6 +144,10 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
       names.add(person);
       for(const day of WEEK_DAYS){
         const shift=user.weeklySchedule?.[day.key];
+        for(const choice of [shift?.entradaLocation,shift?.salidaLocation]){
+          if(choice?.type==='meeting'&&!availablePoints.has(choice.meetingPointId))
+            return alert('El empleado '+user.name+' tiene asignado un punto intermedio que ya no existe el '+day.name+'.');
+        }
         if(shift?.active&&(!/^([01]\d|2[0-3]):[0-5]\d$/.test(shift.entrada||'')||
           !/^([01]\d|2[0-3]):[0-5]\d$/.test(shift.salida||''))){
           return alert('Corrige horarios de '+user.name+' el '+day.name+'.');
@@ -119,7 +163,7 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
       employees.some(u=>norm(u.name)===norm(loc.assignedTo)));
     const payload={...company,id:undefined,type:'Empresa',name,users:employees.map(u=>({
       ...u,weeklySchedule:normalizeWeeklySchedule(u.weeklySchedule)
-    })),locations:[...companySites.map(loc=>({...loc,assignedTo:'General'})),...newHomes,...extras],
+    })),meetingPoints:meetingPoints.map(point=>({...point,alias:String(point.alias).trim(),address:String(point.address).trim()})),locations:[...companySites.map(loc=>({...loc,assignedTo:'General'})),...newHomes,...extras],
       updatedAt:new Date().toISOString()};
     delete payload.id;
     setBusy(true);
@@ -136,7 +180,8 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
     const rows=employees.flatMap(u=>WEEK_DAYS.map(d=>{
       const shift=normalizeWeeklySchedule(u.weeklySchedule)[d.key];
       return {'Empleado':u.name,'Domicilio':u.address,'Día':d.name,'Trabaja':shift.active?'Sí':'No',
-        'Entrada':shift.active?shift.entrada:'','Salida':shift.active?shift.salida:''};
+        'Entrada':shift.active?shift.entrada:'','Lugar entrada':shift.active?pointAlias(shift.entradaLocation):'',
+        'Salida':shift.active?shift.salida:'','Lugar salida':shift.active?pointAlias(shift.salidaLocation):''};
     }));
     import('xlsx').then(XLSX=>{
       const workbook=XLSX.utils.book_new();

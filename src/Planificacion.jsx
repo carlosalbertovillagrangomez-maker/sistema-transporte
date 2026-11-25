@@ -3026,7 +3026,7 @@ export default function Planificacion() {
                                                                       <span className="text-right max-w-[65%]">{emp.scheduledPickupType==='meeting'?'📍 '+(emp.meetingPointAlias||'Punto intermedio'):'🏠 Casa'} · {emp.address}</span>
                                                                   </div>)}
                                                               </div>}
-                                                          </div>
+                                                          </div>}
                                                           <label className="flex gap-2 items-center text-xs font-bold">
                                                               <input type="checkbox" checked={grupo.pickupMode === 'meeting'} onChange={e => setGroupPickupMode(grupo.id,e.target.checked?'meeting':'home')} /> Un solo punto para todos
                                                           </label>

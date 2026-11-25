@@ -1838,10 +1838,13 @@ export default function Planificacion() {
   };
   const setGroupEmployeeHome = (groupId, name, loc) => {
       refreshGroupsAfterChange(carpoolGroups.map(g => g.id !== groupId ? g : dropImportedPassTimes({...g,
-          employees:g.employees.map(e => e.assignedTo !== name ? e : ({...e,address:loc.address,
-              lat:Number(loc.lat),lng:Number(loc.lng ?? loc.lon),lon:Number(loc.lng ?? loc.lon),
-              ...(g.generatedFromWeeklySchedule?{homeAddress:loc.address,homeLat:Number(loc.lat),
-                 homeLng:Number(loc.lng??loc.lon),homeLon:Number(loc.lng??loc.lon)}:{}),
+          employees:g.employees.map(e => e.assignedTo !== name ? e : ({
+              ...e,
+              ...(g.generatedFromWeeklySchedule
+                  ? {homeAddress:loc.address,homeLat:Number(loc.lat),
+                     homeLng:Number(loc.lng??loc.lon),homeLon:Number(loc.lng??loc.lon)}
+                  : {address:loc.address,lat:Number(loc.lat),lng:Number(loc.lng??loc.lon),
+                     lon:Number(loc.lng??loc.lon)}),
               aiMeetingPointKey:'',aiMeetingPointLabel:'',aiMeetingPointAddress:''}))
       })));
   };
@@ -1856,9 +1859,9 @@ export default function Planificacion() {
           const clear = {routeGeometry:[],routeSegments:[],routedStopLocations:[],totalDurationMins:null,totalDistanceKm:null};
           if (!passengerName) return {...g,...clear,singleMeetingPoint:{address,lat:null,lng:null}};
           return {...g,...clear,employees:g.employees.map(e => e.assignedTo === passengerName
-              ? {...e,address,lat:null,lng:null,lon:null,
-                  ...(g.generatedFromWeeklySchedule&&g.pickupMode==='home'
-                    ?{homeAddress:address,homeLat:null,homeLng:null,homeLon:null}:{})} : e)};
+              ? {...e,...(g.generatedFromWeeklySchedule&&g.pickupMode==='home'
+                ? {homeAddress:address,homeLat:null,homeLng:null,homeLon:null}
+                : {address,lat:null,lng:null,lon:null})} : e)};
       }));
   };
 

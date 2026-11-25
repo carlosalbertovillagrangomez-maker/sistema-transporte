@@ -17,8 +17,18 @@ const string = v => String(v??'').trim();
 const normalized = value => string(value).normalize('NFD')
   .replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').toLocaleLowerCase('es');
 
+// La ubicación de ENTRADA y SALIDA se elige por persona y por día.
+// 'home' conserva el domicilio; 'meeting' usa un punto del catálogo de empresa.
+export const normalizeShiftLocation = source => {
+  const raw=source&&typeof source==='object'?source:{};
+  return raw.type==='meeting'
+    ? {type:'meeting',meetingPointId:string(raw.meetingPointId)}
+    : {type:'home',meetingPointId:''};
+};
 export const emptyWeeklySchedule = () => Object.fromEntries(WEEK_DAYS.map(day => [
-  day.key,{active:false,entrada:'08:00',salida:'17:00'}
+  day.key,{active:false,entrada:'08:00',salida:'17:00',
+    entradaLocation:{type:'home',meetingPointId:''},
+    salidaLocation:{type:'home',meetingPointId:''}}
 ]));
 
 export const normalizeWeeklySchedule = source => {
@@ -28,7 +38,9 @@ export const normalizeWeeklySchedule = source => {
     return [day.key,{
       active:item.active===true,
       entrada:isTime(item.entrada)?item.entrada:'08:00',
-      salida:isTime(item.salida)?item.salida:'17:00'
+      salida:isTime(item.salida)?item.salida:'17:00',
+      entradaLocation:normalizeShiftLocation(item.entradaLocation),
+      salidaLocation:normalizeShiftLocation(item.salidaLocation)
     }];
   }));
 };
@@ -69,19 +81,37 @@ export const dailyCorporateRoster = (company,date,mode) => {
     const home=locations.find(loc=>
       normalized(loc.assignedTo)===normalized(name)&&string(loc.address))||
       locations.find(loc=>string(user.address)&&normalized(loc.address)===normalized(user.address));
-    const address=string(home?.address||user.address||user.domicilio||user.direccion);
+    const homeAddress=string(home?.address||user.address||user.domicilio||user.direccion);
+    const homeLat=home?.lat??user.lat??null;
+    const homeLng=home?.lng??home?.lon??user.lng??user.lon??null;
+    const location=normalizeShiftLocation(isExit?shift.salidaLocation:shift.entradaLocation);
+    const meeting=location.type==='meeting'
+      ? (company?.meetingPoints||[]).find(point=>string(point.id)===location.meetingPointId)
+      : null;
+    // No usar la sede empresarial ni el domicilio como sustituto silencioso
+    // cuando se eligió un punto intermedio que fue borrado o es inválido.
+    const pointLocation=location.type==='meeting'?meeting:{address:homeAddress,lat:homeLat,lng:homeLng};
+    const address=string(pointLocation?.address);
     const point={
       assignedTo:name,address,
-      lat:home?.lat??user.lat??null,
-      lng:home?.lng??home?.lon??user.lng??user.lon??null,
-      lon:home?.lon??home?.lng??user.lon??user.lng??null,
+      lat:pointLocation?.lat??null,
+      lng:pointLocation?.lng??pointLocation?.lon??null,
+      lon:pointLocation?.lon??pointLocation?.lng??null,
+      homeAddress,homeLat,homeLng,homeLon:homeLng,
+      scheduledPickupType:location.type,
+      meetingPointId:location.type==='meeting'?location.meetingPointId:'',
+      meetingPointAlias:location.type==='meeting'?string(meeting?.alias):'',
+      locationLabel:location.type==='meeting'?string(meeting?.alias||'Punto intermedio'):'Domicilio',
       phone:string(user.phone||user.telefono),
       whatsappOptIn:user.whatsappOptIn===true,
       entrada:string(shift.entrada),salida:string(shift.salida),
       included:true
     };
     if(!isTime(time)||!address||!validCoords(point)){
-      missing.push({name,reason:!isTime(time)?'Horario inválido':!address?'Sin domicilio':'Dirección sin coordenadas verificadas'});
+      const reason=!isTime(time)?'Horario inválido':location.type==='meeting'
+        ? (!meeting?'Punto intermedio no encontrado':'Punto intermedio sin ubicación verificada')
+        : (!homeAddress?'Sin domicilio':'Dirección sin coordenadas verificadas');
+      missing.push({name,reason});
       continue;
     }
     participants.push({...point,timeKey:time});
@@ -125,7 +155,7 @@ export const corporateGroupsForDay = (participants,office,{capacity=4,mode='Ida'
       groups.push({
         id:'weekly_'+groups.length+'_'+mode.toLowerCase(),
         employees,timeKey,driverId:'',driverName:'',
-        pickupMode:'home',
+        pickupMode:'scheduled',
         singleMeetingPoint:{address:'',lat:null,lng:null},
         sharedMeetingPoints:[],sharedMeetingPoint:{active:false,address:'',lat:null,lng:null},
         aiImported:false,preserveAiPassTimes:false,aiRoute:'',
@@ -151,6 +181,9 @@ export const corporateSpreadsheetRows = (groups,mode) => (groups||[]).flatMap((g
     Unidad:index+1,Sentido:mode==='Ida'?'ENTRADA':'SALIDA',
     HoraOficial:g.timeKey,Conductor:g.driverName||'PENDIENTE',
     Pasajero:passengerIndex+1,Nombre:p.assignedTo,
-    Domicilio:p.address,PuntoComun:g.pickupMode==='meeting'?g.singleMeetingPoint?.address||'':'',
+    Domicilio:p.homeAddress||p.address,
+    TipoPunto:g.pickupMode==='meeting'?'Punto común de cuadrilla':g.pickupMode==='home'?'Casa':p.locationLabel||'Casa',
+    PuntoAsignado:g.pickupMode==='meeting'?g.singleMeetingPoint?.address||'':g.pickupMode==='home'?(p.homeAddress||p.address):p.address,
+    PuntoComun:g.pickupMode==='meeting'?g.singleMeetingPoint?.address||'':'',
     KmConfirmados:g.totalDistanceKm??'',MinutosConfirmados:g.totalDurationMins??''
   })));

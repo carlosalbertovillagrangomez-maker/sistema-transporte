@@ -32,7 +32,7 @@ export default function TripLogixCorporatePlanner({companies=[],onGenerate,onClo
     if(!company)return alert('Selecciona una empresa.');
     if(!date||!program.day)return alert('Selecciona una fecha válida.');
     if(!office||!validCoords(office))return alert('La empresa necesita una sede con ubicación de Google Maps verificada.');
-    if(program.missing.length)return alert('Corrige primero estos domicilios u horarios en Empresas y turnos: '+
+    if(program.missing.length)return alert('Corrige primero estos lugares de recogida/entrega u horarios en Empresas y turnos: '+
       program.missing.slice(0,10).map(p=>p.name+' ('+p.reason+')').join(', ')+
       (program.missing.length>10?' y '+(program.missing.length-10)+' más':'')+'.');
     if(!groups.length)return alert('No hay empleados con turno marcado para esta fecha. Revisa la plantilla semanal.');
@@ -66,11 +66,11 @@ export default function TripLogixCorporatePlanner({companies=[],onGenerate,onClo
           <div className="flex p-1 rounded-xl bg-slate-100 gap-1">
             <button type="button" onClick={()=>setMode('Ida')}
               className={'text-xs font-black rounded-lg py-3 px-5 '+(mode==='Ida'?'bg-orange-500 text-white shadow':'text-slate-600 hover:bg-white')}>
-              ENTRADAS · Casa → Empresa
+              ENTRADAS · Casa/Punto → Empresa
             </button>
             <button type="button" onClick={()=>setMode('Regreso')}
               className={'text-xs font-black rounded-lg py-3 px-5 '+(mode==='Regreso'?'bg-slate-800 text-white shadow':'text-slate-600 hover:bg-white')}>
-              SALIDAS · Empresa → Casa
+              SALIDAS · Empresa → Casa/Punto
             </button>
           </div>
           <div className="flex gap-2 flex-wrap">
@@ -85,12 +85,12 @@ export default function TripLogixCorporatePlanner({companies=[],onGenerate,onClo
         {!company?<div className="min-h-[270px] flex flex-col gap-3 items-center justify-center bg-white border-2 border-dashed border-slate-200 rounded-2xl text-slate-500 text-center p-6">
             <Building2 size={37} className="text-orange-400"/>
             <p className="font-black text-slate-800 text-lg">Empieza seleccionando una empresa</p>
-            <p className="text-sm max-w-md">Aquí se mostrarán las entradas y salidas registradas en su plantilla semanal, sin importar archivos.</p>
+            <p className="text-sm max-w-md">Aquí se mostrarán las entradas y salidas registradas, con la ubicación que corresponda a cada empleado y día, sin importar archivos.</p>
           </div>:<>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {[
               {number:scheduledCount,title:'Personas del turno',detail:program.day?.name||''},
-              {number:program.participants.length,title:'Domicilios válidos',detail:'Listos para agrupar'},
+              {number:program.participants.length,title:'Ubicaciones válidas',detail:'Casas y puntos listos'},
               {number:groups.length,title:'Cuadrillas propuestas',detail:'Máximo 4 por unidad'},
               {number:program.missing.length,title:'Por corregir',detail:'Sin omisiones silenciosas'}
             ].map(k=><div key={k.title} className="bg-white border border-slate-200 rounded-xl p-4">
@@ -108,9 +108,9 @@ export default function TripLogixCorporatePlanner({companies=[],onGenerate,onClo
             No hay personas con el día {program.day?.name||''} marcado en la plantilla de esta empresa. Edita sus turnos desde «Empresas y clientes».</div>}
           {excel?<div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
             <table className="min-w-[920px] w-full text-xs border-collapse">
-              <thead className="bg-[#0d2336] text-white"><tr>{['Unidad','Sentido','Hora oficial','Conductor','Pasajero','Nombre','Domicilio','Km reales'].map(col=><th key={col} className="p-3 text-left border-r border-white/10">{col}</th>)}</tr></thead>
+              <thead className="bg-[#0d2336] text-white"><tr>{['Unidad','Sentido','Hora oficial','Conductor','Pasajero','Nombre','Tipo de punto','Punto de recogida/entrega','Domicilio','Km reales'].map(col=><th key={col} className="p-3 text-left border-r border-white/10">{col}</th>)}</tr></thead>
               <tbody>{table.map((r,i)=><tr key={i} className={i%2?'bg-slate-50':'bg-white'}>
-                {[r.Unidad,r.Sentido,r.HoraOficial,r.Conductor,r.Pasajero,r.Nombre,r.Domicilio,'Pendiente Google Maps'].map((val,j)=><td key={j} className="p-3 border-r border-b border-slate-100">{val}</td>)}
+                {[r.Unidad,r.Sentido,r.HoraOficial,r.Conductor,r.Pasajero,r.Nombre,r.TipoPunto,r.PuntoAsignado,r.Domicilio,'Pendiente Google Maps'].map((val,j)=><td key={j} className="p-3 border-r border-b border-slate-100">{val}</td>)}
               </tr>)}</tbody>
             </table>
             {!table.length&&<p className="p-6 text-center text-sm text-slate-500">No hay filas programadas.</p>}
@@ -122,7 +122,7 @@ export default function TripLogixCorporatePlanner({companies=[],onGenerate,onClo
               <div className="p-4"><p className="text-[11px] text-orange-700 font-black uppercase">{mode==='Ida'?'Entrada a las':'Salida a las'} {group.timeKey}</p>
                 <div className="mt-3 space-y-2">{group.employees.map((emp,j)=><div key={j} className="flex gap-2 text-xs">
                   <span className="flex-shrink-0 w-5 h-5 rounded-full bg-orange-50 text-orange-700 text-center leading-5 font-black">{j+1}</span>
-                  <div className="min-w-0"><p className="font-bold text-slate-800">{emp.assignedTo}</p>
+                  <div className="min-w-0"><p className="font-bold text-slate-800">{emp.assignedTo} <span className="font-semibold text-orange-700">· {emp.locationLabel||'Casa'}</span></p>
                     <p className="text-slate-500 truncate" title={emp.address}>{emp.address}</p></div>
                 </div>)}</div>
                 <p className="mt-4 text-[11px] bg-slate-50 text-slate-600 p-2 rounded-lg">Orden y kilómetros reales se confirmarán con Google Maps antes de asignar chofer.</p>

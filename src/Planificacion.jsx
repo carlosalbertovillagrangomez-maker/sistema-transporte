@@ -1398,7 +1398,7 @@ export default function Planificacion() {
               const passengerStops = buildPassengerStopsForGroup(g);
               const points = [];
               const optimize = g.generatedFromWeeklySchedule === true &&
-                  g.pickupMode === 'home' && passengerStops.length > 1 && oficina;
+                  (g.pickupMode === 'home' || g.pickupMode === 'scheduled') && passengerStops.length > 1 && oficina;
               const orderedByProximity = optimize
                   ? [...passengerStops].sort((a,b)=>haversineKm(b,oficina)-haversineKm(a,oficina))
                   : passengerStops;
@@ -1828,7 +1828,8 @@ export default function Planificacion() {
       employees:group.employees.map(e => ({...e,aiReferenceTime:''}))});
 
   const setGroupPickupMode = (groupId, pickupMode) => {
-      if (!['home','meeting','multiple'].includes(pickupMode)) return;
+      if (!['home','meeting','multiple','scheduled'].includes(pickupMode)) return;
+       if(pickupMode==='scheduled'&&!carpoolGroups.some(g=>g.id===groupId&&g.generatedFromWeeklySchedule))return;
       refreshGroupsAfterChange(carpoolGroups.map(g => g.id === groupId ? dropImportedPassTimes({...g,pickupMode}) : g));
   };
   const setGroupSingleMeetingPoint = (groupId, loc) => {
@@ -1837,8 +1838,13 @@ export default function Planificacion() {
   };
   const setGroupEmployeeHome = (groupId, name, loc) => {
       refreshGroupsAfterChange(carpoolGroups.map(g => g.id !== groupId ? g : dropImportedPassTimes({...g,
-          employees:g.employees.map(e => e.assignedTo !== name ? e : ({...e,address:loc.address,
-              lat:Number(loc.lat),lng:Number(loc.lng ?? loc.lon),lon:Number(loc.lng ?? loc.lon),
+          employees:g.employees.map(e => e.assignedTo !== name ? e : ({
+              ...e,
+              ...(g.generatedFromWeeklySchedule
+                  ? {homeAddress:loc.address,homeLat:Number(loc.lat),
+                     homeLng:Number(loc.lng??loc.lon),homeLon:Number(loc.lng??loc.lon)}
+                  : {address:loc.address,lat:Number(loc.lat),lng:Number(loc.lng??loc.lon),
+                     lon:Number(loc.lng??loc.lon)}),
               aiMeetingPointKey:'',aiMeetingPointLabel:'',aiMeetingPointAddress:''}))
       })));
   };
@@ -1853,7 +1859,9 @@ export default function Planificacion() {
           const clear = {routeGeometry:[],routeSegments:[],routedStopLocations:[],totalDurationMins:null,totalDistanceKm:null};
           if (!passengerName) return {...g,...clear,singleMeetingPoint:{address,lat:null,lng:null}};
           return {...g,...clear,employees:g.employees.map(e => e.assignedTo === passengerName
-              ? {...e,address,lat:null,lng:null,lon:null} : e)};
+              ? {...e,...(g.generatedFromWeeklySchedule&&g.pickupMode==='home'
+                ? {homeAddress:address,homeLat:null,homeLng:null,homeLon:null}
+                : {address,lat:null,lng:null,lon:null})} : e)};
       }));
   };
 
@@ -2004,7 +2012,12 @@ export default function Planificacion() {
               return alert("⚠️ Google Maps no ha confirmado un recorrido vial para una de las unidades. Recalcula la ruta antes de guardar; no se crearán trayectos en línea recta.");
           }
 
-          if (group.pickupMode === 'home' && buildPassengerStopsForGroup(group).length !== group.employees.length) return alert('⚠️ Falta validar un domicilio. Selecciona una sugerencia de Google Maps para cada pasajero.');
+          const stopsForValidation=buildPassengerStopsForGroup(group);
+           const mappedPassengers=stopsForValidation.flatMap(stop=>stop.employees);
+           if(mappedPassengers.length!==group.employees.length ||
+               new Set(mappedPassengers.map(e=>e.assignedTo)).size!==group.employees.length){
+               return alert('⚠️ Hay personas sin ubicación válida en esta cuadrilla. Revisa los domicilios y puntos intermedios antes de crear rutas.');
+           }
           for (const point of getGroupMeetingPoints(group)) {
               if (!point.address || isMeetingInstruction(point.address) || !Number.isFinite(Number(point.lat)) || !Number.isFinite(Number(point.lng ?? point.lon))) {
                   return alert("⚠️ Hay un punto de reunión sin ubicación válida.");
@@ -2848,7 +2861,7 @@ export default function Planificacion() {
                                                       </select></td>
                                                       <td className="p-2 border-b">{passengerIndex+1}/4</td>
                                                       <td className="p-2 border-b font-bold">{emp.assignedTo}</td>
-                                                      <td className="p-2 border-b max-w-[250px]">{g.pickupMode==='meeting'?g.singleMeetingPoint?.address||'Punto pendiente':emp.address}</td>
+                                                      <td className="p-2 border-b max-w-[250px]">{g.pickupMode==='meeting'?g.singleMeetingPoint?.address||'Punto pendiente':g.pickupMode==='home'&&g.generatedFromWeeklySchedule?emp.homeAddress:emp.address}</td>
                                                       <td className="p-2 border-b">{g.totalDistanceKm??'Pendiente'}</td>
                                                       <td className="p-2 border-b">{g.totalDurationMins??'Pendiente'}</td>
                                                   </tr>
@@ -3002,6 +3015,18 @@ export default function Planificacion() {
 
                                                       <div className="rounded-xl bg-orange-50 border border-orange-200 p-3 space-y-3 mb-3">
                                                           <p className="text-xs font-black text-slate-800">Tipo de recogida / entrega por unidad</p>
+                                                          {grupo.generatedFromWeeklySchedule && <div className="rounded-lg bg-white border border-orange-200 px-3 py-2 space-y-2">
+                                                              <label className="flex items-center gap-2 text-xs font-black text-orange-800">
+                                                                  <input type="checkbox" checked={grupo.pickupMode==='scheduled'} onChange={e=>setGroupPickupMode(grupo.id,e.target.checked?'scheduled':'home')}/>
+                                                                  Respetar los puntos configurados por empleado y día
+                                                              </label>
+                                                              {grupo.pickupMode==='scheduled' && <div className="space-y-1.5">
+                                                                  {grupo.employees.map(emp=><div key={emp.assignedTo} className="flex items-start justify-between gap-2 text-[11px] text-slate-700">
+                                                                      <span className="font-bold">{emp.assignedTo}</span>
+                                                                      <span className="text-right max-w-[65%]">{emp.scheduledPickupType==='meeting'?'📍 '+(emp.meetingPointAlias||'Punto intermedio'):'🏠 Casa'} · {emp.address}</span>
+                                                                  </div>)}
+                                                              </div>}
+                                                          </div>}
                                                           <label className="flex gap-2 items-center text-xs font-bold">
                                                               <input type="checkbox" checked={grupo.pickupMode === 'meeting'} onChange={e => setGroupPickupMode(grupo.id,e.target.checked?'meeting':'home')} /> Un solo punto para todos
                                                           </label>
@@ -3011,13 +3036,13 @@ export default function Planificacion() {
                                                           {grupo.pickupMode === 'meeting' && <div className="space-y-2">
                                                               <p className="text-[10px] text-orange-800 font-bold">Escribe la dirección y selecciona la sugerencia de Google Maps, o elige una ubicación favorita. Una sola parada para todo el grupo.</p>
                                                               <AddressAutocomplete isLoaded={isLoaded} value={grupo.singleMeetingPoint?.address || ''} onInputChange={text => setGroupTypedAddress(grupo.id,text)} placeholder="Punto común: buscar dirección..." iconColor="orange" zIndex={320-idx}
-                                                                  favorites={selectedClientData?.locations || []} onSelect={loc => setGroupSingleMeetingPoint(grupo.id,loc)} />
+                                                                  favorites={[...(selectedClientData?.meetingPoints || []),...(selectedClientData?.locations || [])]} onSelect={loc => setGroupSingleMeetingPoint(grupo.id,loc)} />
                                                           </div>}
                                                           {grupo.pickupMode === 'home' && <div className="space-y-3">
                                                               <p className="text-[10px] text-slate-600 font-bold">Puedes escribir o elegir una dirección favorita por pasajero. Sólo modifica esta planificación.</p>
                                                               {grupo.employees.map((emp,empIndex) => <div key={emp.assignedTo} className="p-2 bg-white border rounded-lg">
                                                                   <p className="text-[10px] font-black text-slate-700 mb-2">{emp.assignedTo}</p>
-                                                                  <AddressAutocomplete isLoaded={isLoaded} value={emp.address || ''} onInputChange={text => setGroupTypedAddress(grupo.id,text,emp.assignedTo)} placeholder="Buscar domicilio..." iconColor="green" zIndex={280-idx*6-empIndex}
+                                                                  <AddressAutocomplete isLoaded={isLoaded} value={(grupo.generatedFromWeeklySchedule?emp.homeAddress:emp.address) || ''} onInputChange={text => setGroupTypedAddress(grupo.id,text,emp.assignedTo)} placeholder="Buscar domicilio..." iconColor="green" zIndex={280-idx*6-empIndex}
                                                                       favorites={(selectedClientData?.locations || []).filter(loc => !loc.assignedTo || loc.assignedTo === 'General' || loc.assignedTo === emp.assignedTo)}
                                                                       onSelect={loc => setGroupEmployeeHome(grupo.id,emp.assignedTo,loc)} />
                                                               </div>)}

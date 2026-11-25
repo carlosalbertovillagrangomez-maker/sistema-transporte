@@ -60,7 +60,8 @@ test('11 pasajeros del mismo horario generan 3 grupos, todos de hasta 4',()=>{
   assert.deepEqual(groups.map(g=>g.employees.length),[4,4,3]);
   assert.equal(groups.flatMap(g=>g.employees).length,11);
   assert.equal(new Set(groups.flatMap(g=>g.employees.map(e=>e.assignedTo))).size,11);
-  assert.ok(groups.every(g=>g.driverId===''&&g.pickupMode==='home'));
+  assert.ok(groups.every(g=>g.driverId===''&&g.pickupMode==='scheduled'));
+  // Respeta el lugar asignado por día; el checkbox Casa sigue disponible como sustitución temporal.
 });
 test('horarios distintos no se mezclan y cada sentido usa su hora oficial',()=>{
   const users=[employee(1,'lunes','06:00','18:00'),employee(2,'lunes','07:00','18:00'),employee(3,'lunes','07:00','19:00')];

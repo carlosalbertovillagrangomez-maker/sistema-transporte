@@ -3036,7 +3036,7 @@ export default function Planificacion() {
                                                           {grupo.pickupMode === 'meeting' && <div className="space-y-2">
                                                               <p className="text-[10px] text-orange-800 font-bold">Escribe la dirección y selecciona la sugerencia de Google Maps, o elige una ubicación favorita. Una sola parada para todo el grupo.</p>
                                                               <AddressAutocomplete isLoaded={isLoaded} value={grupo.singleMeetingPoint?.address || ''} onInputChange={text => setGroupTypedAddress(grupo.id,text)} placeholder="Punto común: buscar dirección..." iconColor="orange" zIndex={320-idx}
-                                                                  favorites={selectedClientData?.locations || []} onSelect={loc => setGroupSingleMeetingPoint(grupo.id,loc)} />
+                                                                  favorites={[...(selectedClientData?.meetingPoints || []),...(selectedClientData?.locations || [])]} onSelect={loc => setGroupSingleMeetingPoint(grupo.id,loc)} />
                                                           </div>}
                                                           {grupo.pickupMode === 'home' && <div className="space-y-3">
                                                               <p className="text-[10px] text-slate-600 font-bold">Puedes escribir o elegir una dirección favorita por pasajero. Sólo modifica esta planificación.</p>

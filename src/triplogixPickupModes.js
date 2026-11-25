@@ -6,7 +6,7 @@ const hasCoordinates = p => p?.lat !== null && p?.lat !== undefined && p?.lat !=
 
 // Modelo de paradas compartidas e individuales. Sin efectos secundarios.
 export const getGroupMeetingPoints = (group) => {
-    if (group?.pickupMode === 'home') return [];
+    if (group?.pickupMode === 'home' || group?.pickupMode === 'scheduled') return [];
     if (group?.pickupMode === 'meeting') {
         const point = group?.singleMeetingPoint || {};
         return [{ id:'meeting_' + group.id + '_all',active:true,address:String(point.address || '').trim(),lat:point.lat,lng:point.lng ?? point.lon,passengerNames:(group.employees || []).map(e => e.assignedTo) }];
@@ -34,15 +34,50 @@ export const getEmployeeMeetingPoint = (group, employeeName) => {
 };
 
 export const buildPassengerStopsForGroup = (group) => {
+    if (group?.pickupMode === 'scheduled') {
+        // Un empleado puede tener Casa el lunes y un punto común el martes.
+        // Agrupamos las personas del MISMO punto intermedio en una sola
+        // parada, evitando duplicar kilómetros y esperas en Google Directions.
+        const stops=[],byMeetingId=new Map();
+        for (const employee of group.employees || []) {
+            if (!hasCoordinates(employee) || !String(employee.address||'').trim() ||
+                isMeetingInstruction(employee.address)) continue;
+            if (employee.scheduledPickupType==='meeting' && employee.meetingPointId) {
+                const key=String(employee.meetingPointId);
+                const existing=byMeetingId.get(key);
+                if(existing) existing.employees.push(employee);
+                else {
+                    const stop={stopType:'shared_meeting',id:'scheduled-'+key,
+                        address:employee.address,lat:Number(employee.lat),
+                        lng:Number(employee.lng??employee.lon),employees:[employee],
+                        meetingPointId:key,meetingPointAlias:employee.meetingPointAlias||''};
+                    stops.push(stop);byMeetingId.set(key,stop);
+                }
+            } else {
+                stops.push({stopType:'individual',id:'home-'+employee.assignedTo,
+                    address:employee.address,lat:Number(employee.lat),
+                    lng:Number(employee.lng??employee.lon),employees:[employee]});
+            }
+        }
+        return stops;
+    }
     if (group?.pickupMode === 'meeting') {
         const p = getGroupMeetingPoints(group)[0];
         const lat = Number(p?.lat), lng = Number(p?.lng);
         return p?.address && !isMeetingInstruction(p.address) && hasCoordinates(p) && Number.isFinite(lat) && Number.isFinite(lng)
             ? [{ stopType:'shared_meeting',id:p.id,address:p.address,lat,lng,employees:[...(group.employees || [])] }] : [];
     }
-    if (group?.pickupMode === 'home') return (group.employees || []).filter(hasCoordinates).map(e => ({
-        stopType:'individual',id:'individual-' + e.assignedTo,address:e.address,lat:Number(e.lat),lng:Number(e.lng ?? e.lon),employees:[e]
-    })).filter(p => p.address && !isMeetingInstruction(p.address) && Number.isFinite(p.lat) && Number.isFinite(p.lng));
+    if (group?.pickupMode === 'home') return (group.employees || []).map(e => {
+        // En las cuadrillas automáticas, «Casa» debe recuperar el domicilio
+        // original aunque el turno activo esté asignado a un punto medio.
+        const useOriginal=group.generatedFromWeeklySchedule===true;
+        const address=useOriginal?e.homeAddress:e.address;
+        const lat=useOriginal?e.homeLat:e.lat;
+        const lng=useOriginal?(e.homeLng??e.homeLon):(e.lng??e.lon);
+        return {stopType:'individual',id:'individual-' + e.assignedTo,
+            address,lat,lng,employees:[e]};
+    }).filter(point=>point.address&&!isMeetingInstruction(point.address)&&hasCoordinates(point))
+      .map(point=>({...point,lat:Number(point.lat),lng:Number(point.lng)}));
     const stops = [];
     const usedMeetingPoints = new Set();
 

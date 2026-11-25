@@ -2858,7 +2858,7 @@ export default function Planificacion() {
                                                       </select></td>
                                                       <td className="p-2 border-b">{passengerIndex+1}/4</td>
                                                       <td className="p-2 border-b font-bold">{emp.assignedTo}</td>
-                                                      <td className="p-2 border-b max-w-[250px]">{g.pickupMode==='meeting'?g.singleMeetingPoint?.address||'Punto pendiente':emp.address}</td>
+                                                      <td className="p-2 border-b max-w-[250px]">{g.pickupMode==='meeting'?g.singleMeetingPoint?.address||'Punto pendiente':g.pickupMode==='home'&&g.generatedFromWeeklySchedule?emp.homeAddress:emp.address}</td>
                                                       <td className="p-2 border-b">{g.totalDistanceKm??'Pendiente'}</td>
                                                       <td className="p-2 border-b">{g.totalDurationMins??'Pendiente'}</td>
                                                   </tr>
@@ -3012,6 +3012,18 @@ export default function Planificacion() {
 
                                                       <div className="rounded-xl bg-orange-50 border border-orange-200 p-3 space-y-3 mb-3">
                                                           <p className="text-xs font-black text-slate-800">Tipo de recogida / entrega por unidad</p>
+                                                          {grupo.generatedFromWeeklySchedule && <div className="rounded-lg bg-white border border-orange-200 px-3 py-2 space-y-2">
+                                                              <label className="flex items-center gap-2 text-xs font-black text-orange-800">
+                                                                  <input type="checkbox" checked={grupo.pickupMode==='scheduled'} onChange={e=>setGroupPickupMode(grupo.id,e.target.checked?'scheduled':'home')}/>
+                                                                  Respetar los puntos configurados por empleado y día
+                                                              </label>
+                                                              {grupo.pickupMode==='scheduled' && <div className="space-y-1.5">
+                                                                  {grupo.employees.map(emp=><div key={emp.assignedTo} className="flex items-start justify-between gap-2 text-[11px] text-slate-700">
+                                                                      <span className="font-bold">{emp.assignedTo}</span>
+                                                                      <span className="text-right max-w-[65%]">{emp.scheduledPickupType==='meeting'?'📍 '+(emp.meetingPointAlias||'Punto intermedio'):'🏠 Casa'} · {emp.address}</span>
+                                                                  </div>)}
+                                                              </div>}
+                                                          </div>
                                                           <label className="flex gap-2 items-center text-xs font-bold">
                                                               <input type="checkbox" checked={grupo.pickupMode === 'meeting'} onChange={e => setGroupPickupMode(grupo.id,e.target.checked?'meeting':'home')} /> Un solo punto para todos
                                                           </label>
@@ -3027,7 +3039,7 @@ export default function Planificacion() {
                                                               <p className="text-[10px] text-slate-600 font-bold">Puedes escribir o elegir una dirección favorita por pasajero. Sólo modifica esta planificación.</p>
                                                               {grupo.employees.map((emp,empIndex) => <div key={emp.assignedTo} className="p-2 bg-white border rounded-lg">
                                                                   <p className="text-[10px] font-black text-slate-700 mb-2">{emp.assignedTo}</p>
-                                                                  <AddressAutocomplete isLoaded={isLoaded} value={emp.address || ''} onInputChange={text => setGroupTypedAddress(grupo.id,text,emp.assignedTo)} placeholder="Buscar domicilio..." iconColor="green" zIndex={280-idx*6-empIndex}
+                                                                  <AddressAutocomplete isLoaded={isLoaded} value={(grupo.generatedFromWeeklySchedule?emp.homeAddress:emp.address) || ''} onInputChange={text => setGroupTypedAddress(grupo.id,text,emp.assignedTo)} placeholder="Buscar domicilio..." iconColor="green" zIndex={280-idx*6-empIndex}
                                                                       favorites={(selectedClientData?.locations || []).filter(loc => !loc.assignedTo || loc.assignedTo === 'General' || loc.assignedTo === emp.assignedTo)}
                                                                       onSelect={loc => setGroupEmployeeHome(grupo.id,emp.assignedTo,loc)} />
                                                               </div>)}

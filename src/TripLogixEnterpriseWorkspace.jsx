@@ -1,7 +1,7 @@
 import React, {useRef,useState} from 'react';
 import {Autocomplete} from '@react-google-maps/api';
 import {addDoc,collection,doc,updateDoc} from 'firebase/firestore';
-import {Building2,CalendarDays,Check,ChevronLeft,FileSpreadsheet,MapPin,Plus,Save,Trash2,Users,X} from 'lucide-react';
+import {Building2,CalendarDays,Check,ChevronLeft,FileSpreadsheet,MapPin,Maximize2,Minimize2,Plus,Save,Trash2,Users,X} from 'lucide-react';
 import {db} from './firebase';
 import {WEEK_DAYS,emptyWeeklySchedule,normalizeWeeklySchedule,normalizeShiftLocation,validCoords} from './triplogixCorporateSchedule.js';
 
@@ -39,6 +39,8 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
   const [page,setPage]=useState(0);
   const PAGE_SIZE=25;
   const [showHelp,setShowHelp]=useState(true);
+  // Estado visual: no modifica la empresa, los turnos ni las celdas editadas.
+  const [expanded,setExpanded]=useState(false);
   const companies=clients.filter(client=>client.type==='Empresa');
   const employees=company.users||[];
   const visibleEmployees=employees.map((user,index)=>({user,index}))
@@ -189,18 +191,28 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
       XLSX.writeFile(workbook,'TRIPLOGIX_Empleados_'+(company.name||'Empresa').replace(/[^a-z0-9_-]+/gi,'_')+'.xlsx');
     });
   };
-  return <div className="fixed inset-0 z-[10020] bg-slate-900/70 backdrop-blur-sm p-0 md:p-5 flex items-center justify-center">
-    <div className="w-full max-w-[1560px] h-[100dvh] md:h-[94vh] rounded-none md:rounded-3xl bg-slate-50 shadow-2xl flex flex-col overflow-hidden">
-      <header className="bg-[#0d2336] text-white px-5 sm:px-7 py-5 flex flex-wrap gap-3 justify-between items-center shrink-0">
+  return <div className={'fixed inset-0 z-[10020] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center '+(expanded?'p-0':'p-0 md:p-5')}>
+    <div className={'w-full bg-slate-50 shadow-2xl flex flex-col overflow-hidden '+(expanded
+      ?'max-w-none h-[100dvh] rounded-none'
+      :'max-w-[1560px] h-[100dvh] md:h-[94vh] rounded-none md:rounded-3xl')}>
+      <header className={'bg-[#0d2336] text-white px-5 sm:px-7 flex flex-wrap gap-3 justify-between items-center shrink-0 '+(expanded?'py-3':'py-5')}>
         <div><span className="text-[10px] font-black uppercase tracking-[0.2em] text-orange-400">TRIPLOGIX / EMPRESAS</span>
           <h2 className="font-black text-xl sm:text-2xl mt-1">Empresa y plantilla semanal</h2>
-          <p className="text-xs text-slate-300 mt-1">Un solo catálogo para sedes, empleados y horarios. La planificación toma estos datos automáticamente.</p></div>
+          {!expanded&&<p className="text-xs text-slate-300 mt-1">Un solo catálogo para sedes, empleados y horarios. La planificación toma estos datos automáticamente.</p>}</div>
         <div className="flex items-center gap-2">
           <button type="button" onClick={save} disabled={busy} className="px-4 py-3 rounded-xl bg-orange-500 hover:bg-orange-600 disabled:opacity-60 text-white text-sm font-black flex gap-2 items-center"><Save size={17}/>{busy?'Guardando…':'Guardar cambios'}</button>
+          <button type="button" onClick={()=>setExpanded(value=>!value)}
+            aria-label={expanded?'Restaurar tamaño de la ventana':'Ampliar pantalla para programar turnos'}
+            aria-pressed={expanded}
+            title={expanded?'Volver a la ventana normal':'Usar toda la pantalla disponible para programar'}
+            className="px-3 py-3 rounded-xl border border-white/20 bg-white/10 hover:bg-white/20 text-white text-sm font-bold flex items-center justify-center gap-2 transition">
+            {expanded?<Minimize2 size={18}/>:<Maximize2 size={18}/>}
+            <span className="hidden sm:inline">{expanded?'Restaurar':'Ampliar pantalla'}</span>
+          </button>
           <button type="button" onClick={guardedClose} aria-label="Cerrar" className="p-3 bg-white/10 rounded-xl hover:bg-white/20"><X/></button>
         </div>
       </header>
-      <div className="px-5 sm:px-7 py-3 bg-white border-b flex flex-col lg:flex-row items-start lg:items-center gap-3 shrink-0">
+      <div className={'px-5 sm:px-7 bg-white border-b flex flex-col lg:flex-row items-start lg:items-center gap-3 shrink-0 '+(expanded?'py-2':'py-3')}>
         <label className="flex-1 text-xs font-bold text-slate-600 w-full lg:max-w-lg">Empresa
           <select value={companyId} onChange={e=>selectCompany(e.target.value)}
             className="block mt-1 w-full px-3 py-2.5 border border-slate-200 bg-white text-sm rounded-lg font-semibold text-slate-800">
@@ -213,7 +225,9 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
           <button type="button" onClick={()=>setTab('empleados')} className={'px-4 py-2.5 rounded-lg text-xs font-black flex items-center gap-2 '+(tab==='empleados'?'bg-slate-800 text-white':'text-slate-600')}><Users size={16}/> Empleados y turnos ({employees.length})</button>
         </div>
       </div>
-      <main className="flex-1 overflow-auto p-4 sm:p-7">
+      <main className={'flex-1 min-h-0 '+(expanded&&tab==='empleados'
+        ?'overflow-hidden p-3 sm:p-4 flex flex-col'
+        :'overflow-auto p-4 sm:p-7')}>
         {tab==='empresa'?<div className="max-w-5xl mx-auto space-y-5">
           <div className="bg-white border rounded-2xl p-5 space-y-4">
             <div><h3 className="font-black text-slate-900">Datos generales de la empresa</h3><p className="text-sm text-slate-500">Estos datos identifican al cliente en toda la operación.</p></div>
@@ -273,26 +287,28 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
             </div>
           </div>
           <button type="button" onClick={()=>setTab('empleados')} className="rounded-xl bg-slate-800 text-white px-5 py-3 text-sm font-black flex items-center gap-2">Continuar: empleados y turnos <ChevronLeft size={16} className="rotate-180"/></button>
-        </div>:<div className="space-y-4">
-          <div className="bg-white p-4 sm:p-5 border rounded-2xl flex flex-wrap justify-between gap-3 items-center">
+        </div>:<div className={expanded?'flex-1 min-h-0 flex flex-col gap-3':'space-y-4'}>
+          <div className={'bg-white border rounded-2xl flex flex-wrap justify-between gap-3 items-center '+(expanded?'p-2.5 sm:p-3':'p-4 sm:p-5')}>
             <div><h3 className="font-black text-slate-900">Plantilla maestra de empleados</h3>
-              <p className="text-sm text-slate-500 mt-1">Marca los días que trabaja cada persona y define entrada y salida. No es necesario volver a cargar una hoja semanal.</p></div>
+              {!expanded&&<p className="text-sm text-slate-500 mt-1">Marca los días que trabaja cada persona y define entrada y salida. No es necesario volver a cargar una hoja semanal.</p>}</div>
             <div className="flex gap-2 flex-wrap">
               <button type="button" onClick={exported} disabled={!employees.length} className="border rounded-xl bg-white px-3 py-2.5 text-xs font-black text-slate-700 flex gap-2 items-center"><FileSpreadsheet size={16}/> Exportar Excel</button>
               <button type="button" onClick={()=>{setPage(Math.floor(employees.length/PAGE_SIZE));setSearch('');setCompany(prev=>({...prev,users:[...(prev.users||[]),blankEmployee()]}));}} className="bg-orange-500 text-white rounded-xl px-4 py-3 text-xs font-black flex gap-2 items-center"><Plus size={16}/> Agregar empleado</button>
             </div>
           </div>
-          {showHelp&&<div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 flex gap-3 justify-between">
+          {showHelp&&!expanded&&<div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 flex gap-3 justify-between">
             <span><b>Uso rápido:</b> marca cada día laboral, define hora de entrada/salida y elige el lugar para cada trayecto: <b>Casa</b> o un punto intermedio guardado en Empresa y sedes. El domicilio personal no se modifica. Sin día marcado no se generan viajes.</span>
             <button type="button" onClick={()=>setShowHelp(false)}><X size={14}/></button></div>}
-          <div className="bg-white border border-slate-200 rounded-xl p-3 flex flex-wrap gap-2 justify-between items-center">
+          {!expanded&&<div className="bg-white border border-slate-200 rounded-xl p-3 flex flex-wrap gap-2 justify-between items-center">
             <p className="text-xs text-slate-600"><b>{meetingPoints.length} puntos intermedios</b> registrados. Cada empleado puede tener un lugar diferente para entrada y salida, cualquier día.</p>
             <button type="button" onClick={()=>setTab('empresa')} className="text-xs font-black px-3 py-2 rounded-lg bg-orange-50 text-orange-700 border border-orange-200">Administrar puntos y sedes</button>
-          </div>
+          </div>}
           <div className="flex gap-2 items-center"><input value={search} onChange={e=>{setSearch(e.target.value);setPage(0);}}
             className="border border-slate-200 rounded-lg bg-white px-4 py-2.5 text-sm w-full max-w-md" placeholder="Buscar empleado…"/>
             <span className="text-xs text-slate-500">{employees.length} registrados</span></div>
-          <div className="overflow-x-auto overflow-y-auto max-h-[58vh] rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className={expanded
+            ?'flex-1 min-h-0 overflow-auto rounded-2xl border border-slate-200 bg-white shadow-sm'
+            :'overflow-x-auto overflow-y-auto max-h-[58vh] rounded-2xl border border-slate-200 bg-white shadow-sm'}>
             <table className="text-xs border-collapse w-full min-w-[2250px]">
               <thead className="sticky top-0 z-20 bg-[#0d2336] text-white">
                 <tr><th className="sticky left-0 z-30 bg-[#0d2336] p-3 text-left min-w-[170px] border-r border-white/10">Empleado</th>
@@ -367,7 +383,8 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
             Página {currentPage+1} de {totalPages} · {visibleEmployees.length} empleados
             <button disabled={currentPage>=totalPages-1} onClick={()=>setPage(Math.min(totalPages-1,currentPage+1))} className="border rounded-lg px-3 py-2 bg-white disabled:opacity-40">Siguiente →</button>
           </div>}
-          <div className="flex justify-between flex-wrap gap-3 items-center text-xs text-slate-500"><p>✓ Los cambios se guardan en la empresa al presionar «Guardar cambios». No se crean viajes hasta confirmarlos en Planeación.</p>
+          <div className="flex justify-between flex-wrap gap-3 items-center text-xs text-slate-500">
+            {!expanded&&<p>✓ Los cambios se guardan en la empresa al presionar «Guardar cambios». No se crean viajes hasta confirmarlos en Planeación.</p>}
             <button type="button" onClick={save} disabled={busy} className="bg-slate-800 text-white font-black rounded-xl px-5 py-3 flex gap-2 items-center"><Check size={17}/>{busy?'Guardando…':'Guardar plantilla semanal'}</button></div>
         </div>}
       </main>

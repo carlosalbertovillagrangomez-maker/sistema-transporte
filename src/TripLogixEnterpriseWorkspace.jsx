@@ -296,7 +296,7 @@ export default function TripLogixEnterpriseWorkspace({clients=[],initial=null,on
               <button type="button" onClick={()=>{setPage(Math.floor(employees.length/PAGE_SIZE));setSearch('');setCompany(prev=>({...prev,users:[...(prev.users||[]),blankEmployee()]}));}} className="bg-orange-500 text-white rounded-xl px-4 py-3 text-xs font-black flex gap-2 items-center"><Plus size={16}/> Agregar empleado</button>
             </div>
           </div>
-          {showHelp&&!expanded&&<div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 flex gap-3 justify-between>
+          {showHelp&&!expanded&&<div className="bg-blue-50 border border-blue-200 rounded-xl p-3 text-xs text-blue-900 flex gap-3 justify-between">
             <span><b>Uso rápido:</b> marca cada día laboral, define hora de entrada/salida y elige el lugar para cada trayecto: <b>Casa</b> o un punto intermedio guardado en Empresa y sedes. El domicilio personal no se modifica. Sin día marcado no se generan viajes.</span>
             <button type="button" onClick={()=>setShowHelp(false)}><X size={14}/></button></div>}
           {!expanded&&<div className="bg-white border border-slate-200 rounded-xl p-3 flex flex-wrap gap-2 justify-between items-center">
